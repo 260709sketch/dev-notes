@@ -129,8 +129,6 @@ struct AppleMusicPlayerView: View {
             }
         }
         .ignoresSafeArea()
-        // 歌词页面可见时禁用播放器下滑关闭手势，避免和歌词滚动手势冲突
-        .environment(\.allowsNowPlayingDismiss, !showLyrics)
         .onChange(of: showLyrics) { _ in
             // 切换回大封面时重置底部控制区域隐藏状态
             hideBottomControls = false
@@ -198,7 +196,7 @@ struct AppleMusicPlayerView: View {
             // 下一首播放
             Button {
                 if let t = track {
-                    player.addToPlayNext(t)
+                    player.addToPlayNext(track: t)
                     ToastCenter.shared.show("已添加到下一首播放")
                 }
             } label: {
@@ -759,66 +757,78 @@ struct AppleMusicPlayerView: View {
             } else if lyrics.isEmpty {
                 emptyLyricsView
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(showsIndicators: false) {
-                        LazyVStack(alignment: .leading, spacing: ScreenAdapter.h(26)) {
-                            Color.clear.frame(height: max(ScreenAdapter.h(88), lyricsViewportHeight * 0.30))
-                            ForEach(lyrics) { line in
-                                lyricLine(line, isFocused: line.id == currentVisualLyricID)
-                                    .id(line.id)
-                                    .background {
-                                        GeometryReader { rowGeometry in
-                                            Color.clear.preference(
-                                                key: ReferenceLyricCenterKey.self,
-                                                value: [line.id: rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
-                                            )
-                                        }
-                                    }
-                            }
-                            Color.clear.frame(height: max(110, lyricsViewportHeight * 0.34))
-                        }
-                        .padding(.horizontal, 28)
-                    }
-                    .coordinateSpace(name: "referenceLyricsViewport")
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.0),
-                                .init(color: .black, location: 0.12),
-                                .init(color: .black, location: 0.84),
-                                .init(color: .clear, location: 1.0)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                lyricsScrollView
+            }
+        }
+    }
+
+    // MARK: - 歌词滚动区（独立子视图，避免类型检查超时）
+
+    private func lyricRow(_ line: LyricLine, isFocused: Bool) -> some View {
+        lyricLine(line, isFocused: isFocused)
+            .id(line.id)
+            .background {
+                GeometryReader { rowGeometry in
+                    Color.clear.preference(
+                        key: ReferenceLyricCenterKey.self,
+                        value: [line.id: rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
                     )
-                    .background {
-                        GeometryReader { viewport in
-                            Color.clear
-                                .onAppear { lyricsViewportHeight = viewport.size.height }
-                                .onChange(of: viewport.size.height) { lyricsViewportHeight = $0 }
-                        }
-                    }
-                    .onPreferenceChange(ReferenceLyricCenterKey.self) { centers in
-                        lyricCenters = centers
-                        updateFocusedLyric(from: centers)
-                    }
-                    .simultaneousGesture(lyricsDragGesture(proxy: proxy))
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                            scrollToPlaybackLyric(proxy: proxy, animated: false)
-                        }
-                    }
-                    .onChange(of: currentPlaybackLyricID) { _ in
-                        guard !isDraggingLyrics else { return }
-                        scrollToPlaybackLyric(proxy: proxy, animated: true)
-                    }
-                    .onChange(of: track?.id) { _ in
-                        resumeTask?.cancel()
-                        isDraggingLyrics = false
-                        focusedLyricID = nil
-                    }
                 }
+            }
+    }
+
+    private var lyricsScrollView: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: ScreenAdapter.h(26)) {
+                    Color.clear.frame(height: max(ScreenAdapter.h(88), lyricsViewportHeight * 0.30))
+                    ForEach(lyrics) { line in
+                        lyricRow(line, isFocused: line.id == currentVisualLyricID)
+                    }
+                    Color.clear.frame(height: max(110, lyricsViewportHeight * 0.34))
+                }
+                .padding(.horizontal, 28)
+            }
+            .coordinateSpace(name: "referenceLyricsViewport")
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black, location: 0.12),
+                        .init(color: .black, location: 0.84),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .background {
+                GeometryReader { viewport in
+                    Color.clear
+                        .onAppear { lyricsViewportHeight = viewport.size.height }
+                        .onChange(of: viewport.size.height) { height in
+                            lyricsViewportHeight = height
+                        }
+                }
+            }
+            .onPreferenceChange(ReferenceLyricCenterKey.self) { centers in
+                lyricCenters = centers
+                updateFocusedLyric(from: centers)
+            }
+            .simultaneousGesture(lyricsDragGesture(proxy: proxy))
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                    scrollToPlaybackLyric(proxy: proxy, animated: false)
+                }
+            }
+            .onChange(of: currentPlaybackLyricID) { _ in
+                guard !isDraggingLyrics else { return }
+                scrollToPlaybackLyric(proxy: proxy, animated: true)
+            }
+            .onChange(of: track?.id) { _ in
+                resumeTask?.cancel()
+                isDraggingLyrics = false
+                focusedLyricID = nil
             }
         }
     }

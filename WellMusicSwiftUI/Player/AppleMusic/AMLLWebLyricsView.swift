@@ -340,11 +340,14 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                 let nextStart = index + 1 < lines.count ? lines[index + 1].time : line.time + 6
                 var words: [[String: Any]] = []
                 if line.words != nil, let timed = line.words {
+                    // words 元组: (char, startTimeMs, endTimeMs)
                     for (position, word) in timed.enumerated() {
-                        let start = Int((word.start * 1000).rounded())
-                        let following = position + 1 < timed.count ? timed[position + 1].start : word.end
-                        let end = max(start + 1, Int((max(word.end, word.duration > 0 ? word.end : following) * 1000).rounded()))
-                        words.append(["startTime": start, "endTime": end, "word": word.text])
+                        let wordText = word.0
+                        let startMs = word.1
+                        let endMs = word.2
+                        let following = position + 1 < timed.count ? timed[position + 1].1 : endMs
+                        let end = max(startMs + 1, endMs > 0 ? endMs : following)
+                        words.append(["startTime": startMs, "endTime": end, "word": wordText])
                     }
                 } else {
                     // Line-timed lyrics: one word spanning the line, which AMLL shows as a plain (non-karaoke) line.
