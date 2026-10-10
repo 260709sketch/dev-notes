@@ -771,7 +771,7 @@ struct AppleMusicPlayerView: View {
                 GeometryReader { rowGeometry in
                     Color.clear.preference(
                         key: ReferenceLyricCenterKey.self,
-                        value: [line.id: rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
+                        value: [(line.id ?? 0): rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
                     )
                 }
             }
