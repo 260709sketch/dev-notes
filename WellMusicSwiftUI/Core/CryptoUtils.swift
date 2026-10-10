@@ -173,15 +173,16 @@ enum CryptoUtils {
 
         var result = Data()
         var buffer = [UInt8](repeating: 0, count: 65536)
+        let bufferSize = buffer.count
         var finished = false
         while !finished {
             buffer.withUnsafeMutableBytes { buf in
                 stream.next_out = buf.bindMemory(to: Bytef.self).baseAddress
-                stream.avail_out = uInt(buffer.count)
+                stream.avail_out = uInt(bufferSize)
             }
             let ret = zlib.inflate(&stream, Z_NO_FLUSH)
             guard ret != Z_STREAM_ERROR else { return nil }
-            let produced = buffer.count - Int(stream.avail_out)
+            let produced = bufferSize - Int(stream.avail_out)
             if produced > 0 { result.append(buffer, count: produced) }
             if ret == Z_STREAM_END {
                 finished = true

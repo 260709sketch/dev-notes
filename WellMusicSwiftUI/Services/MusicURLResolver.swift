@@ -23,7 +23,7 @@ final class PlatformSongResolver {
     static let shared = PlatformSongResolver()
 
     func resolve(item: MusicItem, highQuality: Bool) async throws -> String {
-        let url: String
+        var url = ""
         switch item.source {
         case .qq:
             url = try await QQMusicAPI.shared.resolvePlayURL(item: item, highQuality: highQuality)
