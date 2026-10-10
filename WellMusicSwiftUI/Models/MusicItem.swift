@@ -7,6 +7,8 @@ enum MusicSource: String, CaseIterable, Codable {
     case netease = "netease"
     case kugou = "kugou"
     case kuwo = "kuwo"
+    /// 自定义音源（LX 脚本）返回的歌曲：`neteaseId` 存放带平台前缀的 songmid
+    case lx = "lx"
 
     var displayName: String {
         switch self {
@@ -15,6 +17,7 @@ enum MusicSource: String, CaseIterable, Codable {
         case .netease: return "网易云音乐"
         case .kugou: return "酷狗音乐"
         case .kuwo: return "酷我音乐"
+        case .lx: return "自定义音源"
         }
     }
 }
@@ -49,6 +52,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
         case .netease: return neteaseId
         case .kugou: return kugouHash
         case .kuwo: return kuwoRid
+        case .lx: return neteaseId
         case .auto: return neteaseId ?? qqSongMid ?? kugouHash ?? kuwoRid
         }
     }
@@ -88,6 +92,28 @@ struct MusicItem: Identifiable, Codable, Hashable {
     /// 判断是否为同一首歌（只比 id + 平台，与原版 isSameMediaItem 一致）
     static func isSame(_ a: MusicItem, _ b: MusicItem) -> Bool {
         (a.platformId ?? a.title) == (b.platformId ?? b.title) && a.source == b.source
+    }
+}
+
+extension MusicItem {
+    /// 把「自定义音源」条目（`neteaseId` 存带前缀 songmid）还原成对应平台的普通条目，
+    /// 便于歌词、播放等既有链路按平台处理。
+    func unwrappedFromCustomSource() -> MusicItem {
+        guard source == .lx else { return self }
+        let parsed = WellLXProtocol.parseLxPlatform(neteaseId ?? title)
+        var item = self
+        item.source = WellLXProtocol.platformSource(forLxSource: parsed.source)
+        item.qqSongMid = nil
+        item.neteaseId = nil
+        item.kugouHash = nil
+        item.kuwoRid = nil
+        switch parsed.source {
+        case "wy": item.neteaseId = parsed.cleanId
+        case "kg": item.kugouHash = parsed.cleanId
+        case "kw": item.kuwoRid = parsed.cleanId
+        default: item.qqSongMid = parsed.cleanId
+        }
+        return item
     }
 }
 

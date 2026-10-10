@@ -539,15 +539,14 @@ final class WellLXScriptRunner: @unchecked Sendable {
     // MARK: - 加密工具（镜像 .mm LXAES / LXRSAEncrypt 及其 DER 辅助）
 
     /// AES 加密：base64 进（text/key/iv）→ base64 出；
-    /// CBC（AES/CBC/PKCS7Padding）与 ECB（AES）均带 PKCS7，iv 不足补零、超出截断
+    /// CBC（AES/CBC/PKCS7Padding）带 PKCS7；ECB（AES，安卓模式）为 NoPadding，iv 补零/超出截断
     private func lxAESEncrypt(textBase64: String, keyBase64: String, ivBase64: String, mode: String) -> String {
         guard let data = Data(base64Encoded: textBase64),
               let key = Data(base64Encoded: keyBase64),
               !key.isEmpty else { return "" }
         let isCBC = mode == "AES/CBC/PKCS7Padding"
-        let usesAndroidECB = mode == "AES"
         var options: CCOptions = 0
-        if isCBC || usesAndroidECB { options |= CCOptions(kCCOptionPKCS7Padding) }
+        if isCBC { options |= CCOptions(kCCOptionPKCS7Padding) }
         if !isCBC { options |= CCOptions(kCCOptionECBMode) }
 
         var ivBuffer = [UInt8](repeating: 0, count: kCCBlockSizeAES128)

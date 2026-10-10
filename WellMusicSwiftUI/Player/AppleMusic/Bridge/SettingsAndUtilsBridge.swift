@@ -17,6 +17,116 @@ enum AppleMusicBackgroundMode: String, Codable, CaseIterable {
     case dark
 }
 
+// MARK: - WellTabBarStyle
+/// 底部栏样式
+enum WellTabBarStyle: String, CaseIterable, Identifiable {
+    case `default`    // 默认毛玻璃
+    case liquidGlass  // 液态玻璃
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .default: return "默认毛玻璃"
+        case .liquidGlass: return "液态玻璃"
+        }
+    }
+}
+
+// MARK: - WellGlassPreset
+/// 液态玻璃预设
+enum WellGlassPreset: String, CaseIterable, Identifiable {
+    case custom      // 自定义
+    case white       // 白色高模糊
+    case lightBlue   // 浅蓝色（原库 regular 浅色模式）
+    case darkBlue    // 深蓝色（原库 regular 深色模式）
+    case lens        // 透镜（通透高色散）
+    case thumb       // 缩略图（近透明淡冷色）
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .custom: return "自定义"
+        case .white: return "白色"
+        case .lightBlue: return "浅蓝"
+        case .darkBlue: return "深蓝"
+        case .lens: return "透镜"
+        case .thumb: return "透明"
+        }
+    }
+
+    /// 预设对应的配置
+    var config: WellGlassConfig {
+        switch self {
+        case .custom: return .default
+        case .white:
+            return WellGlassConfig(tintOpacity: 0.45, blurRadius: 0.6, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
+        case .lightBlue:
+            // 原库 regular 浅色模式：RGB(0.902, 0.951, 1.0)
+            return WellGlassConfig(tintOpacity: 0.8, blurRadius: 0.3, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 0.902, tintGreen: 0.951, tintBlue: 1.0)
+        case .darkBlue:
+            // 原库 regular 深色模式：RGB(0, 0.05, 0.1)
+            return WellGlassConfig(tintOpacity: 0.8, blurRadius: 0.3, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 0, tintGreen: 0.05, tintBlue: 0.1)
+        case .lens:
+            return WellGlassConfig(tintOpacity: 0, blurRadius: 0, glassThickness: 6, refractiveIndex: 1.1, dispersionStrength: 15, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
+        case .thumb:
+            return WellGlassConfig(tintOpacity: 0.15, blurRadius: 0, glassThickness: 10, refractiveIndex: 1.11, dispersionStrength: 5, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
+        }
+    }
+}
+
+// MARK: - WellGlassConfig
+/// 液态玻璃自定义配置
+struct WellGlassConfig: Codable, Equatable, Hashable {
+    /// 色调透明度 0-1
+    var tintOpacity: Double = 0.45
+    /// 背景模糊半径 0-1
+    var blurRadius: Double = 0.6
+    /// 玻璃厚度 0-20
+    var glassThickness: Double = 10
+    /// 折射率 1.0-2.0
+    var refractiveIndex: Double = 1.5
+    /// 色散强度 0-30
+    var dispersionStrength: Double = 5
+    /// 渲染帧率 30/60/90/120
+    var preferredFramesPerSecond: Int = 40
+    /// 色调颜色 R 0-1
+    var tintRed: Double = 1.0
+    /// 色调颜色 G 0-1
+    var tintGreen: Double = 1.0
+    /// 色调颜色 B 0-1
+    var tintBlue: Double = 1.0
+
+    static let `default` = WellGlassConfig()
+
+    #if os(iOS)
+    /// 转换成 WellGlass 配置
+    var toWellGlass: WellGlass {
+        WellGlass(
+            shaderUniforms: .init(
+                glassThickness: Float(glassThickness),
+                refractiveIndex: Float(refractiveIndex),
+                dispersionStrength: Float(dispersionStrength),
+                fresnelDistanceRange: 70,
+                fresnelIntensity: 0,
+                fresnelEdgeSharpness: 0,
+                glareDistanceRange: 30,
+                glareAngleConvergence: 0.1,
+                glareOppositeSideBias: 1,
+                glareIntensity: 0.1,
+                glareEdgeSharpness: -0.15,
+                glareDirectionOffset: -.pi / 4
+            ),
+            backgroundTextureSizeCoefficient: 1,
+            backgroundTextureScaleCoefficient: 0.2,
+            backgroundTextureBlurRadius: blurRadius,
+            tintColor: UIColor(red: CGFloat(tintRed), green: CGFloat(tintGreen), blue: CGFloat(tintBlue), alpha: CGFloat(tintOpacity))
+        )
+    }
+    #endif
+}
+
 // MARK: - SettingsManager
 /// 桥接 AppState + UserDefaults，满足 AppleMusicPlayerView 对 SettingsManager 的依赖契约。
 @MainActor
@@ -28,6 +138,28 @@ final class SettingsManager: ObservableObject {
     // MARK: - Now Playing Mode
 
     @AppStorage("wellmusic.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
+
+    // MARK: - 底部栏样式
+
+    /// 底部栏样式（默认毛玻璃 / 液态玻璃）
+    @AppStorage("wellmusic.tabBarStyle") var tabBarStyle: WellTabBarStyle = .default
+
+    /// 液态玻璃预设
+    @AppStorage("wellmusic.liquidGlassPreset") var liquidGlassPreset: WellGlassPreset = .custom
+
+    /// 液态玻璃自定义配置（用户调节后的参数，切换预设不覆盖）
+    @Published var customLiquidGlassConfig: WellGlassConfig {
+        didSet {
+            if let data = try? JSONEncoder().encode(customLiquidGlassConfig) {
+                UserDefaults.standard.set(data, forKey: "wellmusic.customLiquidGlassConfig")
+            }
+        }
+    }
+
+    /// 液态玻璃当前生效配置（自定义预设取自定义值，否则取预设默认值）
+    var liquidGlassConfig: WellGlassConfig {
+        liquidGlassPreset == .custom ? customLiquidGlassConfig : liquidGlassPreset.config
+    }
 
     // MARK: - Lyrics
 
@@ -99,6 +231,14 @@ final class SettingsManager: ObservableObject {
     private init() {
         // 同步 AppState 的 playMode / lyricOffset 等
         // 使用 KVO 或定时同步太复杂，直接在各自属性的 setter 中做
+
+        // 恢复液态玻璃自定义配置
+        if let data = defaults.data(forKey: "wellmusic.customLiquidGlassConfig"),
+           let config = try? JSONDecoder().decode(WellGlassConfig.self, from: data) {
+            customLiquidGlassConfig = config
+        } else {
+            customLiquidGlassConfig = .default
+        }
     }
 
     // MARK: - 与 AppState 双向同步

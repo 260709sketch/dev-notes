@@ -88,34 +88,40 @@ final class PlayerCore: NSObject, ObservableObject {
         }
     }
 
-    func playCurrentItem(seekTo time: TimeInterval) {
+    func playCurrentItem(seekTo time: TimeInterval, autoPlay: Bool = true) {
         guard let item = currentItem else { return }
         isLoading = true
         currentTime = time
         Task {
             do {
-                let urlString = try await MusicURLResolver.shared.resolvePlayURL(for: item,
-                                                                                highQuality: AppState.shared.highQuality)
-                guard let url = URL(string: urlString) else {
+                let resolved = try await MusicURLResolver.shared.resolvePlayback(
+                    for: item, highQuality: AppState.shared.highQuality)
+                guard let url = URL(string: resolved.url) else {
                     isLoading = false
                     return
                 }
+                if resolved.isFallbackSource, let name = resolved.fromCustomSource {
+                    await MainActor.run { ToastCenter.shared.show("自动换源：\(name)") }
+                }
                 await MainActor.run {
-                    let avItem = AVPlayerItem(url: url)
+                    let avItem = Self.makePlayerItem(url: url, headers: resolved.headers)
                     observeStatus(avItem)
-                    if time > 0 {
-                        player.replaceCurrentItem(with: avItem)
-                        player.seek(to: CMTime(seconds: time, preferredTimescale: preferredTimescale),
-                                   toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                            self?.player.play()
-                            self?.isPlaying = true
-                            self?.isLoading = false
+                    player.replaceCurrentItem(with: avItem)
+                    let finish: () -> Void = { [weak self] in
+                        guard let self else { return }
+                        if autoPlay {
+                            self.player.play()
+                            self.isPlaying = true
+                        } else {
+                            self.isPlaying = false
                         }
+                        self.isLoading = false
+                    }
+                    if time > 0 {
+                        player.seek(to: CMTime(seconds: time, preferredTimescale: preferredTimescale),
+                                   toleranceBefore: .zero, toleranceAfter: .zero) { _ in finish() }
                     } else {
-                        player.replaceCurrentItem(with: avItem)
-                        player.play()
-                        isPlaying = true
-                        isLoading = false
+                        finish()
                     }
                     hasActiveTrack = true
                     updateNowPlaying(item)
@@ -126,6 +132,19 @@ final class PlayerCore: NSObject, ObservableObject {
                 isLoading = false
             }
         }
+    }
+
+    /// 切换音源后重新解析当前歌曲（保持进度与播放/暂停状态）。
+    func reloadCurrentTrack() {
+        guard currentIndex != nil, currentItem != nil else { return }
+        playCurrentItem(seekTo: currentTime, autoPlay: isPlaying)
+    }
+
+    /// 构造播放条目：自定义音源取链需要携带 Referer，否则部分 CDN 会拒绝请求。
+    private static func makePlayerItem(url: URL, headers: [String: String]) -> AVPlayerItem {
+        guard !headers.isEmpty else { return AVPlayerItem(url: url) }
+        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        return AVPlayerItem(asset: asset)
     }
 
     private func observeStatus(_ avItem: AVPlayerItem) {

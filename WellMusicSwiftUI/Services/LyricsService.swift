@@ -65,6 +65,10 @@ final class LyricsService {
             case .kugou: return try await fetchKugou(item: item)
             case .kuwo: return try await fetchKuwo(item: item)
             case .auto: return nil
+            case .lx:
+                // 自定义音源条目：还原成底层平台条目后再按平台取词
+                let unwrapped = item.unwrappedFromCustomSource()
+                return await fetchFrom(unwrapped.source, item: unwrapped)
             }
         } catch {
             return nil

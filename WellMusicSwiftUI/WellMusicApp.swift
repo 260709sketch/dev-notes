@@ -20,6 +20,10 @@ struct WellMusicApp: App {
                 .environmentObject(playerService)
                 .environmentObject(settingsManager)
                 .preferredColorScheme(.dark)
+                .task {
+                    // 恢复已导入的自定义音源并重新激活
+                    await WellLXSourceStore.shared.bootstrapIfNeeded()
+                }
         }
     }
 }
