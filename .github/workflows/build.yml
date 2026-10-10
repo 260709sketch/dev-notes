@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      # 1) 模拟器 Release 构建：验证代码可编译
+      - name: Build (Simulator, Release)
+        run: |
+          xcodebuild \
+            -project WellMusicSwiftUI.xcodeproj \
+            -scheme WellMusicSwiftUI \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      # 2) 真机构建（无签名）：产出 .app → 打包 ipa 供签名
+      - name: Build (Device, Release, unsigned)
+        run: |
+          xcodebuild \
+            -project WellMusicSwiftUI.xcodeproj \
+            -scheme WellMusicSwiftUI \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH=$(find build/device/Build/Products -name '*.app' -maxdepth 2 | head -1)
+          echo "APP_PATH=$APP_PATH"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          cd build/ipa
+          zip -qry WellMusicSwiftUI-unsigned.ipa Payload
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WellMusicSwiftUI-${{ github.sha }}
+          path: |
+            build/ipa/WellMusicSwiftUI-unsigned.ipa
+            build/sim/Build/Products/*/WellMusicSwiftUI.app
+          if-no-files-found: error

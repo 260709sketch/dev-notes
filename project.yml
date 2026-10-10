@@ -1,0 +1,42 @@
+name: WellMusicSwiftUI
+options:
+  bundleIdPrefix: com.wellmusic
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+targets:
+  WellMusicSwiftUI:
+    type: application
+    platform: iOS
+    sources:
+      - WellMusicSwiftUI
+    info:
+      path: WellMusicSwiftUI/Supporting/Info.plist
+      properties:
+        CFBundleDisplayName: WellMusic
+        UIBackgroundModes:
+          - audio
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSupportsIndirectInputEvents: true
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: false
+        PRODUCT_BUNDLE_IDENTIFIER: com.wellmusic.app
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        OTHER_LDFLAGS:
+          - $(inherited)
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+schemes:
+  WellMusicSwiftUI:
+    build:
+      targets:
+        WellMusicSwiftUI: all
+    run:
+      config: Debug

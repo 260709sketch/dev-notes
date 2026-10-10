@@ -1,0 +1,20 @@
+# Xcode / XcodeGen 生成物
+WellMusicSwiftUI.xcodeproj/
+DerivedData/
+build/
+
+# Xcode 用户数据
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 本地配置（含密钥一律不提交）
+*.p12
+*.mobileprovision
+.env
+*.env
+Config.xcconfig
