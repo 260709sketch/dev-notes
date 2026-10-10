@@ -119,12 +119,13 @@ final class SearchService {
     }
 
     /// QQ / 酷狗暂无独立详情接口，用同名搜索兜底
-    private func fallbackSearchTracks(_ keyword: String, platform: WellSearchPlatform) async -> [MusicItem] {
+    private func fallbackSearchTracks(_ keyword: String, platform: MusicSource) async -> [MusicItem] {
         do {
             switch platform {
             case .qq: return try await QQMusicAPI.shared.search(keyword: keyword, limit: 50)
             case .kugou: return try await KugouMusicAPI.shared.search(keyword: keyword, limit: 50)
             case .netease: return try await NeteaseMusicAPI.shared.search(keyword: keyword, limit: 50)
+            default: return []
             }
         } catch {
             return []

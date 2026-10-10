@@ -72,12 +72,12 @@ struct WellGlass {
                 glareOppositeSideBias: 0,
                 glareIntensity: 0.01,
                 glareEdgeSharpness: -0.2,
-                glareDirectionOffset: .pi * 0.9,
+                glareDirectionOffset: .pi * 0.9
             ),
             backgroundTextureSizeCoefficient: 1 / magnification,
             backgroundTextureScaleCoefficient: magnification,
             backgroundTextureBlurRadius: 0,
-            shadowOverlay: true,
+            shadowOverlay: true
         )
     }
 
@@ -94,12 +94,12 @@ struct WellGlass {
             glareOppositeSideBias: 1,
             glareIntensity: 0.1,
             glareEdgeSharpness: -0.1,
-            glareDirectionOffset: -.pi / 4,
+            glareDirectionOffset: -.pi / 4
         ),
         backgroundTextureSizeCoefficient: 1.1,
         backgroundTextureScaleCoefficient: 0.8,
         backgroundTextureBlurRadius: 0,
-        shadowOverlay: true,
+        shadowOverlay: true
     )
 
     static let regular = Self.init(
@@ -115,12 +115,12 @@ struct WellGlass {
             glareOppositeSideBias: 1,
             glareIntensity: 0.1,
             glareEdgeSharpness: -0.15,
-            glareDirectionOffset: -.pi / 4,
+            glareDirectionOffset: -.pi / 4
         ),
         backgroundTextureSizeCoefficient: 1,
         backgroundTextureScaleCoefficient: 0.2,
         backgroundTextureBlurRadius: 0.3,
-        tintColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0, green: 0.04958364581, blue: 0.09951775161, alpha: 0.7981493615) : UIColor(red: 0.9023525731, green: 0.9509486998, blue: 1, alpha: 0.8002892298) },//.systemBackground.withAlphaComponent(0.8),
+        tintColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0, green: 0.04958364581, blue: 0.09951775161, alpha: 0.7981493615) : UIColor(red: 0.9023525731, green: 0.9509486998, blue: 1, alpha: 0.8002892298) }//.systemBackground.withAlphaComponent(0.8),
     )
 
     static let white = Self.init(
@@ -136,12 +136,12 @@ struct WellGlass {
             glareOppositeSideBias: 1,
             glareIntensity: 0.1,
             glareEdgeSharpness: -0.15,
-            glareDirectionOffset: -.pi / 4,
+            glareDirectionOffset: -.pi / 4
         ),
         backgroundTextureSizeCoefficient: 1,
         backgroundTextureScaleCoefficient: 0.2,
         backgroundTextureBlurRadius: 0.6,
-        tintColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor.white.withAlphaComponent(0.25) : UIColor.white.withAlphaComponent(0.45) },
+        tintColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor.white.withAlphaComponent(0.25) : UIColor.white.withAlphaComponent(0.45) }
     )
 }
 
@@ -210,7 +210,9 @@ final class WellGlassRenderer {
         self.device = device
 
         // XcodeGen 工程：.metal 由 Xcode 编译进主 bundle，直接加载默认库
-        let library = try! device.makeDefaultLibrary()
+        guard let library = try? device.makeDefaultLibrary() else {
+            fatalError("default.metallib 缺失：请确认 .metal 已加入编译源")
+        }
 
         let vertexFunction = library.makeFunction(name: "wellFullscreenQuad")!
         let fragmentFunction = library.makeFunction(name: "wellGlassEffect")!

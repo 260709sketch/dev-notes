@@ -25,7 +25,8 @@ final class MusicURLResolver {
         if let cached = item.playURL, !cached.isEmpty, !cached.hasPrefix("__") {
             return ResolvedPlayback(url: cached, headers: [:], fromCustomSource: nil, isFallbackSource: false)
         }
-        if WellLXSourceStore.shared.hasActiveSource,
+        let hasActiveLXSource = await WellLXSourceStore.shared.hasActiveSource
+        if hasActiveLXSource,
            let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, highQuality: highQuality) {
             return ResolvedPlayback(url: lx.url,
                                     headers: lx.headers,

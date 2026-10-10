@@ -132,7 +132,7 @@ private struct WellLXRequestLogRow: View {
             if let message = log.message {
                 Text(message)
                     .font(.caption2)
-                    .foregroundStyle(log.success ? .secondary : .red)
+                    .foregroundStyle(log.success ? Color.secondary : Color.red)
                     .lineLimit(2)
             }
         }
