@@ -23,6 +23,25 @@ struct MainTabView: View {
             }
         }
         .fullScreenCover(isPresented: $showingNowPlaying) {
+            NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
+        }
+    }
+}
+
+/// 播放页路由：根据设置中的 nowPlayingMode 选择 Apple Music 播放器或原版播放页
+struct NowPlayingRouterView: View {
+    @EnvironmentObject private var settings: SettingsManager
+    let onDismiss: () -> Void
+
+    var body: some View {
+        if settings.nowPlayingMode == .appleMusic {
+            AppleMusicPlayerView(
+                onOpenDestination: { _ in
+                    // 目标页（歌手/专辑）在后续迭代接入
+                },
+                onDismiss: onDismiss
+            )
+        } else {
             NowPlayingView()
         }
     }
