@@ -54,7 +54,18 @@ struct SearchView: View {
                     if isSearching {
                         ProgressView("搜索中…")
                     } else if results.isEmpty && !keyword.isEmpty {
-                        ContentUnavailableView("没有找到结果", systemImage: "magnifyingglass")
+                        if #available(iOS 17.0, *) {
+                            ContentUnavailableView("没有找到结果", systemImage: "magnifyingglass")
+                        } else {
+                            VStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.secondary)
+                                Text("没有找到结果").font(.headline)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                        }
                     }
                 }
             }

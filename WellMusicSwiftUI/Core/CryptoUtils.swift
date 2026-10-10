@@ -61,11 +61,11 @@ enum CryptoUtils {
     // MARK: AES-CBC / ECB（CommonCrypto）
 
     static func aesEncryptCBC(_ data: Data, key: Data, iv: Data) -> Data? {
-        crypt(data, key: key, iv: iv, operation: kCCEncrypt, padding: true)
+        crypt(data, key: key, iv: iv, operation: CCOperation(kCCEncrypt), padding: true)
     }
 
     static func aesDecryptCBC(_ data: Data, key: Data, iv: Data) -> Data? {
-        crypt(data, key: key, iv: iv, operation: kCCDecrypt, padding: true)
+        crypt(data, key: key, iv: iv, operation: CCOperation(kCCDecrypt), padding: true)
     }
 
     /// AES-128-ECB（Pkcs7），LX 音源脚本的 aes-128-ecb 模式使用
@@ -179,7 +179,7 @@ enum CryptoUtils {
                 stream.next_out = buf.bindMemory(to: Bytef.self).baseAddress
                 stream.avail_out = uInt(buffer.count)
             }
-            let ret = inflate(&stream, Z_NO_FLUSH)
+            let ret = zlib.inflate(&stream, Z_NO_FLUSH)
             guard ret != Z_STREAM_ERROR else { return nil }
             let produced = buffer.count - Int(stream.avail_out)
             if produced > 0 { result.append(buffer, count: produced) }

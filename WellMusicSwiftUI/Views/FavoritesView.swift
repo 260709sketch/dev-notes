@@ -40,8 +40,20 @@ struct FavoritesView: View {
     @ViewBuilder
     private func trackRows(_ tracks: [MusicItem]) -> some View {
         if tracks.isEmpty {
-            ContentUnavailableView("还没有歌曲", systemImage: "music.note",
-                                   description: Text("播放过的歌曲会出现在这里"))
+            if #available(iOS 17.0, *) {
+                ContentUnavailableView("还没有歌曲", systemImage: "music.note",
+                                       description: Text("播放过的歌曲会出现在这里"))
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.note")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("还没有歌曲").font(.headline)
+                    Text("播放过的歌曲会出现在这里").font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+            }
         } else {
             ForEach(tracks) { item in
                 TrackRow(item: item)
@@ -61,7 +73,18 @@ struct FavoritesView: View {
     private var playlistRows: some View {
         Group {
             if appState.favoritePlaylists.isEmpty {
-                ContentUnavailableView("还没有收藏歌单", systemImage: "music.note.list")
+                if #available(iOS 17.0, *) {
+                    ContentUnavailableView("还没有收藏歌单", systemImage: "music.note.list")
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "music.note.list")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("还没有收藏歌单").font(.headline)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                }
             } else {
                 ForEach(appState.favoritePlaylists) { pl in
                     HStack(spacing: 12) {

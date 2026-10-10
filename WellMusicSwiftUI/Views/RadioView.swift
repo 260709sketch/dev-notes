@@ -9,8 +9,20 @@ struct RadioView: View {
         NavigationStack {
             List {
                 if recommended.isEmpty {
-                    ContentUnavailableView("电台内容开发中", systemImage: "dot.radiowaves.left.and.right",
-                                           description: Text("后续接入平台推荐歌单与每日推荐"))
+                    if #available(iOS 17.0, *) {
+                        ContentUnavailableView("电台内容开发中", systemImage: "dot.radiowaves.left.and.right",
+                                               description: Text("后续接入平台推荐歌单与每日推荐"))
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                            Text("电台内容开发中").font(.headline)
+                            Text("后续接入平台推荐歌单与每日推荐").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    }
                 } else {
                     ForEach(recommended) { pl in
                         HStack(spacing: 12) {

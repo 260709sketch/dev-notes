@@ -298,7 +298,7 @@ final class PlayerCore: NSObject, ObservableObject {
 
     private func setupEndObserver() {
         endObserver = NotificationCenter.default.addObserver(
-            forName: AVPlayerItemDidPlayToEndTime, object: nil, queue: .main
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.next()

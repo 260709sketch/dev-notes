@@ -25,7 +25,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
 
     /// 唯一键：`{platform}://{id}_{artist}`，与原版 keyOf 一致
     var keyOf: String {
-        let pid = platformId ?? songMid ?? title
+        let pid = platformId ?? title
         return "\(source.rawValue)://\(pid)_\(artist ?? "")"
     }
 

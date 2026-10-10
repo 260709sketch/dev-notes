@@ -86,7 +86,7 @@ final class WellLXScriptRunner: @unchecked Sendable {
 
             if case .failure(let message) = self.createJSEnv(info: info) {
                 self.lastExceptionText = nil
-                self.emitInitFailed(message)
+                self.emitInitFailed(message.errorDescription ?? "创建脚本环境失败")
                 return
             }
             self.lastExceptionText = nil
@@ -162,28 +162,32 @@ final class WellLXScriptRunner: @unchecked Sendable {
     // MARK: - 环境创建（镜像 .mm createJSEnv）
 
     /// 返回值：ok = 环境可继续 evaluate 用户脚本
-    private func createJSEnv(info: WellLXScriptInfo) -> Result<Void, String> {
+    private func createJSEnv(info: WellLXScriptInfo) -> Result<Void, WellLXError> {
         scriptKey = UUID().uuidString
         initSent = false
         lastInitDataString = nil
 
-        let context = JSContext()
+        guard let context = JSContext() else {
+            return .failure(.scriptError("JSContext 创建失败"))
+        }
         jsContext = context
 
         weak var weakSelf = self
         context.exceptionHandler = { _, exception in
-            let message = exception.toString() ?? "Unknown JavaScript exception"
+            let message = exception?.toString() ?? "Unknown JavaScript exception"
             weakSelf?.lastExceptionText = message
             weakSelf?.emitLog(type: "error", message: "Call script error: \(message)")
         }
 
-        context["globalThis"] = context.globalObject
-        context["window"] = context.globalObject
-        context["self"] = context.globalObject
-        context["global"] = context.globalObject
+        context.setObject(context.globalObject, forKeyedSubscript: "globalThis" as NSString)
+        context.setObject(context.globalObject, forKeyedSubscript: "window" as NSString)
+        context.setObject(context.globalObject, forKeyedSubscript: "self" as NSString)
+        context.setObject(context.globalObject, forKeyedSubscript: "global" as NSString)
 
         // console.log/info/warn/error → 宿主日志
-        let console = JSValue(newObjectIn: context)
+        guard let console = JSValue(newObjectIn: context) else {
+            return .failure(.scriptError("console 创建失败"))
+        }
         console.setObject({ [weak self] in
             self?.emitLog(type: "log", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
         }, forKeyedSubscript: "log" as NSString)
@@ -196,7 +200,7 @@ final class WellLXScriptRunner: @unchecked Sendable {
         console.setObject({ [weak self] in
             self?.emitLog(type: "error", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
         }, forKeyedSubscript: "error" as NSString)
-        context["console"] = console
+        context.setObject(console, forKeyedSubscript: "console" as NSString)
 
         registerNativeBlocks(in: context)
 
@@ -204,13 +208,13 @@ final class WellLXScriptRunner: @unchecked Sendable {
         lastExceptionText = nil
         context.evaluateScript(preloadScript)
         if let exception = lastExceptionText {
-            return .failure(exception)
+            return .failure(.scriptError(exception))
         }
 
         // lx_setup(key, id, name, description, version, author, homepage, rawScript)
         guard let setup = context.objectForKeyedSubscript("lx_setup"),
               !setup.isUndefined else {
-            return .failure("preload 未定义 lx_setup")
+            return .failure(.scriptError("preload 未定义 lx_setup"))
         }
         lastExceptionText = nil
         _ = setup.call(withArguments: [
@@ -224,7 +228,7 @@ final class WellLXScriptRunner: @unchecked Sendable {
             info.script,
         ])
         if let exception = lastExceptionText {
-            return .failure(exception)
+            return .failure(.scriptError(exception))
         }
         return .success(())
     }
@@ -283,7 +287,7 @@ final class WellLXScriptRunner: @unchecked Sendable {
         weak var weakSelf = self
 
         // 1) 总入口 __lx_native_call__(key, action, dataJSON)
-        context["__lx_native_call__"] = { (key: String?, action: String?, data: String?) -> Void in
+        let nativeCall: @convention(block) (String?, String?, String?) -> Void = { (key, action, data) in
             guard let weakSelf, let key, key == weakSelf.scriptKey else { return }
             let act = action ?? ""
             switch act {
@@ -303,14 +307,16 @@ final class WellLXScriptRunner: @unchecked Sendable {
                 weakSelf.emitLog(type: "log", message: "unknown native call: \(act)")
             }
         }
+        context.setObject(nativeCall, forKeyedSubscript: "__lx_native_call__" as NSString)
 
         // 2) utils_str2b64：UTF-8 → base64
-        context["__lx_native_call__utils_str2b64"] = { (input: String) -> String in
+        let str2b64: @convention(block) (String) -> String = { input in
             input.data(using: .utf8)?.base64EncodedString() ?? ""
         }
+        context.setObject(str2b64, forKeyedSubscript: "__lx_native_call__utils_str2b64" as NSString)
 
         // 3) utils_b642buf：base64 → 字节数组 JSON 字符串（如 "[49,50,51]"）
-        context["__lx_native_call__utils_b642buf"] = { (input: String) -> String in
+        let b642buf: @convention(block) (String) -> String = { input in
             let data = Data(base64Encoded: input) ?? Data()
             let values = data.map { $0 as UInt8 }
             let list = values.map { NSNumber(value: Int($0)) }
@@ -320,32 +326,37 @@ final class WellLXScriptRunner: @unchecked Sendable {
             }
             return "[]"
         }
+        context.setObject(b642buf, forKeyedSubscript: "__lx_native_call__utils_b642buf" as NSString)
 
         // 4) utils_str2md5：先 percent-decode 再 UTF-8 → MD5 小写 hex
-        context["__lx_native_call__utils_str2md5"] = { (input: String) -> String in
+        let str2md5: @convention(block) (String) -> String = { input in
             let decoded = input.removingPercentEncoding ?? input
             let digest = CryptoUtils.md5Data(Data(decoded.utf8))
             return digest.map { String(format: "%02x", $0) }.joined()
         }
+        context.setObject(str2md5, forKeyedSubscript: "__lx_native_call__utils_str2md5" as NSString)
 
         // 5) utils_aes_encrypt(textB64, keyB64, ivB64, mode)：CBC(AES/CBC/PKCS7Padding) / ECB(AES)，全部 PKCS7
-        context["__lx_native_call__utils_aes_encrypt"] = { (text: String, key: String, iv: String, mode: String) -> String in
+        let aesEncrypt: @convention(block) (String, String, String, String) -> String = { text, key, iv, mode in
             weakSelf?.lxAESEncrypt(textBase64: text, keyBase64: key, ivBase64: iv, mode: mode) ?? ""
         }
+        context.setObject(aesEncrypt, forKeyedSubscript: "__lx_native_call__utils_aes_encrypt" as NSString)
 
         // 6) utils_rsa_encrypt(textB64, keyB64, padding)：PEM SPKI → DER 剥离 → SecKey，Raw / OAEP-SHA1
-        context["__lx_native_call__utils_rsa_encrypt"] = { (text: String, key: String, padding: String) -> String in
+        let rsaEncrypt: @convention(block) (String, String, String) -> String = { text, key, padding in
             weakSelf?.lxRSAEncrypt(textBase64: text, keyBase64: key, padding: padding) ?? ""
         }
+        context.setObject(rsaEncrypt, forKeyedSubscript: "__lx_native_call__utils_rsa_encrypt" as NSString)
 
         // 7) set_timeout(id, ms)：到点回投 __set_timeout__
-        context["__lx_native_call__set_timeout"] = { (identifier: NSNumber, timeout: NSNumber) -> Void in
+        let setTimeout: @convention(block) (NSNumber, NSNumber) -> Void = { identifier, timeout in
             let id = identifier.intValue
             let ms = max(timeout.doubleValue, 0)
             weakSelf?.queue.asyncAfter(deadline: .now() + ms / 1000.0) { [weak weakSelf] in
                 weakSelf?.callJSAction("__set_timeout__", data: id)
             }
         }
+        context.setObject(setTimeout, forKeyedSubscript: "__lx_native_call__set_timeout" as NSString)
     }
 
     // MARK: - init 一次性标记（镜像 .mm __lx_native_call__ 的 init 分支）

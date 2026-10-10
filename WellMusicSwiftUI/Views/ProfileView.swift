@@ -64,8 +64,20 @@ struct MyPlaylistsView: View {
     var body: some View {
         List {
             if appState.playlists.isEmpty {
-                ContentUnavailableView("暂无歌单", systemImage: "music.note.list",
-                                       description: Text("点击右上角新建歌单"))
+                if #available(iOS 17.0, *) {
+                    ContentUnavailableView("暂无歌单", systemImage: "music.note.list",
+                                           description: Text("点击右上角新建歌单"))
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "music.note.list")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("暂无歌单").font(.headline)
+                        Text("点击右上角新建歌单").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                }
             } else {
                 ForEach(appState.playlists) { pl in
                     NavigationLink {
@@ -88,7 +100,7 @@ struct MyPlaylistsView: View {
         }
         .navigationTitle("我的歌单")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     showingCreate = true
                 } label: {

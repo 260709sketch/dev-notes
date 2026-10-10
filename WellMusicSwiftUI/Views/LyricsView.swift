@@ -7,8 +7,8 @@ struct LyricsView: View {
 
     var body: some View {
         Group {
-            if let wordLyric = currentWordLyric, !wordLyric.isEmpty {
-                WordLyricsView(lines: wordLyric, currentTime: displayTime)
+            if !currentWordLyric.isEmpty {
+                WordLyricsView(lines: currentWordLyric, currentTime: displayTime)
             } else if !appState.currentLrc.isEmpty {
                 LineLyricsView(lines: appState.currentLrc, currentTime: displayTime)
             } else {
