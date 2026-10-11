@@ -756,7 +756,9 @@ struct AppleMusicPlayerView: View {
             // `Gesture` 推断，`showLyrics == false` 时会在附件手势那一刻
             // 解包失败直接崩溃。改为永远附加同一个手势，用 `including`
             // 在未展开歌词页时把它禁掉。
-            .gesture(headerDismissGesture, including: showLyrics ? .allGesture : .subviews)
+            //
+            // ⚠️ `GestureMask` 只有 `.all` / `.subviews` / `.none` 三个成员。
+            .gesture(headerDismissGesture, including: showLyrics ? .all : .subviews)
 
             lyricsHeader
                 .padding(.horizontal, ScreenAdapter.w(24))
