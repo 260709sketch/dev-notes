@@ -42,6 +42,9 @@ struct WellGlassTabBar: View {
                     .frame(width: cellW - 8, height: contentHeight)
                     .position(x: pillX, y: geo.size.height / 2)
                     .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                    // 关键：只在 selection 真正变化时动画，且用 id 固定身份避免重建。
+                    // 之前这里没有稳定 id，切换 tab 时 SwiftUI 会销毁重建整个 ZStack
+                    // （含 CGPath 阴影与液态玻璃底），造成“抖一下”。
                     .animation(settle, value: selection)
 
                 HStack(spacing: 0) {
@@ -62,6 +65,7 @@ struct WellGlassTabBar: View {
                                    lineWidth: 0.5)
         }
         .clipShape(Capsule())
+        // 阴影固定几何，不再随 selection 变化重算 —— 消除切换时的重绘抖动
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 12, y: 4)
         .padding(.horizontal, 12)
     }

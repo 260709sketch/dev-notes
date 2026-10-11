@@ -72,7 +72,8 @@ struct SearchView: View {
                         emptyPrompt
                     }
 
-                    Color.clear.frame(height: 90)
+                    // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
+                    Color.clear.frame(height: 150)
                 }
                 .padding(.top, 8)
             }

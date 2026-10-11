@@ -38,6 +38,10 @@ public final class WellScrollDetector: ObservableObject {
         guard let scrollView = notification.object as? UIScrollView else { return }
         // 忽略很小的内容（如分段控制器内部的滑动）
         guard scrollView.frame.height > 100 else { return }
+        // 关键：只把「用户正在拖动」视为滚动。
+        // 切换 tab / 页面布局重排时 UIScrollView 也会发 didScroll 通知，若不加过滤，
+        // 液态玻璃底栏会误判为滚动 → 触发降分辨率/改帧率重建 → 表现为“切换页面抖一下”。
+        guard scrollView.isDragging || scrollView.isDecelerating else { return }
 
         scrollingScrollViews.insert(scrollView)
         updateScrollingState()

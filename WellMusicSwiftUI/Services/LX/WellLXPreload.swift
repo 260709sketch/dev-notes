@@ -520,6 +520,125 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
   // 兼容部分脚本使用 lxu 命名（早期 lx-music-mobile 内部 API 名）
   globalThis.lxu = globalThis.lx
 
+  // MARK: 宿主缺失的 Web 全局（JavaScriptCore 裸环境没有这些，脚本却大量依赖）
+  //
+  // LX 音源脚本普遍直接调用 `fetch(url, options)` 发请求（RN 端由 RN runtime 提供
+  // 全局 fetch；JSC 里没有 → 脚本一执行到取链就抛 "fetch is not defined" / 上层表现为
+  // "musicUrl is not a function"）。这里全部补齐，fetch 走 lx.request → 原生 URLSession。
+
+  // btoa / atob（latin1）
+  if (typeof globalThis.btoa != 'function') {
+    globalThis.btoa = (input) => {
+      const str = String(input)
+      let binary = ''
+      for (let i = 0; i < str.length; i++) binary += String.fromCharCode(str.charCodeAt(i) & 0xff)
+      return nativeFuncs.utils_str2b64(binary)
+    }
+  }
+  if (typeof globalThis.atob != 'function') {
+    globalThis.atob = (input) => {
+      const bytes = JSON.parse(nativeFuncs.utils_b642buf(String(input)))
+      let out = ''
+      for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i])
+      return out
+    }
+  }
+
+  // TextEncoder / TextDecoder（脚本用它们做 UTF-8 ↔ 字节）
+  if (typeof globalThis.TextEncoder != 'function') {
+    globalThis.TextEncoder = function TextEncoder() {}
+    globalThis.TextEncoder.prototype.encode = function (str) {
+      const utf8 = unescape(encodeURIComponent(String(str)))
+      const bytes = new Uint8Array(utf8.length)
+      for (let i = 0; i < utf8.length; i++) bytes[i] = utf8.charCodeAt(i)
+      return bytes
+    }
+    globalThis.TextEncoder.prototype.encodeInto = function (str, dest) {
+      const bytes = this.encode(str)
+      const n = Math.min(bytes.length, dest.length)
+      for (let i = 0; i < n; i++) dest[i] = bytes[i]
+      return { read: String(str).length, written: n }
+    }
+  }
+  if (typeof globalThis.TextDecoder != 'function') {
+    globalThis.TextDecoder = function TextDecoder(encoding) { this.encoding = encoding || 'utf-8' }
+    globalThis.TextDecoder.prototype.decode = function (buffer) {
+      if (buffer == null) return ''
+      const bytes = ArrayBuffer.isView(buffer) ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength) : new Uint8Array(buffer)
+      let utf8 = ''
+      for (let i = 0; i < bytes.length; i++) utf8 += String.fromCharCode(bytes[i])
+      try { return decodeURIComponent(escape(utf8)) } catch (e) { return utf8 }
+    }
+  }
+
+  // fetch：把 WHATWG fetch 语义桥接到 lx.request（原生 URLSession）。
+  // 支持 fetch(url, {method, headers, body}) → Response{ok,status,statusText,headers,text(),json()}
+  if (typeof globalThis.fetch != 'function') {
+    const _fetch = (input, init) => {
+      const url = typeof input == 'string' ? input : (input && input.url) || String(input)
+      const options = init || {}
+      const method = (options.method || 'GET').toLowerCase()
+      // body 归一化：字符串直接发；URLSearchParams/对象转 query 或 JSON
+      let body = options.body
+      const headers = options.headers || {}
+      let contentType = ''
+      if (headers) {
+        if (typeof headers.forEach == 'function' && !Array.isArray(headers)) {
+          headers.forEach((v, k) => { if (String(k).toLowerCase() == 'content-type') contentType = v })
+        } else {
+          for (const k of Object.keys(headers)) {
+            if (String(k).toLowerCase() == 'content-type') contentType = headers[k]
+          }
+        }
+      }
+      let form
+      if (body != null && typeof body != 'string') {
+        if (typeof URLSearchParams != 'undefined' && body instanceof URLSearchParams) {
+          form = {}
+          body.forEach((v, k) => { form[k] = v })
+          body = undefined
+          if (!contentType) contentType = 'application/x-www-form-urlencoded'
+        } else {
+          body = JSON.stringify(body)
+          if (!contentType) contentType = 'application/json'
+        }
+      }
+      const finalHeaders = Object.assign({}, headers)
+      if (contentType && !finalHeaders['Content-Type'] && !finalHeaders['content-type']) {
+        finalHeaders['Content-Type'] = contentType
+      }
+      return new Promise((resolve, reject) => {
+        globalThis.lx.request(url, {
+          method: method.toUpperCase(),
+          headers: finalHeaders,
+          body,
+          form,
+        }, (err, resp) => {
+          if (err) { reject(err); return }
+          const rawBody = resp.body
+          const responseHeaders = resp.headers || {}
+          resolve({
+            ok: resp.statusCode >= 200 && resp.statusCode < 300,
+            status: resp.statusCode,
+            statusText: resp.statusMessage || '',
+            url,
+            headers: {
+              get: (name) => {
+                const key = Object.keys(responseHeaders).find(k => k.toLowerCase() == String(name).toLowerCase())
+                return key ? responseHeaders[key] : null
+              },
+            },
+            text: () => Promise.resolve(typeof rawBody == 'string' ? rawBody : ''),
+            json: () => new Promise((res, rej) => {
+              try { res(JSON.parse(rawBody)) } catch (e) { rej(e) }
+            }),
+          })
+        })
+      })
+    }
+    globalThis.fetch = _fetch
+  }
+
   globalThis.setTimeout = _setTimeout
   globalThis.clearTimeout = _clearTimeout
 

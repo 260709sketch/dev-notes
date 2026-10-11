@@ -18,7 +18,47 @@ final class KugouMusicAPI {
 
     // MARK: - 搜索歌曲
 
+    /// 搜索歌曲。
+    ///
+    /// 主通道对齐 RN 版：`complexsearch.kugou.com/v2/search/song`（返回 JSONP，
+    /// 需剥掉 `callback(...)` 外壳）。该接口对 UA/Referer 敏感，缺 Referer 会返回空。
+    /// 主通道失败时回退旧的 `mobilecdn.kugou.com` 接口。
     func search(keyword: String, limit: Int = 30) async throws -> [MusicItem] {
+        if let results = try? await complexSearch(keyword, limit: limit), !results.isEmpty {
+            return results
+        }
+        return try await mobilecdnSearch(keyword, limit: limit)
+    }
+
+    /// RN 同款：complexsearch JSONP 接口。
+    private func complexSearch(_ keyword: String, limit: Int) async throws -> [MusicItem] {
+        let clientTime = Int(Date().timeIntervalSince1970 * 1000)
+        let url = "https://complexsearch.kugou.com/v2/search/song?" +
+            "callback=callback&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)" +
+            "&bitrate=0&isfuzzy=0&inputtype=0&platform=WebFilter&userid=-1&clientver=2000" +
+            "&iscorrection=1&privilege_filter=0&filter=10&token=&appid=1014" +
+            "&clienttime=\(clientTime)&mid=1&uuid=1&dfid=2&signature="
+        let resp = try await NetworkClient.shared.get(url, headers: [
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.kugou.com/",
+        ])
+        guard var text = resp.string else { return [] }
+        // 剥 JSONP 外壳：callback({...}) → {...}
+        if let range = text.range(of: "callback("), text.hasSuffix(")") {
+            text = String(text[range.upperBound...].dropLast())
+        }
+        guard let data = text.data(using: .utf8),
+              let json = NetworkClient.jsonObject(data),
+              (json["status"] as? Int) == 1,
+              let body = json["data"] as? [String: Any],
+              let lists = body["lists"] as? [[String: Any]] else {
+            return []
+        }
+        return lists.compactMap { parseSong($0) }
+    }
+
+    /// 备用：mobilecdn v3 接口。
+    private func mobilecdnSearch(_ keyword: String, limit: Int) async throws -> [MusicItem] {
         let url = "https://mobilecdn.kugou.com/api/v3/search/song?" +
             "format=json&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)" +
             "&showtype=1&plat=2&version=8990"
@@ -49,9 +89,13 @@ final class KugouMusicAPI {
             artist = fallbackSinger
         }
         let albumId = (dict["album_id"] as? String) ?? (dict["albumid"] as? String)
-            ?? (dict["AlbumID"] as? String) ?? (dict["album_id"] as? Int).map(String.init) ?? ""
-        let duration = TimeInterval((dict["duration"] as? Int) ?? (dict["timelength"] as? Int)
-            ?? (dict["Duration"] as? Int) ?? 0)
+            ?? (dict["AlbumID"] as? String)
+            ?? Self.intValue(dict["AlbumID"]).map { String($0) }
+            ?? Self.intValue(dict["album_id"]).map { String($0) }
+            ?? Self.intValue(dict["albumid"]).map { String($0) } ?? ""
+        let duration = TimeInterval(Self.intValue(dict["duration"])
+            ?? Self.intValue(dict["timelength"])
+            ?? Self.intValue(dict["Duration"]) ?? 0)
 
         return MusicItem(
             source: .kugou,
@@ -77,6 +121,14 @@ final class KugouMusicAPI {
         }
         guard !albumId.isEmpty else { return nil }
         return "https://imge.kugou.com/stdmusic/400/album/\(albumId).jpg"
+    }
+
+    /// 从任意数值类型安全取整（JSON 里同一个字段可能是 Int 也可能是 Double）。
+    private static func intValue(_ any: Any?) -> Int? {
+        if let i = any as? Int { return i }
+        if let d = any as? Double { return Int(d) }
+        if let s = any as? String { return Int(s) }
+        return nil
     }
 
     /// 从 `歌手 - 歌名.mp3` 形式的 filename 里提取歌名。

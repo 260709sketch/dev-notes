@@ -165,6 +165,27 @@ final class NeteaseMusicAPI {
     }
 
     private func runSearch(_ keyword: String, kind: SearchKind, limit: Int, offset: Int) async throws -> SearchResponse {
+        // 主通道：明文 `api/cloudsearch/pc`（RN 版同款，无需加密、无需登录即可出结果）。
+        // 注意走的是 `api/` 而不是 `weapi/` —— 这是搜索能出结果的关键。
+        var comps = URLComponents(string: "https://music.163.com/api/cloudsearch/pc")!
+        comps.queryItems = [
+            URLQueryItem(name: "s", value: keyword),
+            URLQueryItem(name: "type", value: "\(kind.rawValue)"),
+            URLQueryItem(name: "offset", value: "\(offset)"),
+            URLQueryItem(name: "total", value: offset == 0 ? "true" : "false"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        if let url = comps.url,
+           let resp = try? await NetworkClient.shared.get(url.absoluteString, headers: [
+               "Referer": "https://music.163.com/",
+               "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+           ]),
+           let decoded = NetworkClient.decode(SearchResponse.self, from: resp.data),
+           decoded.code == 200, decoded.result != nil {
+            return decoded
+        }
+
+        // 备用通道：原 weapi 加密接口（主通道异常时兜底）
         let params: [String: Any] = [
             "s": keyword,
             "type": kind.rawValue,

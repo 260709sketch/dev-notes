@@ -4,7 +4,7 @@ import SwiftUI
 struct MainTabView: View {
     @EnvironmentObject private var player: PlayerCore
     @EnvironmentObject private var settings: SettingsManager
-    @State private var selectedTab: WellTab = .favorites
+    @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
     var body: some View {
@@ -44,24 +44,28 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
-            Tab("收藏", systemImage: "heart.fill", value: WellTab.favorites) {
-                FavoritesView()
-            }
-            Tab("我的", systemImage: "person.fill", value: WellTab.profile) {
-                ProfileView()
-            }
-            Tab("电台", systemImage: "dot.radiowaves.left.and.right", value: WellTab.radio) {
+            Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
                 RadioView()
+            }
+            Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
+                FavoritesView()
             }
             Tab(value: WellTab.search, role: .search) {
                 SearchView()
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
+            Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
+                ProfileView()
+            }
         }
     }
 
     /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏
+    ///
+    /// 4 个页面用 ZStack + opacity 常驻（避免切换时销毁重建状态），但**必须**给每个
+    /// 页面稳定 identity —— 否则切换 tab 时 SwiftUI 会把整个 ZStack 重新求值，底栏的
+    /// 液态玻璃层跟着重建，视觉上就是“抖一下”。这里用 `zIndex` + `id` 双固定。
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
@@ -71,6 +75,7 @@ struct MainTabView: View {
                 page(.search) { SearchView() }
             }
 
+            // 底栏整体（迷你播放器 + Tab 胶囊）用固定 id，避免随 selectedTab 重建
             VStack(spacing: 8) {
                 if player.hasActiveTrack {
                     MiniPlayerView()
@@ -86,6 +91,7 @@ struct MainTabView: View {
                 }
             }
             .padding(.bottom, 6)
+            .id("well.bottomDock")
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.hasActiveTrack)
     }
@@ -93,6 +99,8 @@ struct MainTabView: View {
     @ViewBuilder
     private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
         content()
+            // 稳定 identity：切换时只改 opacity / zIndex，不重建视图子树
+            .id(tab)
             .opacity(selectedTab == tab ? 1 : 0)
             .allowsHitTesting(selectedTab == tab)
             .zIndex(selectedTab == tab ? 1 : 0)
@@ -101,17 +109,17 @@ struct MainTabView: View {
 
 extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
-        .init(tab: .favorites, title: "收藏", icon: "heart"),
-        .init(tab: .profile, title: "我的", icon: "person"),
-        .init(tab: .radio, title: "电台", icon: "dot.radiowaves.left.and.right"),
+        .init(tab: .radio, title: "发现", icon: "house"),
+        .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
+        .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]
 
     static let liquidTabItems: [WellGlassTabBar.Item] = [
-        .init(tab: .favorites, title: "收藏", icon: "heart"),
-        .init(tab: .profile, title: "我的", icon: "person"),
-        .init(tab: .radio, title: "电台", icon: "dot.radiowaves.left.and.right"),
+        .init(tab: .radio, title: "发现", icon: "house"),
+        .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
+        .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]
 }
 
@@ -186,52 +194,87 @@ private struct MiniPlayerAccessory: View {
     }
 }
 
-/// 屏下迷你播放条
+/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 上一首/播放/下一首）
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerCore
+    @EnvironmentObject private var settings: SettingsManager
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let capsuleHeight: CGFloat = 54
 
     var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(url: player.currentItem?.albumCoverURL, size: 42, cornerRadius: 6)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.currentItem?.title ?? "")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(player.currentItem?.artist ?? "未知艺术家")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        HStack(spacing: 0) {
+            // 左：封面 + 歌名/歌手（点击进播放页）
+            HStack(spacing: 10) {
+                ArtworkView(url: player.currentItem?.albumCoverURL, size: 42, cornerRadius: 9)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(player.currentItem?.title ?? "未在播放")
+                        .font(.system(size: 16, weight: .medium))
+                        .lineLimit(1)
+                    Text(player.currentItem?.artist ?? "未知艺术家")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
             }
-            Spacer(minLength: 8)
-            Button {
-                player.togglePlayPause()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title3)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
+            .padding(.leading, 7)
+
+            // 右：上一首 / 播放暂停 / 下一首
+            HStack(spacing: 12) {
+                Button {
+                    player.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                Button {
+                    player.togglePlayPause()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                Button {
+                    player.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
             }
-            Button {
-                player.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title3)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
+            .padding(.trailing, 15)
+            .foregroundStyle(.primary)
+        }
+        .frame(height: capsuleHeight)
+        .background {
+            // 与底栏一致：iOS 26 原生液态玻璃 / 旧版毛玻璃
+            if settings.tabBarStyle == .liquidGlass {
+                WellGlassBackground(config: settings.liquidGlassConfig, contentScaleFactor: 0.3, isPaused: false)
+            } else {
+                Capsule().fill(.regularMaterial)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .overlay {
+            Capsule().strokeBorder(.white.opacity(colorScheme == .dark ? 0.08 : 0.22), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 12, y: 4)
+        // 底部进度细线
         .overlay(alignment: .bottom) {
-            /// 播放进度细线
             GeometryReader { geo in
-                Rectangle()
+                Capsule()
                     .fill(AppTheme.accent)
-                    .frame(width: geo.size.width * min(player.duration > 0 ? player.currentTime / player.duration : 0, 1))
+                    .frame(width: geo.size.width * min(player.duration > 0 ? player.currentTime / player.duration : 0, 1), height: 2)
             }
             .frame(height: 2)
             .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 3)
         }
     }
 }
