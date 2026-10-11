@@ -37,6 +37,8 @@ final class PlayerCore: NSObject, ObservableObject {
     @Published var isScrubbing: Bool = false
     /// 拖动中的预览时间
     @Published var scrubTime: TimeInterval = 0
+    /// 结束拖动的兜底任务（防止 seek 回调不返回时 isScrubbing 永久为 true）
+    private var scrubTimeoutItem: DispatchWorkItem?
 
     var currentItem: MusicItem? {
         guard let idx = currentIndex, queue.indices.contains(idx) else { return nil }
@@ -51,6 +53,28 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 逐字歌词高亮最重视刷新率，波形/卡拉OK 用分数秒驱动
     private var preferredTimescale: CMTimeScale { 600 }
+
+    /// Seek 精度容差（秒）。
+    ///
+    /// Apple 文档明确指出：`toleranceBefore/After = .zero` 会**要求框架解码大量数据**以做到样本级精确，
+    /// 在无损 / Hi-Res（FLAC 24bit、高采样率）文件上耗时会显著增加 —— 这会造成拖动松手后
+    /// 播放位置迟迟不落地，表现为「歌词与人声不同步」。
+    ///
+    /// 策略：用一个**远低于人耳可感阈值、但非零**的容差。
+    /// - 人耳可感知的音画不同步阈值约 20–30ms 以上；
+    /// - 取 20ms，既能落到最近的解码边界（快得多），又不会被听出来；
+    /// - 对逐字（卡拉OK）歌词也足够精确（单字通常 100ms 量级）。
+    /// 可见性为 internal（而非 private）以便单元测试锁死该策略。
+    /// 标 `nonisolated`：`@MainActor` 类的 static 存储属性默认被 actor 隔离，
+    /// 测试方法（非 MainActor）读取会报错；这两个常量本就是不可变纯数据，无需隔离。
+    nonisolated static let seekToleranceSeconds: Double = 0.02
+
+    /// 结束拖动的兜底超时（秒）：seek 回调不返回时强制退出 scrubbing 态
+    nonisolated static let scrubTimeoutSeconds: Double = 1.5
+
+    private var seekTolerance: CMTime {
+        CMTime(seconds: Self.seekToleranceSeconds, preferredTimescale: preferredTimescale)
+    }
 
     // MARK: 内部
 
@@ -119,7 +143,7 @@ final class PlayerCore: NSObject, ObservableObject {
                     }
                     if time > 0 {
                         player.seek(to: CMTime(seconds: time, preferredTimescale: preferredTimescale),
-                                   toleranceBefore: .zero, toleranceAfter: .zero) { _ in finish() }
+                                   toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { _ in finish() }
                     } else {
                         finish()
                     }
@@ -210,15 +234,43 @@ final class PlayerCore: NSObject, ObservableObject {
         scrubTime = time
     }
 
-    /// 结束拖动：精确 seek 到目标位置（tolerance .zero 保证精度），完成后再回落真实时间
+    /// 结束拖动：精确 seek 到目标位置（tolerance .zero 保证精度）。
+    ///
+    /// 关键设计（修复「拖动后歌词/人声不同步」）：
+    /// 1. **乐观更新**：立刻把 `currentTime` 设为目标值，让进度条/歌词的 UI 立即对准，
+    ///    不必等 AVPlayer（无损 / Hi-Res 大文件上精确 seek 可能耗时数百毫秒）。
+    /// 2. **兜底超时**：AVPlayer 在缓冲态下 seek 完成回调可能长时间不返回，
+    ///    若不兜底，`isScrubbing` 会永久为 true，进度条从此卡死。这里 1.5s 后强制复位。
+    /// 3. **完成校正**：回调里用播放器真实位置覆盖乐观值，保证长期精确。
     func endScrubbing(to time: TimeInterval) {
         guard time.isFinite else { return }
-        scrubTime = time
-        player.seek(to: CMTime(seconds: time, preferredTimescale: preferredTimescale),
-                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        let target = max(0, time)
+        scrubTime = target
+
+        // 1) 乐观更新：UI 立即对准目标位置
+        currentTime = target
+
+        // 2) 兜底：若 seek 回调迟迟不返回，也要退出 scrubbing 态
+        scrubTimeoutItem?.cancel()
+        let timeout = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self, self.isScrubbing else { return }
+                self.isScrubbing = false
+            }
+        }
+        scrubTimeoutItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrubTimeoutSeconds, execute: timeout)
+
+        player.seek(to: CMTime(seconds: target, preferredTimescale: preferredTimescale),
+                    toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self] finished in
             Task { @MainActor in
                 guard let self else { return }
-                self.currentTime = self.player.currentTime().seconds
+                self.scrubTimeoutItem?.cancel()
+                self.scrubTimeoutItem = nil
+                // 3) 校正：以播放器真实位置为准
+                if finished {
+                    self.currentTime = self.player.currentTime().seconds
+                }
                 self.isScrubbing = false
             }
         }
@@ -230,14 +282,15 @@ final class PlayerCore: NSObject, ObservableObject {
             scrubTime = time
             return
         }
-        player.seek(to: CMTime(seconds: time, preferredTimescale: preferredTimescale),
-                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        let target = max(0, time)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: preferredTimescale),
+                    toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.currentTime = self.player.currentTime().seconds
             }
         }
-        currentTime = time
+        currentTime = target
     }
 
     func next() {

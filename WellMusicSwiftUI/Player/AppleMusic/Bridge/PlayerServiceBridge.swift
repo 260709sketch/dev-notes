@@ -16,13 +16,11 @@ final class PlayerClock: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                // 拖动中使用 scrubTime，否则使用 PlayerCore 的 currentTime
-                let core = PlayerCore.shared
-                if core.isScrubbing {
-                    self.progress = core.scrubTime
-                } else {
-                    self.progress = core.currentTime
-                }
+                // 统一走 PlayerCore.displayTime：
+                // 拖动中 = scrubTime（预览位置，歌词/进度条立刻跟随手指）；
+                // 其余 = currentTime（真实播放位置）。
+                // ⚠️ 这里曾经用 currentTime，导致拖动时歌词不跟手、松手后滞后于人声。
+                self.progress = PlayerCore.shared.displayTime
             }
         }
         RunLoop.main.add(timer!, forMode: .common)

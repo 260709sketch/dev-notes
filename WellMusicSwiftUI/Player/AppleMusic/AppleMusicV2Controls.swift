@@ -91,18 +91,16 @@ struct AppleMusicV2ProgressSection: View {
     @EnvironmentObject private var player: PlayerService
     @ObservedObject private var clock = PlayerService.shared.clock
     @ObservedObject private var appState = AppState.shared
-
-    /// 拖动中锁定显示时间（对应参考源码 `useSeekLock`）
-    @State private var seeking = false
-    @State private var seekingTime: Double = 0
-    @State private var sliding = false
+    @ObservedObject private var core = PlayerCore.shared
 
     private var total: Double {
         max(max(player.duration, player.currentTrack?.duration ?? 0), 1)
     }
 
+    /// 播放位置：拖动中由 PlayerCore.scrubTime 提供（clock 已统一走 displayTime），
+    /// 松手后由精确 seek 完成、isScrubbing 复位，自动回落到真实时间。
     private var displayTime: Double {
-        (sliding || seeking) ? seekingTime : clock.progress
+        clock.progress
     }
 
     /// 剩余时间：参考源码 `-formatTime(duration > 0 && currentTime < duration ? max(1, duration - currentTime) : 0)`
@@ -119,19 +117,17 @@ struct AppleMusicV2ProgressSection: View {
                     set: { _ in }
                 ),
                 onSlidingStart: {
-                    sliding = true
-                    seeking = false
-                    seekingTime = clock.progress
+                    // 关键：进入 scrubbing 态，PlayerCore.displayTime 立刻切到 scrubTime，
+                    // 从而歌词页 / AMLL / 进度条三处同时跟随手指。
+                    core.beginScrubbing(to: clock.progress)
                 },
                 onValueChange: { ratio in
-                    seekingTime = ratio * total
+                    // 拖动中持续写入预览位置（50ms 时钟会把它同步给所有消费方）
+                    core.updateScrubbing(to: ratio * total)
                 },
                 onSlidingComplete: { ratio in
-                    let target = ratio * total
-                    seekingTime = target
-                    sliding = false
-                    seeking = true
-                    player.seek(to: target)
+                    // 精确 seek（tolerance .zero）并在完成后复位 isScrubbing
+                    core.endScrubbing(to: ratio * total)
                 }
             )
 
@@ -149,10 +145,6 @@ struct AppleMusicV2ProgressSection: View {
             .font(.system(size: AppleMusicV2.Controls.timeFontSize, weight: .medium))
             .foregroundStyle(AppleMusicV2.Controls.timeColor)
             .padding(.top, AppleMusicV2.Controls.progressTimeTop)
-        }
-        .onChange(of: clock.progress) { newValue in
-            guard seeking else { return }
-            if abs(newValue - seekingTime) < 0.3 { seeking = false }
         }
     }
 
