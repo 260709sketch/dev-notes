@@ -96,6 +96,17 @@ struct SettingsView: View {
                 }
 
                 Section("界面") {
+                    Picker("主题", selection: $settings.appTheme) {
+                        ForEach(WellAppTheme.allCases) { theme in
+                            Label(theme.displayName, systemImage: theme.symbolName)
+                                .tag(theme)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    Text("「跟随系统」会随 iOS 外观设置自动切换深色/浅色。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Picker("底部栏样式", selection: $settings.tabBarStyle) {
                         ForEach(WellTabBarStyle.allCases) { style in
                             Text(style.displayName).tag(style)

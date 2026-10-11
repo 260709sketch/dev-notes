@@ -70,7 +70,7 @@ struct PlayPauseMorphIcon: View {
     }
 }
 
-// MARK: - 封面图（简化版：AsyncImage + 圆角占位）
+// MARK: - 封面图（统一走 WellImageCache：两级缓存 + 防盗链头）
 
 struct CoverImage: View {
     let url: URL?
@@ -84,26 +84,8 @@ struct CoverImage: View {
             .fill(Color.secondary.opacity(0.18))
             .frame(width: size, height: size)
             .overlay {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                            .frame(width: size, height: size)
-                            .clipped()
-                    case .failure:
-                        placeholderIcon
-                    case .empty:
-                        if url == nil {
-                            placeholderIcon
-                        } else {
-                            ZStack {
-                                placeholderIcon
-                                ProgressView()
-                            }
-                        }
-                    @unknown default:
-                        placeholderIcon
-                    }
+                WellAsyncImage(url: url) {
+                    placeholderIcon
                 }
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

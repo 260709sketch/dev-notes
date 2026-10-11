@@ -9,23 +9,24 @@ enum WellSearchMetrics {
 
 // MARK: - 异步封面
 
-/// 轻量异步图片（圆形/圆角自适应），带占位
+/// 轻量异步图片（圆形/圆角自适应），带占位。
+/// 走统一的 `WellImageCache`（两级缓存 + 防盗链头），替代裸 `AsyncImage`。
 struct WellRemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
 
+    private var resolvedURL: URL? {
+        guard let url, !url.isEmpty else { return nil }
+        return URL(string: url)
+    }
+
     var body: some View {
-        AsyncImage(url: URL(string: url ?? "")) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: contentMode)
-            default:
-                ZStack {
-                    AppTheme.secondaryBackground
-                    Image(systemName: "music.note")
-                        .font(.title3)
-                        .foregroundStyle(.tertiary)
-                }
+        WellAsyncImage(url: resolvedURL) {
+            ZStack {
+                AppTheme.secondaryBackground
+                Image(systemName: "music.note")
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
             }
         }
     }

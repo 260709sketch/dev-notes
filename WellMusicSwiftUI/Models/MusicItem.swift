@@ -41,6 +41,8 @@ struct MusicItem: Identifiable, Codable, Hashable {
 
     // 各平台专属 ID（备用优先）
     var qqSongMid: String?
+    /// QQ 音乐 file.media_mid（部分 vkey 接口需要，缺省时回退 songmid）
+    var qqMediaMid: String?
     var neteaseId: String?
     var kugouHash: String?
     var kuwoRid: String?
@@ -70,6 +72,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
          albumCoverURL: String? = nil,
          duration: TimeInterval = 0,
          qqSongMid: String? = nil,
+         qqMediaMid: String? = nil,
          neteaseId: String? = nil,
          kugouHash: String? = nil,
          kuwoRid: String? = nil,
@@ -82,6 +85,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
         self.albumCoverURL = albumCoverURL
         self.duration = duration
         self.qqSongMid = qqSongMid
+        self.qqMediaMid = qqMediaMid
         self.neteaseId = neteaseId
         self.kugouHash = kugouHash
         self.kuwoRid = kuwoRid

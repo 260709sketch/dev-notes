@@ -99,20 +99,50 @@ final class SearchService {
     // MARK: 卡片详情
 
     /// 展开歌手 / 专辑 / 歌单卡片对应的歌曲列表。
+    /// 优先走各平台的真实详情接口；失败时再退回同名搜索兜底。
     func detailTracks(for source: WellSearchDetailSource) async -> [MusicItem] {
         switch source {
         case .playlist(let id, let platform, _):
             guard platform == .netease else { return [] }
             return (try? await NeteaseMusicAPI.shared.playlistTracks(id: id)) ?? []
+
         case .album(let id, let platform, let name, let artist):
-            if platform == .netease {
-                return (try? await NeteaseMusicAPI.shared.albumTracks(id: id)) ?? []
+            switch platform {
+            case .netease:
+                let tracks = (try? await NeteaseMusicAPI.shared.albumTracks(id: id)) ?? []
+                if !tracks.isEmpty { return tracks }
+            case .qq:
+                // QQ 专辑：用 albumMid（无 mid 时退回 id）
+                let tracks = (try? await QQMusicAPI.shared.albumSongs(albumMid: id)) ?? []
+                if !tracks.isEmpty { return tracks }
+            case .kugou:
+                // 酷狗专辑：真实专辑歌曲接口
+                if let detail = try? await KugouMusicAPI.shared.albumDetail(albumId: id),
+                   !detail.songs.isEmpty {
+                    return detail.songs
+                }
+            default:
+                break
             }
             return await fallbackSearchTracks("\(name) \(artist)", platform: platform)
+
         case .artist(let id, let platform, let name):
-            if platform == .netease {
+            switch platform {
+            case .netease:
                 let tracks = (try? await NeteaseMusicAPI.shared.artistTopSongs(id: id)) ?? []
                 if !tracks.isEmpty { return tracks }
+            case .qq:
+                // QQ 歌手歌曲（musichall.song_list_server）
+                let result = try? await QQMusicAPI.shared.singerSongs(singerMid: id, begin: 0, num: 50)
+                if let list = result?.list, !list.isEmpty { return list }
+            case .kugou:
+                // 酷狗歌手歌曲
+                if let detail = try? await KugouMusicAPI.shared.singerDetail(singerId: id),
+                   !detail.songs.isEmpty {
+                    return detail.songs
+                }
+            default:
+                break
             }
             return await fallbackSearchTracks(name, platform: platform)
         }

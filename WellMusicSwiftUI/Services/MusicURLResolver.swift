@@ -23,7 +23,14 @@ final class MusicURLResolver {
                                     headers: [:], fromCustomSource: nil, isFallbackSource: false)
         }
         if let cached = item.playURL, !cached.isEmpty, !cached.hasPrefix("__") {
-            return ResolvedPlayback(url: cached, headers: [:], fromCustomSource: nil, isFallbackSource: false)
+            // 缓存地址同样需要请求头（例如上一次由自定义音源取到的 CDN 直链），
+            // 否则重放时会因缺少 Referer 而被 403。
+            return ResolvedPlayback(url: cached,
+                                    headers: WellLXPlaybackHeaders.requestHeaders(
+                                        for: cached,
+                                        platform: WellLXPlaybackHeaders.platformKey(for: item)),
+                                    fromCustomSource: nil,
+                                    isFallbackSource: false)
         }
         let hasActiveLXSource = await WellLXSourceStore.shared.hasActiveSource
         if hasActiveLXSource,

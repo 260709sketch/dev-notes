@@ -236,24 +236,20 @@ struct MiniPlayerView: View {
     }
 }
 
-/// 通用封面图（异步加载 + 占位）
+/// 通用封面图（两级缓存 + 防盗链头 + 交叉淡入）
 struct ArtworkView: View {
     let url: String?
     let size: CGFloat
     var cornerRadius: CGFloat = 8
 
+    private var resolvedURL: URL? {
+        guard let url, !url.isEmpty else { return nil }
+        return URL(string: url)
+    }
+
     var body: some View {
-        AsyncImage(url: URL(string: url ?? "")) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
-            case .failure:
-                placeholder
-            case .empty:
-                placeholder
-            @unknown default:
-                placeholder
-            }
+        WellAsyncImage(url: resolvedURL) {
+            placeholder
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))

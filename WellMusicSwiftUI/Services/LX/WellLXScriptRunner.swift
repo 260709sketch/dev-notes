@@ -188,18 +188,30 @@ final class WellLXScriptRunner: @unchecked Sendable {
         guard let console = JSValue(newObjectIn: context) else {
             return .failure(.scriptError("console 创建失败"))
         }
-        console.setObject({ [weak self] in
+        // 注意：必须标注 @convention(block)，否则 JavaScriptCore 无法把它桥接成可调用的
+        // JS 函数，只会包装成 NSObject —— 脚本调用 console.log 时会抛
+        // "console.log is not a function. (… is an instance of NSObject)"。
+        let consoleLog: @convention(block) () -> Void = { [weak self] in
             self?.emitLog(type: "log", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
-        }, forKeyedSubscript: "log" as NSString)
-        console.setObject({ [weak self] in
+        }
+        console.setObject(consoleLog, forKeyedSubscript: "log" as NSString)
+
+        let consoleInfo: @convention(block) () -> Void = { [weak self] in
             self?.emitLog(type: "info", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
-        }, forKeyedSubscript: "info" as NSString)
-        console.setObject({ [weak self] in
+        }
+        console.setObject(consoleInfo, forKeyedSubscript: "info" as NSString)
+
+        let consoleWarn: @convention(block) () -> Void = { [weak self] in
             self?.emitLog(type: "warn", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
-        }, forKeyedSubscript: "warn" as NSString)
-        console.setObject({ [weak self] in
+        }
+        console.setObject(consoleWarn, forKeyedSubscript: "warn" as NSString)
+
+        let consoleError: @convention(block) () -> Void = { [weak self] in
             self?.emitLog(type: "error", message: self?.joinJSArguments(JSContext.currentArguments()) ?? "")
-        }, forKeyedSubscript: "error" as NSString)
+        }
+        console.setObject(consoleError, forKeyedSubscript: "error" as NSString)
+
+        console.setObject(consoleLog, forKeyedSubscript: "debug" as NSString)
         context.setObject(console, forKeyedSubscript: "console" as NSString)
 
         registerNativeBlocks(in: context)

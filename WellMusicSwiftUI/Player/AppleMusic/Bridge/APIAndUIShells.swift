@@ -110,9 +110,7 @@ struct AddToPlaylistSheet: View {
                     } label: {
                         HStack(spacing: 12) {
                             if let coverURL = playlist.coverURL, let url = URL(string: coverURL) {
-                                AsyncImage(url: url) { img in
-                                    img.resizable().scaledToFill()
-                                } placeholder: {
+                                WellAsyncImage(url: url) {
                                     Color.gray.opacity(0.3)
                                 }
                                 .frame(width: 48, height: 48)

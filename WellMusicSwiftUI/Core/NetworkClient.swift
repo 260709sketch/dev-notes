@@ -85,6 +85,19 @@ final class NetworkClient {
         return try await send(req)
     }
 
+    /// 发送已完全构造好的 URLRequest（调用方自行处理签名/编码，本方法只补通用头）。
+    /// 用于 QQ 移动端 `musics.fcg` 这类「签名依赖原始 body 字节」的接口 —— 必须
+    /// 保证签名时的字节与实际发出的 httpBody 完全一致，不能再经过任何重新序列化。
+    func rawRequest(_ request: URLRequest) async throws -> Response {
+        var req = request
+        commonHeaders.forEach { key, value in
+            if req.value(forHTTPHeaderField: key) == nil {
+                req.setValue(value, forHTTPHeaderField: key)
+            }
+        }
+        return try await send(req)
+    }
+
     private func applyHeaders(_ req: inout URLRequest, _ extra: [String: String]) {
         commonHeaders.forEach { req.setValue($0.value, forHTTPHeaderField: $0.key) }
         extra.forEach { req.setValue($0.value, forHTTPHeaderField: $0.key) }

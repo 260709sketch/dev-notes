@@ -33,6 +33,41 @@ enum WellTabBarStyle: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - WellAppTheme
+/// 应用外观主题：深色 / 浅色 / 跟随系统
+enum WellAppTheme: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+
+    /// 映射到 SwiftUI 的 preferredColorScheme；跟随系统时为 nil
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 // MARK: - WellGlassPreset
 /// 液态玻璃预设
 enum WellGlassPreset: String, CaseIterable, Identifiable {
@@ -138,6 +173,11 @@ final class SettingsManager: ObservableObject {
     // MARK: - Now Playing Mode
 
     @AppStorage("wellmusic.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
+
+    // MARK: - 外观主题
+
+    /// 应用外观主题（深色 / 浅色 / 跟随系统）
+    @AppStorage("wellmusic.appTheme") var appTheme: WellAppTheme = .system
 
     // MARK: - 底部栏样式
 

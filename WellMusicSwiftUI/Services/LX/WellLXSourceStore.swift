@@ -41,6 +41,88 @@ struct WellLXRequestLog: Identifiable, Hashable {
     }
 }
 
+// MARK: - 播放请求头（非隔离，可从任意线程/上下文调用）
+
+/// 推导自定义音源播放所需的请求头。
+///
+/// 之所以独立成 enum：`WellLXSourceStore` 是 `@MainActor`，
+/// 其静态成员也随之被主线程隔离，无法从 `MusicURLResolver` 这类非隔离上下文直接调用。
+enum WellLXPlaybackHeaders {
+
+    /// 推导播放所需的请求头。
+    ///
+    /// 优先级：
+    /// 1. **曲目所属平台**（lx 平台标识 wy/tx/kg/kw）——这是最可靠的依据。
+    ///    自定义音源返回的地址常落在与平台主体域名无关的 CDN 上（`*.bilivideo.*`、
+    ///    裸 IP、短链等），仅靠域名匹配会推导不出 Referer，导致 CDN 403。
+    /// 2. 域名启发式兜底——当平台信息缺失时，再按 URL 关键字判断。
+    ///
+    /// 始终附加桌面 UA：部分 CDN 对移动端 UA 返回 403 或降码率。
+    static func requestHeaders(for url: String, platform: String? = nil) -> [String: String] {
+        var headers: [String: String] = [
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ]
+        if let referer = refererHost(forPlatform: platform) {
+            headers["Referer"] = referer
+            return headers
+        }
+        if let referer = refererHost(forURL: url) {
+            headers["Referer"] = referer
+        }
+        return headers
+    }
+
+    /// 由 lx 平台标识推导 Referer。
+    private static func refererHost(forPlatform platform: String?) -> String? {
+        switch platform {
+        case "wy": return "https://music.163.com/"
+        case "tx": return "https://y.qq.com/"
+        case "kg": return "https://www.kugou.com/"
+        case "kw": return "https://www.kuwo.cn/"
+        case "mg": return "https://music.migu.cn/"
+        default: return nil
+        }
+    }
+
+    /// 域名启发式兜底（平台信息缺失时使用）。
+    private static func refererHost(forURL url: String) -> String? {
+        let lower = url.lowercased()
+        // 酷狗
+        if lower.contains("kugou") || lower.contains("kglink") { return "https://www.kugou.com/" }
+        // 酷我
+        if lower.contains("kuwo") { return "https://www.kuwo.cn/" }
+        // 咪咕
+        if lower.contains("migu") { return "https://music.migu.cn/" }
+        // QQ / 腾讯系
+        if lower.contains("qq.com") || lower.contains("tencent") || lower.contains("isure")
+            || lower.contains("weixin") || lower.contains("myqcloud") || lower.contains("tme")
+            || lower.contains("qqmusic") { return "https://y.qq.com/" }
+        // 网易云
+        if lower.contains("163") || lower.contains("netease") || lower.contains("nosdn")
+            || lower.contains("music.126") { return "https://music.163.com/" }
+        return nil
+    }
+
+    /// `MusicItem.source` → lx 平台标识（wy/tx/kg/kw/mg）。
+    /// 供请求头推导使用；与 `WellLXEngine.lxPlatform(for:)` 保持一致。
+    static func platformKey(for item: MusicItem) -> String? {
+        switch item.source {
+        case .netease: return "wy"
+        case .qq: return "tx"
+        case .kugou: return "kg"
+        case .kuwo: return "kw"
+        case .auto:
+            if item.neteaseId != nil { return "wy" }
+            if item.qqSongMid != nil { return "tx" }
+            if item.kugouHash != nil { return "kg" }
+            if item.kuwoRid != nil { return "kw" }
+            return nil
+        case .lx:
+            return WellLXProtocol.parseLxPlatform(item.neteaseId ?? item.title).source
+        }
+    }
+}
+
 // MARK: - 音源仓库
 
 /// 自定义音源（LX 脚本）仓库：负责导入、持久化、激活、测试与取链日志。
@@ -356,7 +438,9 @@ final class WellLXSourceStore: ObservableObject {
                     quality: actualQuality,
                     sourceName: source.name,
                     isFallback: isFallback,
-                    headers: Self.requestHeaders(for: url)
+                    headers: WellLXPlaybackHeaders.requestHeaders(
+                        for: url,
+                        platform: WellLXPlaybackHeaders.platformKey(for: item))
                 )
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -374,22 +458,6 @@ final class WellLXSourceStore: ObservableObject {
             }
         }
         return nil
-    }
-
-    /// 按域名推导播放所需的 Referer（与官方接口一致），并带上桌面 UA。
-    private static func requestHeaders(for url: String) -> [String: String] {
-        let lower = url.lowercased()
-        var headers: [String: String] = [
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ]
-        if lower.contains("kugou") {
-            headers["Referer"] = "https://www.kugou.com/"
-        } else if lower.contains("qq.com") || lower.contains("tencent") || lower.contains("isure") {
-            headers["Referer"] = "https://y.qq.com/"
-        } else if lower.contains("163") || lower.contains("netease") {
-            headers["Referer"] = "https://music.163.com/"
-        }
-        return headers
     }
 
     // MARK: 日志
