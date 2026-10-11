@@ -1,6 +1,10 @@
 import SwiftUI
 
 /// 收藏 Tab：顶部切换 收藏歌曲 / 收藏歌单 / 播放历史，入口自建歌单
+///
+/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
+/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈在视图树里同时存在时，
+/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct FavoritesView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var player: PlayerCore
@@ -13,28 +17,26 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                Picker("", selection: $segment) {
-                    ForEach(Segment.allCases, id: \.self) { s in
-                        Text(s.rawValue).tag(s)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Picker("", selection: $segment) {
+                ForEach(Segment.allCases, id: \.self) { s in
+                    Text(s.rawValue).tag(s)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                List {
-                    switch segment {
-                    case .tracks: trackRows(appState.favoriteTracks)
-                    case .history: trackRows(appState.playHistory)
-                    case .playlists: playlistRows
-                    }
-                }
-                .listStyle(.plain)
             }
-            .navigationTitle("收藏")
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            List {
+                switch segment {
+                case .tracks: trackRows(appState.favoriteTracks)
+                case .history: trackRows(appState.playHistory)
+                case .playlists: playlistRows
+                }
+            }
+            .listStyle(.plain)
         }
+        .navigationTitle("收藏")
     }
 
     @ViewBuilder

@@ -35,6 +35,10 @@ final class WellSearchViewModel: ObservableObject {
 // MARK: - 搜索页
 
 /// 搜索 Tab：平台 / 模块分段 + 分区卡片结果（版式对齐 kumone）
+///
+/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
+/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时存在于视图树中时，
+/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct SearchView: View {
     @EnvironmentObject private var player: PlayerCore
     @StateObject private var model = WellSearchViewModel()
@@ -51,39 +55,37 @@ struct SearchView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    searchBar
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                searchBar
 
-                    if hasQuery {
-                        platformPicker
-                        typePicker
+                if hasQuery {
+                    platformPicker
+                    typePicker
 
-                        if model.isLoading && model.result.isEmpty(for: model.type) {
-                            ProgressView()
-                                .frame(maxWidth: .infinity, minHeight: 280)
-                        } else if model.result.isEmpty(for: model.type) {
-                            emptyResult
-                        } else {
-                            content
-                        }
+                    if model.isLoading && model.result.isEmpty(for: model.type) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 280)
+                    } else if model.result.isEmpty(for: model.type) {
+                        emptyResult
                     } else {
-                        emptyPrompt
+                        content
                     }
-
-                    // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
-                    Color.clear.frame(height: 150)
+                } else {
+                    emptyPrompt
                 }
-                .padding(.top, 8)
+
+                // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
+                Color.clear.frame(height: 150)
             }
-            .background(AppTheme.background)
-            .navigationTitle("搜索")
-            .navigationBarTitleDisplayMode(.inline)
-            .task(id: taskID) {
-                model.clear()
-                await model.load(keyword: committedQuery)
-            }
+            .padding(.top, 8)
+        }
+        .background(AppTheme.background)
+        .navigationTitle("搜索")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: taskID) {
+            model.clear()
+            await model.load(keyword: committedQuery)
         }
     }
 

@@ -125,16 +125,28 @@ struct AMLLWebLyricsView: View {
         // 拖动**结束**时立刻硬校准。
         // `isScrubbing` 由 true → false 只发生在拖动收尾（或兜底超时），
         // 正是 RN 版 `emitSeek` 唯一的触发点；拖动过程中不触发，避免高频重置外推纪元。
+        //
+        // ⚠️ 这是**低频**事件（一次拖动只变两次），可以安全地监听。
         .onReceive(PlayerCore.shared.$isScrubbing.removeDuplicates()) { isScrubbing in
             guard !isScrubbing else { return }
             requestCalibration()
         }
-        // 歌词行被点击时（页面 `line-click` → `PlayerService.seek`）同样需要硬校准。
-        // 这里监听 `PlayerCore.currentTime`（`PlayerService` 上并没有暴露 `core`）。
-        .onReceive(PlayerCore.shared.$currentTime) { _ in
-            guard !PlayerCore.shared.isScrubbing else { return }
-            requestCalibration()
-        }
+        // ⚠️ 这里**曾经**监听了 `PlayerCore.shared.$currentTime`，现已删除。
+        //
+        // `currentTime` 是播放期间**高频变化**的属性（音频进度回调，约 10Hz 以上）。
+        // 在它上面挂 `onReceive` 会带来两个后果：
+        //   1. 每 10Hz 触发一次 `requestCalibration()` → 改 `@State calibrationSeq`
+        //      → **整个 `AppleMusicPlayerView` 的 body 全量重算**（该视图是本 View 的
+        //      祖先，`@State` 变化会把整棵树一起重算，包含 `UIScreen.main.bounds`、
+        //      window scene 遍历、以及 WKWebView 的 representable diff）；
+        //   2. 本视图自己也会重算，其 `GeometryReader` 重新测量 → `updateUIView`
+        //      → 一次跨进程 `evaluateJavaScript`。
+        // 叠加 WKWebView + WebGL 流动背景的高成本，主线程会被彻底打满，
+        // 表现就是「打开播放器什么都点不动、像卡死」。
+        //
+        // 这个订阅本来就是多余的：页面内点击歌词行跳转走的是 `seek` 消息分支，
+        // 那里已经直接 `hardCalibrate(to: target)` 了；而常态推进由 `Coordinator`
+        // 自己的 100ms `Timer`（`pushClock`）负责，不需要 SwiftUI 再插一手。
     }
 
     /// 记下一次硬校准请求。读取的是**精确**位置，而不是 `displayTime`——

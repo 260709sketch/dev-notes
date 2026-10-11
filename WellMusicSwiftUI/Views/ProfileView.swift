@@ -1,57 +1,60 @@
 import SwiftUI
 
 /// 我的 Tab：用户入口 + 自建歌单 + 设置入口（后续轮次填充子页面）
+///
+/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
+/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时存在于视图树中时，
+/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
+/// 本页里的 `NavigationLink` 依赖外层那个导航栈，去掉本层的栈后照常工作。
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showingSettings = false
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    HStack(spacing: 14) {
-                        Circle()
-                            .fill(AppTheme.accent)
-                            .frame(width: 52, height: 52)
-                            .overlay {
-                                Image(systemName: "person.fill")
-                                    .font(.title2)
-                                    .foregroundStyle(.white)
-                            }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("本地用户").font(.headline)
-                            Text("未登录 · 支持网易云扫码登录（后续）")
-                                .font(.caption).foregroundStyle(.secondary)
+        List {
+            Section {
+                HStack(spacing: 14) {
+                    Circle()
+                        .fill(AppTheme.accent)
+                        .frame(width: 52, height: 52)
+                        .overlay {
+                            Image(systemName: "person.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white)
                         }
-                    }
-                    .padding(.vertical, 6)
-                }
-
-                Section {
-                    NavigationLink { MyPlaylistsView() } label: {
-                        Label("我的歌单", systemImage: "music.note.list")
-                    }
-                    NavigationLink { Text("收藏专辑（开发中）").frame(maxWidth: .infinity, alignment: .leading) } label: {
-                        Label("收藏专辑", systemImage: "square.stack")
-                    }
-                    NavigationLink { Text("网易云已赞歌曲（开发中）") .frame(maxWidth: .infinity, alignment: .leading) } label: {
-                        Label("网易云我喜欢", systemImage: "heart.text.square")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("本地用户").font(.headline)
+                        Text("未登录 · 支持网易云扫码登录（后续）")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                .padding(.vertical, 6)
+            }
 
-                Section {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Label("设置", systemImage: "gearshape")
-                            .foregroundStyle(.primary)
-                    }
+            Section {
+                NavigationLink { MyPlaylistsView() } label: {
+                    Label("我的歌单", systemImage: "music.note.list")
+                }
+                NavigationLink { Text("收藏专辑（开发中）").frame(maxWidth: .infinity, alignment: .leading) } label: {
+                    Label("收藏专辑", systemImage: "square.stack")
+                }
+                NavigationLink { Text("网易云已赞歌曲（开发中）") .frame(maxWidth: .infinity, alignment: .leading) } label: {
+                    Label("网易云我喜欢", systemImage: "heart.text.square")
                 }
             }
-            .navigationTitle("我的")
-            .sheet(isPresented: $showingSettings) {
-                SettingsView()
+
+            Section {
+                Button {
+                    showingSettings = true
+                } label: {
+                    Label("设置", systemImage: "gearshape")
+                        .foregroundStyle(.primary)
+                }
             }
+        }
+        .navigationTitle("我的")
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
         }
     }
 }
