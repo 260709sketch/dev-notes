@@ -5,11 +5,11 @@ import CoreMedia
 /// 回归测试：拖动进度条时的「时间源一致性」与「seek 精度容差」。
 ///
 /// 背景（三个真实问题）：
-/// 1. **拖动时歌词不跟手**：`PlayerClock` 读的是 `PlayerCore.currentTime`（真实播放位置），
-///    而不是 `displayTime`（拖动中为 `scrubTime`）。进度条自己有本地 `seekingTime` 撑着，
-///    所以看起来正常；但歌词读 `clock.progress`，拖动时完全不动。
-/// 2. **松手后歌词滞后于人声**：`AppleMusicV2ProgressSection` 从不调用
-///    `beginScrubbing` / `updateScrubbing` / `endScrubbing`，导致 `isScrubbing` 恒为 false，
+/// 1. **拖动时歌词不跟手**：歌词游标读的必须是 `PlayerCore.displayTime`
+///    （拖动中为 `scrubTime`），而不是真实播放位置。进度条自己有本地状态撑着，
+///    所以看起来正常；但歌词若读真实时间，拖动时完全不动。
+/// 2. **松手后歌词滞后于人声**：进度条组件必须调用
+///    `beginScrubbing` / `updateScrubbing` / `endScrubbing`，否则 `isScrubbing` 恒为 false，
 ///    `scrubTime` 从未被使用，AMLL 拿到的也是过期时间。
 /// 3. **无损文件拖动特别不准**：`toleranceBefore/After = .zero` 会要求框架解码大量数据
 ///    才能做到样本级精确（Apple 官方文档原话），大文件上耗时显著，位置迟迟不落地。

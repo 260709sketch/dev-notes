@@ -2,15 +2,18 @@ import SwiftUI
 import MediaPlayer
 import UIKit
 
-// 说明：本文件为 **Kumone / wellam AppleMusic 播放器的 UI 与交互回迁**。
+// Apple Music 风格全屏播放页（本项目自研实现）。
 //
-// 回迁边界（用户明确要求）：
-//   ✅ 搬运：竖屏大封面 → 歌词页的封面/文本锚点插值动画、横屏左右分栏布局、
-//           迷你歌词预览、常驻音量条、歌词拖拽手势（含底部控制区联动隐藏）、
-//           睡眠定时菜单、播放器样式 Sheet、整体视觉与动效参数。
-//   ❌ 不搬：进度条时间源（继续用 `PlayerCore.beginScrubbing/updateScrubbing/endScrubbing`）、
-//           AMLL 歌词同步（继续用 `AMLLWebLyricsView` + `hardCalibrate` 通道）。
-//           这两处是 WellMusicSwiftUI 自己修好的实现，明文规定不得替换为 Kumone 版本。
+// 实现要点：
+//   ✅ 竖屏大封面 → 歌词页的封面/文本锚点插值动画、横屏左右分栏布局、
+//      迷你歌词预览、常驻音量条、歌词拖拽手势（含底部控制区联动隐藏）、
+//      睡眠定时菜单、播放器样式 Sheet、整体视觉与动效参数。
+//   ✅ 进度条时间源统一走 `PlayerCore.beginScrubbing/updateScrubbing/endScrubbing`。
+//   ✅ AMLL 歌词同步统一走 `AMLLWebLyricsView` + `hardCalibrate` 通道。
+//
+// ⚠️ 性能红线：本页顶层**禁止**观察高频时钟（如 `PlayerCore.currentTime` 等 20Hz 源）。
+//    它含有 WKWebView + WebGL 背景，任何 20Hz 的 `@Published` 都会导致整页全量重算，
+//    表现为「一打开播放器就卡死」。时间只在叶子节点（进度条、歌词游标）内消费。
 
 /// Apple Music 风格全屏播放页：封面模糊背景 + 大封面/歌词页切换 + 底部控制栏。
 struct AppleMusicPlayerView: View {
@@ -30,7 +33,12 @@ struct AppleMusicPlayerView: View {
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var account = AccountStore.shared
-    @ObservedObject private var clock = PlayerService.shared.clock
+    /// 歌词游标：**只在当前行号变化时**才通知（低频）。
+    ///
+    /// ⚠️ 不要在这里观察 `PlayerService.shared.clock` —— 那是 20Hz 的时钟，
+    /// 会让整个播放器页每 50ms 全量重算一次（树里有 WKWebView 与 WebGL 背景），
+    /// 直接导致打开播放器就卡死。详见 `currentPlaybackLyricIndex` 的说明。
+    @ObservedObject private var lyricsCursor = PlayerService.shared.lyricsCursor
     @ObservedObject private var appleLayout = AppleMusicLayoutStore.shared
 
     @State private var showLyrics = false
@@ -39,7 +47,7 @@ struct AppleMusicPlayerView: View {
     @State private var showComments = false
     @State private var showAddToPlaylist = false
     @State private var showLyricOffsetSheet = false
-    @State private var showPlayerModeSheet = false
+    @State private var showPlaybackModeSheet = false
     @State private var showVolumePopover = false
     @State private var appleLayoutPart: AppleMusicLayoutPart = .cover
     @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
@@ -104,12 +112,12 @@ struct AppleMusicPlayerView: View {
         .sheet(isPresented: $showQueue) {
             Group {
                 if #available(iOS 16.4, *) {
-                    ReferenceQueueView()
+                    PlayQueueList()
                         .environmentObject(player)
                         .presentationDetents([.medium, .large])
                         .presentationBackground(.ultraThinMaterial)
                 } else {
-                    ReferenceQueueView()
+                    PlayQueueList()
                         .environmentObject(player)
                         .presentationDetents([.medium, .large])
                 }
@@ -121,15 +129,15 @@ struct AppleMusicPlayerView: View {
                     CommentsView(track: t)
                 }
             }
-            .modifier(CommentsSheetDetents())
+            .modifier(PlayerSheetDetents())
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let t = track {
                 AddToPlaylistSheet(track: t)
             }
         }
-        .sheet(isPresented: $showPlayerModeSheet) {
-            PlayerModeSheet()
+        .sheet(isPresented: $showPlaybackModeSheet) {
+            PlaybackModeSheet()
         }
         .sheet(isPresented: $showLyricOffsetSheet) {
             LyricOffsetSheet()
@@ -169,7 +177,7 @@ struct AppleMusicPlayerView: View {
 
             // 播放器选择
             Button {
-                showPlayerModeSheet = true
+                showPlaybackModeSheet = true
             } label: {
                 Label("播放器样式", systemImage: "music.note.tv")
             }
@@ -277,7 +285,7 @@ struct AppleMusicPlayerView: View {
 
     private func portraitLayout(size: CGSize) -> some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: ReferencePlaybackPresentationMetrics.headerTopSpacing)
+            Color.clear.frame(height: PlayerLayoutMetrics.headerTopSpacing)
 
             ZStack {
                 coverPage(size: size)
@@ -315,7 +323,7 @@ struct AppleMusicPlayerView: View {
     /// 单独成方法：整段写在 `portraitLayout` 里会让类型检查器推断过久。
     @ViewBuilder
     private func artworkTransitionLayer(
-        frames: [AppleMusicArtworkAnchor: Anchor<CGRect>],
+        frames: [CoverArtAnchor: Anchor<CGRect>],
         proxy: GeometryProxy
     ) -> some View {
         if let expanded = frames[.expanded], let compact = frames[.compact] {
@@ -426,7 +434,7 @@ struct AppleMusicPlayerView: View {
 
                 // 进度条 + 控制按钮 + 音量条 + 底部按钮
                 VStack(spacing: 0) {
-                    ReferenceScrubber()
+                    PlayerSeekBar()
                         .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
 
                     Spacer().frame(height: ScreenAdapter.h(8))
@@ -462,21 +470,21 @@ struct AppleMusicPlayerView: View {
                     Spacer().frame(height: ScreenAdapter.h(16))
 
                     // 音量条
-                    ReferenceVolumeControl()
+                    PlayerVolumeControl()
                         .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
 
                     Spacer().frame(height: ScreenAdapter.h(16))
 
                     // 底部按钮
                     HStack(spacing: ScreenAdapter.w(40)) {
-                        referenceActionButton(icon: "quote.bubble", active: showLyrics) {
+                        playerToolbarButton(icon: "quote.bubble", active: showLyrics) {
                             guard !lyrics.isEmpty else { return }
                             showLyrics.toggle()
                         }
-                        referenceActionButton(icon: "text.bubble", active: showComments) {
+                        playerToolbarButton(icon: "text.bubble", active: showComments) {
                             showComments = true
                         }
-                        referenceActionButton(icon: "list.bullet") {
+                        playerToolbarButton(icon: "list.bullet") {
                             showQueue = true
                         }
                     }
@@ -832,7 +840,7 @@ struct AppleMusicPlayerView: View {
                                 .onChange(of: viewport.size.height) { lyricsViewportHeight = $0 }
                         }
                     }
-                    .onPreferenceChange(ReferenceLyricCenterKey.self) { centers in
+                    .onPreferenceChange(LyricLineCenterKey.self) { centers in
                         lyricCenters = centers
                         updateFocusedLyric(from: centers)
                     }
@@ -904,7 +912,7 @@ struct AppleMusicPlayerView: View {
 
     private func playbackControls(bottomInset: CGFloat) -> some View {
         VStack(spacing: 0) {
-            ReferenceScrubber()
+            PlayerSeekBar()
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.progress)))
 
             Spacer().frame(height: ScreenAdapter.h(5))
@@ -944,21 +952,21 @@ struct AppleMusicPlayerView: View {
             Spacer().frame(height: ScreenAdapter.h(25))
 
             // 常驻音量条（替代底部音量按钮）
-            ReferenceVolumeControl()
+            PlayerVolumeControl()
                 .frame(maxWidth: ScreenAdapter.w(420))
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.volume)))
 
             Spacer().frame(height: ScreenAdapter.h(30))
 
             HStack(spacing: ScreenAdapter.h(60)) {
-                referenceActionButton(icon: "quote.bubble", active: showLyrics) {
+                playerToolbarButton(icon: "quote.bubble", active: showLyrics) {
                     guard !lyrics.isEmpty else { return }
                     showLyrics.toggle()
                 }
-                referenceActionButton(icon: "text.bubble", active: showComments) {
+                playerToolbarButton(icon: "text.bubble", active: showComments) {
                     showComments = true
                 }
-                referenceActionButton(icon: "list.bullet") {
+                playerToolbarButton(icon: "list.bullet") {
                     showQueue = true
                 }
             }
@@ -972,7 +980,7 @@ struct AppleMusicPlayerView: View {
         .scaleEffect(CGSize(width: 1.0, height: settings.appleMusicControlsHeight), anchor: .bottom)
     }
 
-    private func referenceActionButton(icon: String, active: Bool = false, tint: Color = .white, action: @escaping () -> Void) -> some View {
+    private func playerToolbarButton(icon: String, active: Bool = false, tint: Color = .white, action: @escaping () -> Void) -> some View {
         Button {
             action()
         } label: {
@@ -1056,22 +1064,21 @@ struct AppleMusicPlayerView: View {
         }
     }
 
+    /// 当前应高亮的歌词行下标。
+    ///
+    /// ⚠️ 这里**不要**用 `clock.progress` 自己做二分查找。
+    ///
+    /// `clock`（`PlayerClock`）是 20Hz（50ms）刷新的时钟，`AppleMusicPlayerView`
+    /// 一旦观察它，**整个播放器页的 body 每 50ms 就会全量重算一次** ——
+    /// 而这棵树里有 AMLL 的 `WKWebView`、WebGL 全屏流动背景、封面插值动画层
+    /// 和整条控制栏。播放时主线程会被彻底打满，表现就是「一打开播放器就卡死」。
+    ///
+    /// 改走 `lyricsCursor.activeIndex`：`LyricsCursor` 只在**当前行号真的变化时**
+    /// 才写 `@Published`（它内部有 `if idx != activeIndex` 的判断），
+    /// 所以重算频率从 20Hz 降到「一句歌词一次」——两行歌词之间的间隔通常好几秒。
+    /// 代价是高亮最多滞后 100ms（`syncFromCore` 的轮询周期），完全不可感知。
     private var currentPlaybackLyricIndex: Int? {
-        guard !lyrics.isEmpty else { return nil }
-        let progress = LyricTiming.effectiveProgress(clock.progress, userOffset: lyricOffset)
-        var low = 0
-        var high = lyrics.count - 1
-        var answer: Int?
-        while low <= high {
-            let mid = (low + high) / 2
-            if lyrics[mid].time <= progress {
-                answer = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-        return answer
+        lyricsCursor.activeIndex
     }
 
     private var currentPlaybackLyricID: Int? {
@@ -1148,13 +1155,13 @@ struct AppleMusicPlayerView: View {
             .background(lyricRowCenterReporter(lineID))
     }
 
-    /// 把某一行的中线 y 值写进 `ReferenceLyricCenterKey`。
+    /// 把某一行的中线 y 值写进 `LyricLineCenterKey`。
     @ViewBuilder
     private func lyricRowCenterReporter(_ lineID: Int?) -> some View {
         GeometryReader { rowGeometry in
             let midY = rowGeometry.frame(in: .named(Self.lyricsViewportSpace)).midY
             Color.clear.preference(
-                key: ReferenceLyricCenterKey.self,
+                key: LyricLineCenterKey.self,
                 value: Self.centerMap(id: lineID, midY: midY)
             )
         }
@@ -1167,7 +1174,7 @@ struct AppleMusicPlayerView: View {
     }
 
     /// 歌词滚动视口的坐标空间名。
-    private static let lyricsViewportSpace = "referenceLyricsViewport"
+    private static let lyricsViewportSpace = "playerLyricsViewport"
 
     private func updateFocusedLyric(from centers: [Int: CGFloat]) {        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
         let center = lyricsViewportHeight / 2

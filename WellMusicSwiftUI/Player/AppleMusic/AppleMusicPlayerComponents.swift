@@ -933,20 +933,18 @@ struct LyricOffsetSheet: View {
 }
 
 // =====================================================================================
-// MARK: - 以下为自 Kumone / wellam 回迁的 UI 与交互组件
+// MARK: - 播放器 UI 与交互组件
 //
-// 回迁范围严格限定为「视觉 + 交互」。两个承载**行为**的部件按用户要求保持
-// WellMusicSwiftUI 自身实现，不采用 Kumone 版本：
-//   * `ReferenceScrubber`  —— 时间源走 `PlayerCore` 的拖拽仲裁，不用 Kumone 的
-//                             本地 `isSeeking` + `abs(newProgress - scrubValue) < 0.3`。
-//   * AMLL 歌词同步        —— 仍由 `AMLLWebLyricsView` + `hardCalibrate` 通道负责，
-//                             本文件不引入 Kumone 的 `AMLLLyricsManager`。
+// 范围限定为「视觉 + 交互」。两个承载**行为**的部件一律使用本项目自身实现：
+//   * `PlayerSeekBar`  —— 时间源走 `PlayerCore` 的拖拽仲裁
+//                             （`beginScrubbing` / `updateScrubbing` / `endScrubbing`）。
+//   * AMLL 歌词同步        —— 由 `AMLLWebLyricsView` + `hardCalibrate` 通道负责。
 // =====================================================================================
 
 // MARK: - 封面 / 文本锚点
 
 /// 收集歌词行在视口坐标系内的中线位置，用于判定「当前聚焦行」。
-struct ReferenceLyricCenterKey: PreferenceKey {
+struct LyricLineCenterKey: PreferenceKey {
     static var defaultValue: [Int: CGFloat] = [:]
 
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
@@ -955,25 +953,25 @@ struct ReferenceLyricCenterKey: PreferenceKey {
 }
 
 /// 大封面与歌词页迷你封面之间做插值动画时，用来指认「大 / 小」两个落点。
-enum AppleMusicArtworkAnchor: Hashable {
+enum CoverArtAnchor: Hashable {
     case expanded
     case compact
 }
 
 /// 收集大封面与迷你封面在各自坐标系内的实际位置。
 struct AppleMusicArtworkFrameKey: PreferenceKey {
-    static var defaultValue: [AppleMusicArtworkAnchor: Anchor<CGRect>] = [:]
+    static var defaultValue: [CoverArtAnchor: Anchor<CGRect>] = [:]
 
     static func reduce(
-        value: inout [AppleMusicArtworkAnchor: Anchor<CGRect>],
-        nextValue: () -> [AppleMusicArtworkAnchor: Anchor<CGRect>]
+        value: inout [CoverArtAnchor: Anchor<CGRect>],
+        nextValue: () -> [CoverArtAnchor: Anchor<CGRect>]
     ) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
 /// 歌名 / 歌手文本在大封面页与歌词页两处的落点。
-enum AppleMusicTextAnchor: Hashable {
+enum HeaderTextAnchor: Hashable {
     case titleExpanded
     case titleCompact
     case artistExpanded
@@ -981,18 +979,18 @@ enum AppleMusicTextAnchor: Hashable {
 }
 
 struct AppleMusicTextFrameKey: PreferenceKey {
-    static var defaultValue: [AppleMusicTextAnchor: Anchor<CGRect>] = [:]
+    static var defaultValue: [HeaderTextAnchor: Anchor<CGRect>] = [:]
 
     static func reduce(
-        value: inout [AppleMusicTextAnchor: Anchor<CGRect>],
-        nextValue: () -> [AppleMusicTextAnchor: Anchor<CGRect>]
+        value: inout [HeaderTextAnchor: Anchor<CGRect>],
+        nextValue: () -> [HeaderTextAnchor: Anchor<CGRect>]
     ) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
 /// 竖屏排版常量。
-enum ReferencePlaybackPresentationMetrics {
+enum PlayerLayoutMetrics {
     /// 顶部留白
     static let headerTopSpacing: CGFloat = 20
 }
@@ -1001,16 +999,16 @@ enum ReferencePlaybackPresentationMetrics {
 
 /// Apple Music 风格的进度条。
 ///
-/// **注意（关键差异）**：拖拽状态一律由 `PlayerCore` 仲裁，本视图不持有
-/// `scrubbing` / `isSeeking` 这类本地时间状态。原因是 Kumone 版本的
-/// `abs(newProgress - scrubValue) < 0.3` 会在无损 / Hi-Res 文件上长时间不满足，
-/// 从而把 `isSeeking` 卡在 true、进度条停在拖拽值不动。
+/// **注意（关键设计）**：拖拽状态一律由 `PlayerCore` 仲裁，本视图不持有
+/// `scrubbing` / `isSeeking` 这类本地时间状态。若改用「本地猜测位置是否已对上」
+/// （例如 `abs(newProgress - scrubValue) < 0.3`），会在无损 / Hi-Res 文件上
+/// 长时间不满足，从而把 `isSeeking` 卡在 true、进度条停在拖拽值不动。
 ///
 /// 这里改为：
 ///   * onChanged → `PlayerCore.beginScrubbing()` / `updateScrubbing(_:)`
 ///   * onEnded   → `PlayerCore.endScrubbing(_:)`，由它在超时 / 位置对齐后自行收尾
 /// 显示值则直接取 `PlayerCore.displayTime`，拖拽期间它就是 scrubTime。
-struct ReferenceScrubber: View {
+struct PlayerSeekBar: View {
     @EnvironmentObject private var player: PlayerService
     @ObservedObject private var core = PlayerCore.shared
     /// 是否显示拖拽气泡
@@ -1104,7 +1102,7 @@ struct ReferenceScrubber: View {
 // MARK: - 音量条
 
 /// 常驻横向音量条：左右为喇叭图标，中间可拖拽。
-struct ReferenceVolumeControl: View {
+struct PlayerVolumeControl: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
     @State private var isDragging = false
@@ -1214,7 +1212,7 @@ struct MiniLyricsPreview: View {
 
 // MARK: - 播放队列
 
-struct ReferenceQueueView: View {
+struct PlayQueueList: View {
     @EnvironmentObject private var player: PlayerService
     @Environment(\.dismiss) private var dismiss
 
@@ -1329,7 +1327,7 @@ struct ReferenceQueueView: View {
 // MARK: - Sheet 辅助
 
 /// 评论区 sheet：iOS 16.4+ 使用半屏 detents，背景交给 `CommentsView` 自绘。
-struct CommentsSheetDetents: ViewModifier {
+struct PlayerSheetDetents: ViewModifier {
     func body(content: Content) -> some View {
         Group {
             if #available(iOS 16.4, *) {
@@ -1359,7 +1357,7 @@ extension View {
 // MARK: - 音量浮层
 
 /// 竖直音量浮层（Apple Music 播放器的音量按钮弹出样式）。
-struct CompactVolumePopover: View {
+struct VolumePopover: View {
     @EnvironmentObject private var player: PlayerService
     @State private var isDragging = false
 
@@ -1406,7 +1404,7 @@ struct CompactVolumePopover: View {
         .padding(.vertical, 14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(alignment: .bottom) {
-            PopoverTriangle()
+            PopoverArrow()
                 .fill(.white.opacity(0.18))
                 .frame(width: 16, height: 8)
                 .offset(y: 8)
@@ -1429,7 +1427,7 @@ struct CompactVolumePopover: View {
 }
 
 /// 浮层底部的小三角。
-struct PopoverTriangle: Shape {
+struct PopoverArrow: Shape {
     func path(in rect: CGRect) -> Path {
         Path { path in
             path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
@@ -1442,7 +1440,7 @@ struct PopoverTriangle: Shape {
 
 // MARK: - 播放器样式选择
 
-struct PlayerModeSheet: View {
+struct PlaybackModeSheet: View {
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
 
