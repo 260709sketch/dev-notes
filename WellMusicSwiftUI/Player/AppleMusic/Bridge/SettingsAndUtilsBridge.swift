@@ -52,6 +52,53 @@ enum WellAppTheme: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - NowPlayingMode
+/// 「正在播放」页的形态。回迁自 Kumone / wellam 的 NowPlayingMode。
+///
+/// 说明：`.classic` 已按上游注释停用，`.appleMusic` 即本文件所在的 Apple Music 播放器。
+enum NowPlayingMode: String, Codable, CaseIterable, Identifiable {
+    case appleMusic
+    case immersive
+    case immersiveV2
+    case vinyl
+    case minimal
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .appleMusic: return "Apple Music"
+        case .immersive: return "沉浸模式"
+        case .immersiveV2: return "沉浸模式 V2"
+        case .vinyl: return "唱片模式"
+        case .minimal: return "极简模式"
+        }
+    }
+
+    /// 模式的排版族：compact 类共用紧凑布局。
+    var usesCompactLayout: Bool {
+        switch self {
+        case .appleMusic, .immersiveV2: return true
+        case .immersive, .vinyl, .minimal: return false
+        }
+    }
+}
+
+// MARK: - allowsNowPlayingDismiss
+/// 控制「正在播放」页是否允许整页下滑关闭。
+///
+/// 歌词页可见时置 false：避免和歌词滚动 / 拖拽手势互相抢占。
+private struct AllowsNowPlayingDismissKey: EnvironmentKey {
+    static let defaultValue: Bool = true
+}
+
+extension EnvironmentValues {
+    var allowsNowPlayingDismiss: Bool {
+        get { self[AllowsNowPlayingDismissKey.self] }
+        set { self[AllowsNowPlayingDismissKey.self] = newValue }
+    }
+}
+
 // MARK: - SettingsManager
 /// 桥接 AppState + UserDefaults，满足 AppleMusicPlayerView 对 SettingsManager 的依赖契约。
 @MainActor
@@ -101,6 +148,29 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.appleMusic.amllLyricBottom") var appleMusicAmllLyricBottom: Double = 0.08
     /// AMLL 水平边距
     @AppStorage("wellmusic.appleMusic.amllLyricHorizontal") var appleMusicAmllLyricHorizontal: Double = 24
+
+    // MARK: - Apple Music 播放器（回迁自 Kumone / wellam）
+
+    /// 当前「正在播放」页形态
+    @AppStorage("wellmusic.player.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
+
+    /// 大封面页是否显示迷你歌词预览（点击可进入歌词页）
+    @AppStorage("wellmusic.appleMusic.showLyricPreview") var showLyricPreview: Bool = false
+
+    /// 是否常驻显示音量条（false 时走音量按钮 + 浮层）
+    @AppStorage("wellmusic.appleMusic.showVolume") var showVolumeControl: Bool = false
+
+    /// 自定义配色（十六进制，空串表示用默认色）
+    @AppStorage("wellmusic.appleMusic.primaryHex") var appleMusicPrimaryHex: String = ""
+    @AppStorage("wellmusic.appleMusic.secondaryHex") var appleMusicSecondaryHex: String = ""
+    @AppStorage("wellmusic.appleMusic.accentHex") var appleMusicAccentHex: String = ""
+    @AppStorage("wellmusic.appleMusic.volumeHex") var appleMusicVolumeHex: String = ""
+
+    /// 呼吸/律动强度（0...1）
+    @AppStorage("wellmusic.player.breath") var breath: Double = 0.6
+
+    /// 进度条样式（0 为默认）
+    @AppStorage("wellmusic.player.progressBarStyle") var progressBarStyle: Int = 0
 
     /// 背景模式
     @AppStorage("wellmusic.appleMusic.backgroundMode") var appleMusicBackgroundMode: AppleMusicBackgroundMode = .gradient
