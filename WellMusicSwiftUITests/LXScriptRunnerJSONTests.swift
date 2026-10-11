@@ -151,9 +151,18 @@ final class LXScriptRunnerJSONTests: XCTestCase {
 
     // MARK: - 输出恒为合法 JSON
 
-    /// 任意输入下输出都必须是 `JSON.parse` 能接受的文本
+    /// 标量输入下输出必须是 `JSON.parse` 能接受的 JSON 片段。
+    ///
+    /// 注意：**不包含 String**。字符串走的是「原样透传」契约（调用方保证传的是 JSON 文本），
+    /// 因此 `jsonText(from: "hello")` 会返回 `hello` —— 这不是合法 JSON，是刻意行为。
+    /// 见 `testStringPassesThroughVerbatim`。
     func testAllScalarOutputsAreValidJSONFragments() throws {
-        let candidates: [Any] = [0, 1, -1, 3.25, true, false, NSNull(), "hello"]
+        let candidates: [Any] = [
+            0, 1, -1, 42,
+            3.25, -0.5, 1e10,
+            true, false,
+            NSNull(),
+        ]
         for value in candidates {
             let text = WellLXScriptRunner.jsonText(from: value)
             XCTAssertNoThrow(
@@ -161,5 +170,31 @@ final class LXScriptRunnerJSONTests: XCTestCase {
                 "value=\(value) produced invalid JSON: \(text)"
             )
         }
+    }
+
+    /// 数值形式正确性：不锁死字符串长相（NSNumber.stringValue 对 0.0 会输出 "0"），
+    /// 而是断言「解析回来仍是同一个数」——这才是脚本侧真正关心的语义。
+    func testScalarNumericRoundTrip() throws {
+        let numbers: [Double] = [0, 1, -1, 42, 3.25, -0.5, 1e10]
+        for n in numbers {
+            let text = WellLXScriptRunner.jsonText(from: n)
+            let parsed = try JSONSerialization.jsonObject(
+                with: Data(text.utf8), options: [.fragmentsAllowed]
+            )
+            let back = try XCTUnwrap(parsed as? NSNumber, "value=\(n) text=\(text)").doubleValue
+            // 相对容差：绝对容差对 1e10 量级过严
+            XCTAssertEqual(back, n, accuracy: Swift.max(Swift.abs(n) * 1e-12, 1e-9),
+                           "value=\(n) produced \(text)")
+        }
+    }
+
+    /// 大整数不能丢精度（NSNumber.stringValue 对 Int 是精确的）
+    func testLargeIntegerKeepsPrecision() throws {
+        let big = 9_007_199_254_740_991  // 2^53 - 1，双精度可精确表示的上界
+        let text = WellLXScriptRunner.jsonText(from: big)
+        let parsed = try JSONSerialization.jsonObject(
+            with: Data(text.utf8), options: [.fragmentsAllowed]
+        )
+        XCTAssertEqual((parsed as? NSNumber)?.int64Value, Int64(big))
     }
 }
