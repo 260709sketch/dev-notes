@@ -211,7 +211,24 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         Task { @MainActor in
             print("[AMLL] 歌词帧率设置 - 60帧限制已解除：\(switched)，屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz")
         }
-        configuration.userContentController.add(WeakScriptHandler(context.coordinator), name: "amll")
+        // ⚠️⚠️ 必须**同时**注册 `amllEvent`，这是「播放器卡死」的根因修复之一。
+        //
+        // 官方 `AMLLLyrics.html` 只往 `messageHandlers.amllEvent` 发消息：
+        //   * `{name:'ready'}`  页面就绪（load 后 100ms）
+        //   * `{name:'seek'}`   点击歌词行
+        // 历史上这里只注册了 `amll`，名字对不上 → `ready` 永远收不到 →
+        // `Coordinator.ready` 恒为 false → 歌词永远不加载、`pending` 永不清空、
+        // 每次 SwiftUI update 都往一个"未就绪"的 WebView 反复下发 JS。
+        // 叠加 474KB 页面 + WebGL 背景，主线程被打满，表现就是「一打开就卡死」。
+        //
+        // 现在双保险：
+        //   1. 这里注册 `amllEvent`（原生通道，最可靠）；
+        //   2. 注入层还做了 JS 侧转发 shim（见 build_amll_page.py 的 bridgeAmllEvent），
+        //      即使哪天有人改了注入配置，消息也能到 `amll`。
+        // 两个 handler 都指向同一个 Coordinator，重复到达由 `ready` 幂等逻辑兜住。
+        let handler = WeakScriptHandler(context.coordinator)
+        configuration.userContentController.add(handler, name: "amll")
+        configuration.userContentController.add(handler, name: "amllEvent")
         let web = WKWebView(frame: .zero, configuration: configuration)
         web.isOpaque = false
         web.alpha = 0
@@ -278,7 +295,12 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 1. `pushClock` 的同值去重（阈值见 `AMLLClockPolicy`）；
         /// 2. 判断是否需要硬校准——seek 之后若目标值与已发送值几乎相同，
         ///    说明页面时钟刚好在那里，硬校准是多余的。
-        private var lastSentMs = Int.min
+        ///
+        /// ⚠️ 必须是 `Int?` 而不是 `Int.min`。用 `Int.min` 当哨兵值时，
+        /// `abs(ms - Int.min)` 会在 Swift 里**整数溢出直接 trap 崩溃**
+        /// （`Int.min` 没有对应的正数）。首次 `sendClock` / `hardCalibrate`
+        /// 就必崩，且崩在音频回调线程派发过来的路径上，表现就是「一打开就闪退」。
+        private var lastSentMs: Int?
         /// 已处理过的硬校准事件序号（见 `AMLLWebLyricsView.calibrationSeq`）。
         private var lastCalibrationSeq = 0
         /// 拖动的收尾校准：`isScrubbing` 转 false 的那次回调必然发生在 seek **回调之前**，
@@ -291,15 +313,22 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         func attach(_ web: WKWebView) {
             self.web = web
             // The page extrapolates the clock between samples, so ten a second keep it exact without a call per frame.
+            //
+            // ⚠️ 这里**不能**用 `MainActor.assumeIsolated`：它在「当前不在主 actor」
+            // 时会直接 trap 崩溃（不是安全降级）。`Timer.scheduledTimer` 挂在主
+            // RunLoop 上，正常情况确实在主线程，但一旦有人把这个 Timer 挪到别的
+            // RunLoop、或系统在极端情况下从别的线程唤醒它，就会当场闪退。
+            // 改用显式的 `Task { @MainActor in ... }`：跨 actor 时安全排队，
+            // 已在主 actor 时同步执行，行为完全一致但没有崩溃风险。
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.pushClock() }
+                Task { @MainActor in self?.pushClock() }
             }
             // 拖动收尾的补校准：seek 回调里 `isScrubbing` 才真正落回 false，
             // 而那之后 `PlayerCore.currentTime` 变成了播放器回报的精确值。
             scrubObserver = PlayerCore.shared.$isScrubbing
                 .removeDuplicates()
                 .sink { [weak self] isScrubbing in
-                    MainActor.assumeIsolated { self?.handleScrubbingChange(isScrubbing) }
+                    Task { @MainActor in self?.handleScrubbingChange(isScrubbing) }
                 }
         }
 
@@ -311,6 +340,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             settleCalibrationWork?.cancel()
             settleCalibrationWork = nil
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
+            web?.configuration.userContentController.removeScriptMessageHandler(forName: "amllEvent")
         }
 
         /// `isScrubbing` 落回 false = 一次精确 seek 刚刚完成。
@@ -558,7 +588,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// （`_l = now; co = ms`），代价是一次 JS 调用 + 一次跨进程消息。
         /// 位置几乎没变时这次重置毫无收益，纯属浪费——按 5ms 阈值跳过。
         private func sendClock(ms: Int, running: Bool) {
-            guard abs(ms - lastSentMs) >= AMLLClockPolicy.dedupeThresholdMs else { return }
+            // 首次（`lastSentMs == nil`）一定要发；此后才做同值去重。
+            if let last = lastSentMs, abs(ms - last) < AMLLClockPolicy.dedupeThresholdMs { return }
             lastSentMs = ms
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
@@ -578,7 +609,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             // 页面工作在「歌词时间 = 播放位置 + 偏移」的坐标系里。
             let ms = Int(((max(0, seconds) + offset) * 1000).rounded())
             // 目标与页面当前所在位置几乎一致时无需硬校准，避免无谓的纪元重置。
-            guard abs(ms - lastSentMs) >= AMLLClockPolicy.calibrationThresholdMs else { return }
+            if let last = lastSentMs, abs(ms - last) < AMLLClockPolicy.calibrationThresholdMs { return }
             lastSentMs = ms
             lastSampleMs = ms
             let player = PlayerService.shared
@@ -622,6 +653,15 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
 
             switch type {
             case "ready":
+                // 这条日志是整条链路的「心脏起搏」信号。如果用户反馈「播放器卡死 /
+                // 歌词不出来」，第一件事就是看有没有这行：
+                //   * **没有** → 页面的 `ready` 没到 Swift。历史上真凶是官方页往
+                //     `messageHandlers.amllEvent` 发消息，而 Swift 注册的是 `amll`，
+                //     名字不匹配（由注入层的转发 shim 修复）。若再次出现，先查
+                //     `AMLLLyricsPage.html` 里的 `bridgeAmllEvent` 是否还在。
+                //   * **有但反复** → 页面被销毁重建了（`AMLLWebLyricsView` 不该
+                //     随 `showLyrics` 创建/销毁）。
+                print("[AMLL] 页面就绪（ready）：开始下发歌词与背景配置")
                 ready = true
                 flushWork?.cancel()
                 applyFontWeight(fontWeight)

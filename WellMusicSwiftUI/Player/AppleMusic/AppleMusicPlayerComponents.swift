@@ -1099,6 +1099,44 @@ struct PlayerSeekBar: View {
     }
 }
 
+// MARK: - 收藏按钮（叶子视图）
+
+/// 播放页的收藏（心形）按钮。
+///
+/// **为什么要单独抽成一个视图**：收藏状态只驱动这一个图标，但它来源于
+/// `AccountStore`。如果把 `@ObservedObject AccountStore.shared` 挂在
+/// `AppleMusicPlayerView` 顶层，任何收藏变化都会让**整页**重算 —— 页里有
+/// `WKWebView`（474KB 页面 + WebGL 流动背景），一次全量重算就要重新测量
+/// `UIScreen`、遍历 window scene、并向下发一轮 `evaluateJavaScript`。
+/// 抽成叶子后，重算范围收敛到这一个 38pt 的按钮，开销可忽略。
+struct PlayerLikeButton: View {
+    let track: Track?
+    var primaryColor: Color = .white
+    var accentColor: Color = .red
+
+    /// 只订阅收藏集合，不订阅整个 `AccountStore` 的其它状态。
+    @ObservedObject private var account = AccountStore.shared
+
+    private var isLiked: Bool {
+        guard let track else { return false }
+        return account.isLiked(track: track)
+    }
+
+    var body: some View {
+        Button {
+            guard let track else { return }
+            Task { await AccountStore.shared.toggleLike(trackID: track.id, track: track) }
+        } label: {
+            Image(systemName: isLiked ? "heart.fill" : "heart")
+                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+                .foregroundStyle(isLiked ? accentColor : primaryColor.opacity(0.78))
+                .frame(width: ScreenAdapter.h(38), height: ScreenAdapter.h(38))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - 音量条
 
 /// 常驻横向音量条：左右为喇叭图标，中间可拖拽。

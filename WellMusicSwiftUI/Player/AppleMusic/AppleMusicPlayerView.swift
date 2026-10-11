@@ -32,12 +32,15 @@ struct AppleMusicPlayerView: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject private var account = AccountStore.shared
-    /// 歌词游标：**只在当前行号变化时**才通知（低频）。
+    /// ⚠️ **不要**在这里 `@ObservedObject AccountStore.shared`。
     ///
-    /// ⚠️ 不要在这里观察 `PlayerService.shared.clock` —— 那是 20Hz 的时钟，
-    /// 会让整个播放器页每 50ms 全量重算一次（树里有 WKWebView 与 WebGL 背景），
-    /// 直接导致打开播放器就卡死。详见 `currentPlaybackLyricIndex` 的说明。
+    /// 收藏状态只影响「心形图标」这一个叶子节点。若在播放页顶层观察它，
+    /// 任何一次收藏变化（以及历史上 `AccountStore` 里那个 0.5s 轮询定时器）
+    /// 都会让**整页**全量重算 —— 包括 `UIScreen.main.bounds`、安全区遍历、
+    /// 以及最贵的 `AMLLWebRepresentable.updateUIView`（往 474KB 的 WebGL
+    /// 歌词页下发 JS）。这正是「打开播放器就卡死」的成因之一。
+    ///
+    /// 现在改为由叶子视图 `PlayerLikeButton` 自己订阅，重算范围收敛到按钮本身。
     @ObservedObject private var lyricsCursor = PlayerService.shared.lyricsCursor
     @ObservedObject private var appleLayout = AppleMusicLayoutStore.shared
 
@@ -423,10 +426,11 @@ struct AppleMusicPlayerView: View {
                         .truncationMode(.tail)
                     }
                     Spacer(minLength: ScreenAdapter.w(8))
-                    compactActionButton(
-                        icon: isLiked ? "heart.fill" : "heart",
-                        active: isLiked
-                    ) { onFavorite() }
+                    PlayerLikeButton(
+                        track: track,
+                        primaryColor: primaryColor,
+                        accentColor: accentColor
+                    )
                     moreMenu
                 }
                 .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
@@ -693,10 +697,11 @@ struct AppleMusicPlayerView: View {
                         .truncationMode(.tail)
                     }
                     Spacer(minLength: ScreenAdapter.w(8))
-                    compactActionButton(
-                        icon: isLiked ? "heart.fill" : "heart",
-                        active: isLiked
-                    ) { onFavorite() }
+                    PlayerLikeButton(
+                        track: track,
+                        primaryColor: primaryColor,
+                        accentColor: accentColor
+                    )
                     moreMenu
                 }
                 .frame(maxWidth: ScreenAdapter.w(420))
@@ -744,10 +749,11 @@ struct AppleMusicPlayerView: View {
                 }
             }
             Spacer(minLength: 0)
-            compactActionButton(
-                icon: isLiked ? "heart.fill" : "heart",
-                active: isLiked
-            ) { onFavorite() }
+            PlayerLikeButton(
+                track: track,
+                primaryColor: primaryColor,
+                accentColor: accentColor
+            )
             moreMenu
         }
         .frame(maxWidth: ScreenAdapter.w(420))
@@ -900,10 +906,11 @@ struct AppleMusicPlayerView: View {
                 }
             }
             Spacer(minLength: 0)
-            compactActionButton(
-                icon: isLiked ? "heart.fill" : "heart",
-                active: isLiked
-            ) { onFavorite() }
+            PlayerLikeButton(
+                track: track,
+                primaryColor: primaryColor,
+                accentColor: accentColor
+            )
             moreMenu
         }
     }
@@ -1035,15 +1042,8 @@ struct AppleMusicPlayerView: View {
         return t.fee == 1 || t.fee == 4
     }
 
-    private var isLiked: Bool {
-        guard let t = track else { return false }
-        return account.isLiked(track: t)
-    }
-
-    private func onFavorite() {
-        guard let t = track else { return }
-        Task { await AccountStore.shared.toggleLike(trackID: t.id, track: t) }
-    }
+    // 收藏按钮已抽成叶子视图 `PlayerLikeButton`（见 AppleMusicPlayerComponents.swift）。
+    // 不要在播放页顶层直接读 `AccountStore`——那会把收藏状态的变化放大成整页重算。
 
     /// 播放模式图标：当前项目 repeatMode + shuffleEnabled 分离。
     private var playbackModeIcon: String {

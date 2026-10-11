@@ -344,13 +344,30 @@ final class AccountStore: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
-        // 监听 AppState.favoriteTracks 变化来触发 objectWillChange
-        // 简化：使用定时器轮询
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // ⚠️ 这里**不能**用定时器轮询 `objectWillChange.send()`。
+        //
+        // 曾经写成 0.5s 一次的 `Timer { objectWillChange.send() }`，而
+        // `AppleMusicPlayerView` 顶层就 `@ObservedObject account`。结果是
+        // **整个播放页每 0.5 秒无条件全量重算一次** —— 包括 `UIScreen.main.bounds`、
+        // 安全区遍历、preference/anchor 层，以及最贵的
+        // `AMLLWebRepresentable.updateUIView` → 往 474KB 的 WebGL 歌词页
+        // 下发 `evaluateJavaScript`。2Hz 的整页重算足以让主线程饱和，
+        // 表现为「打开播放器就卡死」。
+        //
+        // 正确做法：只在收藏集合**真的变化**时通知。
+        // 收藏的写入点统一在 `AppState.favoriteTracks`（`@Published`），
+        // 直接订阅它即可，天然去重、零轮询。
+        AppState.shared.$favoriteTracks
+            .dropFirst()                       // 初值不需要通知（视图初始化时会自己读）
+            .removeDuplicates { lhs, rhs in
+                // 只比 id 列表，避免 `MusicItem` 整体相等性比较的开销与误判。
+                lhs.map(\.id) == rhs.map(\.id)
+            }
+            .sink { [weak self] _ in
+                // 转发成自身的变更信号，让观察 `AccountStore` 的视图重算。
                 self?.objectWillChange.send()
             }
-        }
+            .store(in: &cancellables)
     }
 
     func isLiked(track: Track) -> Bool {

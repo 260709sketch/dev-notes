@@ -970,6 +970,102 @@ void main() {
     Function.prototype.bind = origBind;
   }, 3000);
 
+  // ==================================================================
+  // 0.5 把官方页发给 `amllEvent` 的消息转发到 `amll` 通道
+  //
+  //     ⚠️⚠️ 这是**播放器卡死的真正根因**，务必保留这段 shim。
+  //
+  //     官方 AMLLLyrics.html 只往 `window.webkit.messageHandlers.amllEvent`
+  //     发消息，共两处：
+  //        * 页面就绪：{name:'ready', data:{}}   （load 后 100ms）
+  //        * 点击歌词行：{name:'seek', data:{time:秒}}
+  //
+  //     而 Swift 侧（`AMLLWebLyricsView`）注册的 handler 名是 `amll`。
+  //     两者对不上 → `ready` 永远收不到 → `Coordinator.ready` 永远为 false →
+  //     `flushPending()` 永不执行 → 歌词永远不 `load`、`pending` 永远不清、
+  //     每次 SwiftUI update 都重新排一个 0.3s 的 load work item，
+  //     并且每次 update 都往一个"未就绪"的 WebView 反复下发 JS。
+  //     叠加 474KB 页面 + WebGL 流动背景，主线程被彻底打满 →
+  //     「打开播放器什么都点不动，像卡死」。
+  //
+  //     这里不注册第二个 handler（那要改 Swift 且容易漏），而是在页面里
+  //     把 amllEvent 收到的消息原样转发给 amll，保持 Swift 侧单一通道不变。
+  // ==================================================================
+  (function bridgeAmllEvent() {
+    var pending = [];
+    var fake = {
+      postMessage: function (msg) {
+        // 目标 handler 是 Swift 注册的 `amll`。找到了就直接转发，
+        // 找不到就先排队（WebKit 注入 handler 极早期可能还没就绪）。
+        var real = wmRealHandler();
+        if (real) {
+          try { real.postMessage(msg); } catch (e) {}
+        } else {
+          pending.push(msg);
+        }
+      }
+    };
+
+    function wmRealHandler() {
+      try {
+        var h = window.webkit && window.webkit.messageHandlers;
+        if (!h) return null;
+        var real = h.amll;
+        return (real && real !== fake) ? real : null;
+      } catch (e) { return null; }
+    }
+
+    // 安装假 handler。WebKit 的 `messageHandlers` 是原生支撑的特殊对象，
+    // 直接赋值在部分系统上会静默失败，所以优先用 defineProperty，
+    // 两条路都试，确保官方页那句 `…amllEvent?.postMessage(…)` 一定落到我们这。
+    function install() {
+      try {
+        if (!window.webkit) window.webkit = {};
+        if (!window.webkit.messageHandlers) window.webkit.messageHandlers = {};
+        var h = window.webkit.messageHandlers;
+        try {
+          Object.defineProperty(h, 'amllEvent', {
+            value: fake, writable: true, configurable: true, enumerable: true
+          });
+        } catch (e1) {
+          h.amllEvent = fake;
+        }
+        return h.amllEvent === fake;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    var installed = install();
+    if (!installed) {
+      // 兜底：DOMContentLoaded / load 之后原生对象结构才稳定，各再试一次。
+      document.addEventListener('DOMContentLoaded', install);
+      window.addEventListener('load', install);
+      setTimeout(install, 0);
+      setTimeout(install, 50);
+    }
+
+    // 真实 handler 可用后把排队消息补发。50ms 一次、最多 5 秒，
+    // 就绪后立刻 clearInterval，长期零开销。
+    var drain = setInterval(function () {
+      if (!pending.length) return;
+      var real = wmRealHandler();
+      if (!real) return;
+      var batch = pending;
+      pending = [];
+      for (var i = 0; i < batch.length; i++) {
+        try { real.postMessage(batch[i]); } catch (e) {}
+      }
+      clearInterval(drain);
+    }, 50);
+    setTimeout(function () { clearInterval(drain); }, 5000);
+  })();
+
+  function wmEnsureWebkitHandlers() {
+    if (!window.webkit) window.webkit = {};
+    if (!window.webkit.messageHandlers) window.webkit.messageHandlers = {};
+  }
+
   function getRenderer() {
     if (renderer) return renderer;
     // 兜底：万一 bind hook 没命中（官方改版），尝试从 #bg 的 canvas 上找。
