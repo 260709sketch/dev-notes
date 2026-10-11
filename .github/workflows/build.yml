@@ -32,13 +32,27 @@ jobs:
         run: xcodegen generate
 
       # 1) 单元测试：验证播放器移植的常量/几何/派生逻辑（各平台映射含音质档位）
+      #    注意：macos-26 runner 上模拟器机型随 Xcode 版本变化（当前无 iPhone 16，只有 16e/17 系），
+      #    因此不硬编码机型名，改为自动挑第一个可用的 iPhone 模拟器（优先 16 系）。
       - name: Run unit tests
         run: |
+          set -euo pipefail
+          echo "== 可用模拟器 =="
+          xcrun simctl list devices available | grep -i iphone || true
+
+          echo 'aW1wb3J0IGpzb24sIHN5cwpkID0ganNvbi5sb2FkKHN5cy5zdGRpbilbImRldmljZXMiXQpjYW5kcyA9IFtdCmZvciBydW50aW1lLCBkZXZzIGluIGQuaXRlbXMoKToKICAgIGlmICJpT1MiIG5vdCBpbiBydW50aW1lOgogICAgICAgIGNvbnRpbnVlCiAgICBmb3IgZGV2IGluIGRldnM6CiAgICAgICAgbiA9IGRldi5nZXQoIm5hbWUiLCAiIikKICAgICAgICBpZiBuLnN0YXJ0c3dpdGgoImlQaG9uZSIpIGFuZCBkZXYuZ2V0KCJpc0F2YWlsYWJsZSIpOgogICAgICAgICAgICBjYW5kcy5hcHBlbmQoKHJ1bnRpbWUsIG4sIGRldlsidWRpZCJdKSkKaWYgbm90IGNhbmRzOgogICAgc3lzLmV4aXQoIm5vIGlQaG9uZSBzaW11bGF0b3IgYXZhaWxhYmxlIikKY2FuZHMuc29ydChrZXk9bGFtYmRhIGM6ICgwIGlmICIxNiIgaW4gY1sxXSBlbHNlIDEsIGNbMV0pKQpwcmludChjYW5kc1swXVsyXSkK' | base64 -d > /tmp/pick_sim.py
+          echo "== pick_sim.py =="
+          cat /tmp/pick_sim.py
+
+          DEST=$(xcrun simctl list devices available --json | python3 /tmp/pick_sim.py)
+          echo "== 选中模拟器 udid: $DEST =="
+          test -n "$DEST"
+
           xcodebuild \
             -project WellMusicSwiftUI.xcodeproj \
             -scheme WellMusicSwiftUI \
             -configuration Debug \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination "platform=iOS Simulator,id=$DEST" \
             -derivedDataPath build/tests \
             CODE_SIGNING_ALLOWED=NO \
             test

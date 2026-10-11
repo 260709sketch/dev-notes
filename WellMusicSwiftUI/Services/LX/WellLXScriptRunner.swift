@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import JavaScriptCore
 import CommonCrypto
 import Security
@@ -279,18 +280,48 @@ final class WellLXScriptRunner: @unchecked Sendable {
               !fn.isUndefined else { return }
         var args: [Any] = [scriptKey, action]
         if let data {
-            let jsonString: String
-            if let s = data as? String {
-                jsonString = s
-            } else if let jsonData = try? JSONSerialization.data(withJSONObject: data),
-                      let s = String(data: jsonData, encoding: .utf8) {
-                jsonString = s
-            } else {
-                jsonString = "null"
-            }
-            args.append(jsonString)
+            args.append(Self.jsonText(from: data))
         }
         _ = fn.call(withArguments: args)
+    }
+
+    /// 把任意值序列化成脚本侧 `JSON.parse` 能吃下的 JSON 文本。
+    ///
+    /// 注意：`JSONSerialization.data(withJSONObject:)` 要求顶层是 **数组或字典**，
+    /// 传 `NSNumber` / `Bool` / `String` 等标量会抛 ObjC 异常
+    /// （`Invalid top-level type in JSON write`），而 `try?` 只捕获 Swift `Error`，
+    /// 捕不到 `NSException`，结果是**进程直接崩溃**。
+    /// 因此这里先做显式类型判定，标量单独编码，绝不把非容器类型交给 `JSONSerialization`。
+    /// 可见性为 internal（而非 private）以便单元测试直接覆盖该纯函数。
+    static func jsonText(from value: Any) -> String {
+        // 已是字符串时视为调用方给定的 JSON 文本（如 init 原始报文），原样透传。
+        // 现存调用点均为字典 / Int，传字符串只为兼容旧契约。
+        if let s = value as? String { return s }
+
+        // 先转成 AnyObject 再判定：只有能被桥接成 ObjC 对象的类型才安全做 CF 类型判断。
+        // 直接 `value as CFTypeRef` 对自定义 struct / enum 会运行时 trap，
+        // 那会引入一个新的崩溃点（本函数的存在意义恰恰是「绝不崩溃」）。
+        if let object = value as AnyObject? {
+            let cfTypeID = CFGetTypeID(object)
+            if cfTypeID == CFBooleanGetTypeID() {
+                return (object as? Bool) == true ? "true" : "false"
+            }
+            if cfTypeID == CFNullGetTypeID() {
+                return "null"
+            }
+            if cfTypeID == CFNumberGetTypeID() {
+                return (object as? NSNumber)?.stringValue ?? "null"
+            }
+        }
+
+        // 字典 / 数组：常规路径
+        guard JSONSerialization.isValidJSONObject(value),
+              let jsonData = try? JSONSerialization.data(withJSONObject: value),
+              let text = String(data: jsonData, encoding: .utf8) else {
+            // 兜底：无法序列化的类型（如自定义结构体 / Date / Data）降级为 null
+            return "null"
+        }
+        return text
     }
 
     // MARK: - 原生 blocks（镜像 .mm createJSEnv 的 7 个注册）
