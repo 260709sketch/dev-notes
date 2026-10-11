@@ -277,7 +277,7 @@ final class QQMusicAPI {
             throw NetworkClient.NetworkError.invalidURL
         }
 
-        let resp = try await NetworkClient.shared.get(url, headers: ["Referer": "https://y.qq.com/"])
+        let resp = try await NetworkClient.shared.get(url.absoluteString, headers: ["Referer": "https://y.qq.com/"])
         guard let json = NetworkClient.jsonObject(resp.data),
               let req0 = json["req_0"] as? [String: Any],
               let data = req0["data"] as? [String: Any],
