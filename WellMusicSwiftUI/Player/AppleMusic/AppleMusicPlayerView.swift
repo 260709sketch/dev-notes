@@ -291,38 +291,7 @@ struct AppleMusicPlayerView: View {
             // 封面插值动画：在两个占位锚点之间移动同一个 CoverImage
             .overlayPreferenceValue(AppleMusicArtworkFrameKey.self) { artworkFrames in
                 GeometryReader { proxy in
-                    if let expanded = artworkFrames[.expanded],
-                       let compact = artworkFrames[.compact] {
-                        let expandedFrame = proxy[expanded]
-                        let compactFrame = proxy[compact]
-                        let targetFrame = showLyrics ? compactFrame : expandedFrame
-                        let cornerRadius: CGFloat = showLyrics ? 10 : 18
-
-                        ZStack {
-                            // 封面图片始终作为底层
-                            CoverImage(
-                                url: coverURL,
-                                size: targetFrame.width,
-                                cornerRadius: cornerRadius,
-                                emptyHint: player.isBuffering ? "等待开始播放…" : nil
-                            )
-                            .frame(width: targetFrame.width, height: targetFrame.height)
-                            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-
-                            // 动态封面视频叠加在上面
-                            if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
-                                DynamicCoverPlayer(url: dynamicURL)
-                                    .frame(width: targetFrame.width, height: targetFrame.height)
-                                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                            }
-                        }
-                        .shadow(color: .black.opacity(showLyrics ? 0.26 : 0.46),
-                                radius: showLyrics ? 9 : 36,
-                                y: showLyrics ? 4 : 18)
-                        .scaleEffect(showLyrics ? 1 : (player.isPlaying ? 1 : 0.965))
-                        .position(x: targetFrame.midX, y: targetFrame.midY)
-                        .allowsHitTesting(false)
-                    }
+                    artworkTransitionLayer(frames: artworkFrames, proxy: proxy)
                 }
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showLyrics)
@@ -335,6 +304,51 @@ struct AppleMusicPlayerView: View {
                 .animation(.easeInOut(duration: 0.25), value: showLyrics)
         }
         .frame(width: size.width, height: size.height)
+    }
+
+    /// 封面在「大封面位」与「歌词页迷你位」之间插值的那一层。
+    ///
+    /// 单独成方法：整段写在 `portraitLayout` 里会让类型检查器推断过久。
+    @ViewBuilder
+    private func artworkTransitionLayer(
+        frames: [AppleMusicArtworkAnchor: Anchor<CGRect>],
+        proxy: GeometryProxy
+    ) -> some View {
+        if let expanded = frames[.expanded], let compact = frames[.compact] {
+            let targetFrame = showLyrics ? proxy[compact] : proxy[expanded]
+            artworkLayerContent(targetFrame: targetFrame)
+        }
+    }
+
+    /// 按给定落点绘制封面（静态图 + 可选动态封面视频）。
+    private func artworkLayerContent(targetFrame: CGRect) -> some View {
+        let cornerRadius: CGFloat = showLyrics ? 10 : 18
+        let side = targetFrame.width
+
+        return ZStack {
+            // 封面图片始终作为底层
+            CoverImage(
+                url: coverURL,
+                size: side,
+                cornerRadius: cornerRadius,
+                emptyHint: player.isBuffering ? "等待开始播放…" : nil
+            )
+            .frame(width: side, height: targetFrame.height)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+
+            // 动态封面视频叠加在上面
+            if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
+                DynamicCoverPlayer(url: dynamicURL)
+                    .frame(width: side, height: targetFrame.height)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            }
+        }
+        .shadow(color: .black.opacity(showLyrics ? 0.26 : 0.46),
+                radius: showLyrics ? 9 : 36,
+                y: showLyrics ? 4 : 18)
+        .scaleEffect(showLyrics ? 1 : (player.isPlaying ? 1 : 0.965))
+        .position(x: targetFrame.midX, y: targetFrame.midY)
+        .allowsHitTesting(false)
     }
 
     // MARK: - 横屏布局（参考沉浸模式 regularLayout，左右分栏）
@@ -719,24 +733,15 @@ struct AppleMusicPlayerView: View {
                 ScrollViewReader { proxy in
                     ScrollView(showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: ScreenAdapter.h(26)) {
-                            Color.clear.frame(height: max(ScreenAdapter.h(88), lyricsViewportHeight * 0.30))
+                            Color.clear.frame(height: lyricTopSpacer)
                             ForEach(lyrics) { line in
-                                lyricLine(line, isFocused: line.id == currentVisualLyricID)
-                                    .id(line.id)
-                                    .background {
-                                        GeometryReader { rowGeometry in
-                                            Color.clear.preference(
-                                                key: ReferenceLyricCenterKey.self,
-                                                value: [line.id: rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
-                                            )
-                                        }
-                                    }
+                                lyricRow(line)
                             }
-                            Color.clear.frame(height: max(110, lyricsViewportHeight * 0.34))
+                            Color.clear.frame(height: lyricBottomSpacer)
                         }
                         .padding(.horizontal, 28)
                     }
-                    .coordinateSpace(name: "referenceLyricsViewport")
+                    .coordinateSpace(name: Self.lyricsViewportSpace)
                     .mask(
                         LinearGradient(
                             stops: [
@@ -1047,8 +1052,53 @@ struct AppleMusicPlayerView: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: isFocused)
     }
 
-    private func updateFocusedLyric(from centers: [Int: CGFloat]) {
-        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
+    // MARK: - 歌词滚动区辅助
+    //
+    // 刻意拆成独立成员：整段 `LazyVStack + ForEach + preference` 写在 `lyricsPage`
+    // 一处时，Swift 的类型检查器会在合理时间内推不出来（CI 报
+    // "unable to type-check this expression in reasonable time"）。
+    // 拆出后每段表达式足够小，既修掉编译超时，也顺带可读性更好。
+
+    /// 歌词列表顶部留白，让首行能滚到视口垂直中线。
+    private var lyricTopSpacer: CGFloat {
+        max(ScreenAdapter.h(88), lyricsViewportHeight * 0.30)
+    }
+
+    /// 歌词列表底部留白，让末行也能滚到中线。
+    private var lyricBottomSpacer: CGFloat {
+        max(110, lyricsViewportHeight * 0.34)
+    }
+
+    /// 单行歌词：本体 + 上报行中线位置。
+    private func lyricRow(_ line: LyricLine) -> some View {
+        let lineID = line.id
+        return lyricLine(line, isFocused: lineID == currentVisualLyricID)
+            .id(lineID)
+            .background(lyricRowCenterReporter(lineID))
+    }
+
+    /// 把某一行的中线 y 值写进 `ReferenceLyricCenterKey`。
+    @ViewBuilder
+    private func lyricRowCenterReporter(_ lineID: Int?) -> some View {
+        GeometryReader { rowGeometry in
+            let midY = rowGeometry.frame(in: .named(Self.lyricsViewportSpace)).midY
+            Color.clear.preference(
+                key: ReferenceLyricCenterKey.self,
+                value: Self.centerMap(id: lineID, midY: midY)
+            )
+        }
+    }
+
+    /// 构造只含一项的偏好字典。抽成静态方法避免 `Int?` 键在视图表达式里参与推断。
+    private static func centerMap(id: Int?, midY: CGFloat) -> [Int: CGFloat] {
+        guard let id else { return [:] }
+        return [id: midY]
+    }
+
+    /// 歌词滚动视口的坐标空间名。
+    private static let lyricsViewportSpace = "referenceLyricsViewport"
+
+    private func updateFocusedLyric(from centers: [Int: CGFloat]) {        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
         let center = lyricsViewportHeight / 2
         focusedLyricID = centers.min { abs($0.value - center) < abs($1.value - center) }?.key
     }
