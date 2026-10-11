@@ -44,6 +44,16 @@ enum WellAudioQuality: Int, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// 播放器音质胶囊上的短标签（对应参考源码 `qualityDisplayName`）
+    var badgeText: String {
+        switch self {
+        case .standard: return "128k"
+        case .high: return "320k"
+        case .lossless: return "FLAC"
+        case .hiRes: return "Hi-Res"
+        }
+    }
+
     // MARK: 各平台映射
 
     /// 网易云 `level` 参数

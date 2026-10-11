@@ -29,6 +29,11 @@ struct SettingsView: View {
                     Text("音质越高流量与加载耗时越大；若平台无对应档位资源，会自动回退到可用档位。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("断开蓝牙自动暂停", isOn: $settings.bluetoothAutoPause)
+                    Text("断开蓝牙耳机或拔出耳机时自动暂停播放，避免声音突然外放。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("自定义音源") {

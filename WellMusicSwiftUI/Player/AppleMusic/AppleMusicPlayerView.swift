@@ -2,51 +2,23 @@ import SwiftUI
 import MediaPlayer
 import UIKit
 
-private struct ReferenceLyricCenterKey: PreferenceKey {
-    static var defaultValue: [Int: CGFloat] = [:]
+// 说明：本文件是对参考源码 `WellMusicAppleMusicV2Player.tsx`（2694 行）的逐区块移植。
+// 目标为「视觉 / 布局 / 交互」+「动画细节」全部一摸一样，因此：
+//   * 所有尺寸、圆角、配色、字号取自 AppleMusicV2 常量表（一一对应 RN StyleSheet）；
+//   * 所有 spring / timing 曲线取自 AppleMusicV2.Motion（一一对应 withSpring / withTiming 参数）；
+//   * 结构对应用 RN 的 upperArea + BottomControls + EmbeddedPanels，不再用 sheet 弹面板。
 
-    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-private enum AppleMusicArtworkAnchor: Hashable {
-    case expanded
-    case compact
-}
-
-private struct AppleMusicArtworkFrameKey: PreferenceKey {
-    static var defaultValue: [AppleMusicArtworkAnchor: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [AppleMusicArtworkAnchor: Anchor<CGRect>], nextValue: () -> [AppleMusicArtworkAnchor: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-private enum AppleMusicTextAnchor: Hashable {
-    case titleExpanded
-    case titleCompact
-    case artistExpanded
-    case artistCompact
-}
-
-private struct AppleMusicTextFrameKey: PreferenceKey {
-    static var defaultValue: [AppleMusicTextAnchor: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [AppleMusicTextAnchor: Anchor<CGRect>], nextValue: () -> [AppleMusicTextAnchor: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { $1 })
-    }
-}
-
-private struct ReferencePlaybackPresentationMetrics {
-    static let headerTopSpacing: CGFloat = 20
-}
-
-/// Apple Music 风格全屏播放页：封面模糊背景 + 大封面/歌词页切换 + 底部控制栏。
-/// 移植自 wellam 的 ReferencePlaybackView，数据接入当前项目的 PlayerService / Track / AccountStore。
+/// Apple Music V2 风格全屏播放页。
+///
+/// 三个状态（与参考视频一致）：
+/// 1. 主播放页：大封面 + 歌名/歌手/专辑 + 收藏/更多；
+/// 2. 歌词页：封面缩到左上角迷你位、歌曲信息横移到右侧、大歌词铺满；
+/// 3. 队列页：同上的迷你封面 + 歌曲信息 + 播放队列卡片。
 struct AppleMusicPlayerView: View {
     let onOpenDestination: (Destination) -> Void
     let onDismiss: () -> Void
 
-    /// 底部安全区域间距（不用GeometryReader，避免fullScreenCover动画过程中尺寸不正确）
+    /// 底部安全区域间距（不用 GeometryReader，避免 fullScreenCover 动画过程中尺寸不正确）
     static var safeAreaBottomInset: CGFloat {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -55,52 +27,47 @@ struct AppleMusicPlayerView: View {
             .safeAreaInsets.bottom ?? 0
     }
 
+    static var safeAreaTopInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?
+            .safeAreaInsets.top ?? 47
+    }
+
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
-    /// 播放模式 / 歌词偏移等已迁到播放器菜单，需要观察 AppState 才能让勾选状态刷新
+    /// 播放模式 / 音质 / 歌词偏移等已迁到播放器菜单，需要观察 AppState 才能让勾选状态刷新
     @ObservedObject private var appState = AppState.shared
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var account = AccountStore.shared
     @ObservedObject private var clock = PlayerService.shared.clock
-    @ObservedObject private var appleLayout = AppleMusicLayoutStore.shared
+    @Environment(\.colorScheme) private var colorScheme
 
+    // MARK: - 面板状态（对应 RN 的 showLyrics / showComments / showQueue）
     @State private var showLyrics = false
-    @State private var headerDragOffset: CGFloat = 0
-    /// 整页下滑关闭的跟手位移（负数=向上，不跟手；只跟正向位移）
-    @State private var dismissDragOffset: CGFloat = 0
-    /// 一次连续下拉手势里各子视图的累计位移，用来区分「下拉关闭」和「歌词上下滚动」
-    @State private var dismissGestureActive = false
     @State private var showQueue = false
     @State private var showComments = false
+    /// `compactSongInfo`：歌词/队列模式下歌曲信息行切到绝对定位
+    @State private var compactSongInfo = false
+
+    // MARK: - 手动提交的 transion 参数（对应 coverScaleAnim / coverTranslateX/Y）
+    /// 封面从大封面中心位移到左上角迷你位的像素偏移
+    @State private var coverOffset: CGSize = .zero
+    @State private var coverScale: CGFloat = 1
+    /// 歌词/队列/评论容器淡入 + 上移（对应 modeOpacity / modeTranslateY）
+    @State private var compactContentVisible = false
+    /// 歌曲信息行透明度（对应 songInfoOpacity 的 120ms 淡出 → 180ms 淡入）
+    @State private var songInfoOpacity: Double = 1
+
+    // MARK: - 整页下滑关闭
+    @State private var dismissDragOffset: CGFloat = 0
+    @State private var dismissGestureActive = false
+
+    // MARK: - 其他
     @State private var showAddToPlaylist = false
     @State private var showLyricOffsetSheet = false
-    @State private var showVolumePopover = false
-    @State private var layoutMode = false
-    @State private var appleLayoutPart: AppleMusicLayoutPart = .cover
-    @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
-    @AppStorage("wellmusic.appleMusic.showVolume") private var showVolumeControl = false
-    @AppStorage("wellmusic.appleMusic.primaryHex") private var primaryHex = ""
-    @AppStorage("wellmusic.appleMusic.secondaryHex") private var secondaryHex = ""
-    @AppStorage("wellmusic.appleMusic.accentHex") private var accentHex = ""
-    @AppStorage("wellmusic.appleMusic.volumeHex") private var volumeHex = ""
-    @AppStorage("wellmusic.showSongVIPBadge") private var showSongVIPBadge = true
-    @AppStorage("wellmusic.appleMusic.showLyricPreview") private var showLyricPreview = false
-    @AppStorage("wellmusic.player.autoSkipOnFailure") private var autoSkipOnFailure = true
-    @AppStorage("wellmusic.player.swipeSwitchSong") private var swipeSwitchSong = true
-    @AppStorage("wellmusic.player.breath") private var breath = 0.6
-    @AppStorage("wellmusic.player.progressBarStyle") private var progressBarStyle = 0
-    @AppStorage("wellmusic.lyric.fontSize") private var lyricFontSize = 17.0
-    @AppStorage("wellmusic.lyric.lineSpacing") private var lyricLineSpacing = 24.0
-    @AppStorage("wellmusic.lyric.translation") private var lyricTranslation = true
-    @AppStorage("wellmusic.lyric.glowLevel") private var lyricGlowLevel = 1
-    @AppStorage("wellmusic.player.controlsUseCoverColor") private var controlsUseCoverColor = true
-
-    @State private var lyricCenters: [Int: CGFloat] = [:]
-    @State private var focusedLyricID: Int?
-    @State private var lyricsViewportHeight: CGFloat = 0
-    @State private var isDraggingLyrics = false
-    @State private var hideBottomControls = false
-    @State private var resumeTask: Task<Void, Never>?
+    @State private var amllReady = false
+    @State private var showFallbackBackground = true
     @StateObject private var dynamicCover = DynamicCoverManager()
 
     private var track: Track? { player.currentTrack }
@@ -110,266 +77,763 @@ struct AppleMusicPlayerView: View {
         return URL(string: pic)
     }
 
-    private func layoutEntry(_ part: AppleMusicLayoutPart) -> PlayerLayoutEntry {
-        appleLayout.entry(for: part)
-    }
+    // MARK: - Body
 
     var body: some View {
-        // 不用GeometryReader，避免fullScreenCover动画过程中尺寸不正确导致播放器只展开一半
+        // 不用 GeometryReader，避免 fullScreenCover 动画过程中尺寸不正确导致播放器只展开一半
         let screenSize = UIScreen.main.bounds.size
-        let isLandscape = screenSize.width > screenSize.height
 
         ZStack {
-            // 底层：playerBackground内部已集成AMLL（开启时）或原版背景
-            playerBackground
+            backgroundLayer
 
-            if isLandscape {
-                // 横屏布局：左右分栏，参考沉浸模式regularLayout
-                landscapeLayout(size: screenSize)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // 竖屏布局：原有布局
-                portraitLayout(size: screenSize)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: dismissDragOffset)
-                    .ignoresSafeArea()
-            }
+            content(screenSize: screenSize)
+                // 顶部让出安全区 + `styles.artworkWrapper.marginTop: 40`，与 enterCompactMode 的
+                // `coverInitY = top + 16 + 40 + artworkSize / 2` 保持一致。
+                .padding(.top, Self.safeAreaTopInset + AppleMusicV2.Compact.coverInitTopBase)
+                .offset(y: dismissDragOffset)
+                .overlay(alignment: .top) {
+                    Capsule(style: .continuous)
+                        .fill(AppleMusicV2.HomeIndicator.color)
+                        .frame(width: AppleMusicV2.HomeIndicator.width,
+                               height: AppleMusicV2.HomeIndicator.height)
+                        .padding(.top, AppleMusicV2.HomeIndicator.top)
+                        .allowsHitTesting(false)
+                }
         }
         .ignoresSafeArea()
-        .onChange(of: showLyrics) { _ in
-            // 切换回大封面时重置底部控制区域隐藏状态
-            hideBottomControls = false
+        .onAppear {
+            if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) }
         }
-        .onAppear { if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
-        .onChange(of: track?.id) { _ in if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
+        .onChange(of: track?.id) { _ in
+            if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) }
+        }
         .onChange(of: settings.dynamicCoverEnabled) { enabled in
-            if enabled {
-                dynamicCover.updateTrack(track)
-            } else {
-                dynamicCover.clear()
-            }
-        }
-        .onDisappear { resumeTask?.cancel() }
-        .sheet(isPresented: $showQueue) {
-            Group {
-                if #available(iOS 16.4, *) {
-                    QueueView()
-                        .environmentObject(player)
-                        .presentationDetents([.medium, .large])
-                        .presentationBackground(.ultraThinMaterial)
-                } else if #available(iOS 16.0, *) {
-                    QueueView()
-                        .environmentObject(player)
-                        .presentationDetents([.medium, .large])
-                } else {
-                    QueueView()
-                        .environmentObject(player)
-                }
-            }
-        }
-        .sheet(isPresented: $showComments) {
-            Group {
-                if let t = track {
-                    CommentsView(track: t)
-                }
-            }
-            .modifier(CommentsSheetDetents())
+            if enabled { dynamicCover.updateTrack(track) } else { dynamicCover.clear() }
         }
         .sheet(isPresented: $showAddToPlaylist) {
-            if let t = track {
-                AddToPlaylistSheet(track: t)
-            }
+            if let t = track { AddToPlaylistSheet(track: t) }
         }
         .sheet(isPresented: $showLyricOffsetSheet) {
             LyricOffsetSheet()
         }
     }
 
-    // MARK: - 三点菜单
+    // MARK: - 内容区（对应 RN `styles.content` + `upperArea` + `BottomControls`）
 
-    @ViewBuilder
-    private var moreMenu: some View {
-        Menu {
-            // 评论
-            Button {
-                showComments = true
-            } label: {
-                Label("评论", systemImage: "bubble.left")
-            }
+    private func content(screenSize: CGSize) -> some View {
+        VStack(spacing: 0) {
+            // `styles.upperArea { flex: 1 }`
+            ZStack(alignment: .top) {
+                artworkAndInfo(screenSize: screenSize)
 
-            // 下一首播放
-            Button {
-                if let t = track {
-                    player.addToPlayNext(track: t)
-                    ToastCenter.shared.show("已添加到下一首播放")
+                // 队列页（对应 `showQueue && <Animated.View style={[styles.queueContent, compactContentAnimStyle]}>`，
+                // `styles.queueContent { top: 70, bottom: 0, zIndex: 4 }`）
+                if showQueue {
+                    queuePanel()
+                        .modifier(CompactContentTransition(visible: compactContentVisible))
+                        .padding(.top, 70)
                 }
-            } label: {
-                Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
-            }
 
-            // 加入歌单
-            Button {
-                showAddToPlaylist = true
-            } label: {
-                Label("加入歌单…", systemImage: "music.note.list")
-            }
-
-            Divider()
-
-            // 播放模式（自设置页迁移到播放器界面）
-            Menu {
-                Button {
-                    AppState.shared.playMode = 0
-                } label: {
-                    modeMenuLabel("列表循环", selected: AppState.shared.playMode == 0)
-                }
-                Button {
-                    AppState.shared.playMode = 1
-                } label: {
-                    modeMenuLabel("单曲循环", selected: AppState.shared.playMode == 1)
-                }
-                Button {
-                    AppState.shared.playMode = 2
-                } label: {
-                    modeMenuLabel("随机播放", selected: AppState.shared.playMode == 2)
-                }
-            } label: {
-                Label("播放模式", systemImage: "repeat")
-            }
-
-            // 歌词偏移（自设置页迁移到播放器界面）
-            Button {
-                showLyricOffsetSheet = true
-            } label: {
-                Label("歌词偏移", systemImage: "timer")
-            }
-
-            // FLAC 精准同步（仅 AMLL 开启时显示）
-            if settings.appleMusicUseAMLL {
-                Button {
-                    settings.preciseFLAC.toggle()
-                } label: {
-                    Label("FLAC 精准同步", systemImage: settings.preciseFLAC ? "checkmark.circle.fill" : "circle")
+                // 评论页：外壳同队列（参考源码复用 queueContent 样式）
+                if showComments {
+                    commentsPanel()
+                        .modifier(CompactContentTransition(visible: compactContentVisible))
+                        .padding(.top, 70)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // 睡眠定时（和沉浸模式V2一样，直接在菜单中显示选项）
-            Menu {
-                ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
-                    Button("\(minutes) 分钟") {
-                        player.sleepTimer.schedule(afterMinutes: minutes)
+            bottomControls
+        }
+        .padding(.horizontal, AppleMusicV2.contentPadding)
+        .padding(.bottom, Self.safeAreaBottomInset + 8)
+        // 歌词页（非 AMLL 回退）：参考源码用 AMLL WebView 渲染歌词；
+        // 关闭 AMLL 时用原生列表补位，位置按 `styles.lyricsArea { top: 236, bottom: 0 }`。
+        .overlay(alignment: .topLeading) {
+            if showLyrics && !settings.appleMusicUseAMLL {
+                lyricsFallbackPage
+                    .padding(.horizontal, AppleMusicV2.contentPadding)
+                    .padding(.top, 236)
+                    .modifier(CompactContentTransition(visible: compactContentVisible))
+            }
+        }
+        // compact 歌曲信息行：与小封面垂直居中、绝对定位在封面右侧（对应 RN `position: 'absolute'`）
+        .overlay(alignment: .topLeading) {
+            if compactSongInfo {
+                songInfoRow(miniArtworkSize: AppleMusicV2.Compact.artworkSize)
+                    .padding(.horizontal, AppleMusicV2.contentPadding)
+                    .padding(.top, Self.safeAreaTopInset
+                             + AppleMusicV2.Compact.topOffset
+                             + AppleMusicV2.Compact.artworkSize / 2
+                             - AppleMusicV2.Title.compactTopAnchor)
+            }
+        }
+    }
+
+    // MARK: - 非 AMLL 歌词回退页
+
+    private var lyricsFallbackPage: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 22) {
+                    Color.clear.frame(height: 60)
+                    ForEach(lyrics) { line in
+                        Button {
+                            WellHaptics.tap()
+                            player.seek(to: LyricTiming.seekTime(for: line, userOffset: appState.lyricOffset))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(line.text.isEmpty ? " " : line.text)
+                                    .font(.system(size: line.id == activeLyricIndex ? 27 : 23,
+                                                  weight: line.id == activeLyricIndex ? .bold : .semibold))
+                                    .foregroundStyle(.white.opacity(line.id == activeLyricIndex ? 1 : 0.36))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if line.id == activeLyricIndex,
+                                   let translation = line.translation, !translation.isEmpty {
+                                    Text(translation)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.42))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .scaleEffect(line.id == activeLyricIndex ? 1.06 : 0.84, anchor: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .id(line.id)
                     }
-                    .disabled(!player.hasCurrentTrack)
+                    Color.clear.frame(height: 110)
                 }
-                Button {
-                    showCustomSleepTimerAlert()
-                } label: {
-                    Label("自定义...", systemImage: "slider.horizontal.3")
-                }
-                .disabled(!player.hasCurrentTrack)
-                Button {
-                    player.sleepTimer.scheduleAtEndOfCurrentTrack()
-                } label: {
-                    Label("当前歌曲结束时停止", systemImage: "music.note")
-                }
-                .disabled(!player.hasCurrentTrack)
-                if player.sleepTimer.state.isActive {
-                    Divider()
-                    Button("取消睡眠定时", role: .destructive) {
-                        player.sleepTimer.cancel()
-                    }
-                }
-            } label: {
-                Label("睡眠定时", systemImage: player.sleepTimer.state.isActive ? "timer.circle.fill" : "timer")
             }
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.12),
+                        .init(color: .black, location: 0.84),
+                        .init(color: .clear, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .onChange(of: activeLyricIndex) { index in
+                guard let line = lyrics.first(where: { $0.id == index }) else { return }
+                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.38)) {
+                    proxy.scrollTo(line.id, anchor: .center)
+                }
+            }
+        }
+    }
 
-            Divider()
+    /// 当前应高亮的歌词行 id（与进度条同源，含用户偏移）
+    private var activeLyricIndex: Int? {
+        guard !lyrics.isEmpty else { return nil }
+        let progress = LyricTiming.effectiveProgress(clock.progress, userOffset: appState.lyricOffset)
+        var answer: Int?
+        for line in lyrics {
+            if line.time <= progress { answer = line.id } else { break }
+        }
+        return answer ?? lyrics.first?.id
+    }
 
-            // 底部控制区域高度调节（仅 Apple Music 播放器）
-            Menu {
-                ForEach([0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5], id: \.self) { scale in
-                    Button {
-                        settings.appleMusicControlsHeight = scale
-                    } label: {
-                        if abs(settings.appleMusicControlsHeight - scale) < 0.01 {
-                            Label("\(Int(scale * 100))%", systemImage: "checkmark")
+    // MARK: - 大封面 + 歌曲信息（对应 RN artworkWrapper / songInfoRow）
+
+    private func artworkAndInfo(screenSize: CGSize) -> some View {
+        let artworkSize = screenSize.width * AppleMusicV2.artworkWidthRatio
+
+        return VStack(spacing: 0) {
+            // `styles.artworkWrapper { alignItems: center, marginTop: 40 }`
+            ZStack {
+                artworkImage(size: artworkSize)
+                    // transform 顺序：translate 在前、scale 在后 —— scale 最后施加，
+                    // translate 是绝对像素位移、不被缩放比例折算（与参考源码一致）
+                    .offset(coverOffset)
+                    .scaleEffect(coverScale)
+                    // 动态圆角：`borderRadius: 24 / max(coverScaleAnim, 0.1)`，缩放时保持视觉圆角一致
+                    .clipShape(RoundedRectangle(cornerRadius: AppleMusicV2.artworkCornerRadius / max(coverScale, 0.1),
+                                                style: .continuous))
+                    .shadow(color: .black.opacity(AppleMusicV2.artworkShadowOpacity * coverScale),
+                            radius: AppleMusicV2.artworkShadowRadius * coverScale,
+                            y: AppleMusicV2.artworkShadowY * coverScale)
+                    // `artworkScale`：播放 1 / 暂停 0.85（`{damping:15, stiffness:100}`）
+                    .scaleEffect(player.isPlaying ? 1 : 0.85)
+                    .animation(AppleMusicV2.Motion.artworkSpring, value: player.isPlaying)
+                    .animation(AppleMusicV2.Motion.compactSpring, value: coverScale)
+                    .animation(AppleMusicV2.Motion.compactSpring, value: coverOffset)
+                    .onTapGesture {
+                        if showLyrics || showQueue || showComments {
+                            hideCompactMode()
                         } else {
-                            Text("\(Int(scale * 100))%")
+                            showLyricsMode()
                         }
                     }
-                }
-            } label: {
-                Label("底部区域高度", systemImage: "slider.vertical.3")
+            }
+            .frame(height: artworkSize)
+            .frame(maxWidth: .infinity)
+
+            // `songInfoRowSpacer { flex: 1 }` ×2：让信息行在大封面与进度条之间垂直居中
+            Spacer(minLength: 0)
+
+            if !compactSongInfo {
+                songInfoRow(miniArtworkSize: AppleMusicV2.Compact.artworkSize)
             }
 
-            Divider()
-
-            // 复制链接
-            Button {
-                if let t = track {
-                    let link: String
-                    switch t.sourcePlatform {
-                    case "tx":
-                        link = "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
-                    case "kg":
-                        link = "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
-                    default:
-                        link = "https://music.163.com/#/song?id=\(t.id)"
-                    }
-                    Platform.copyToPasteboard(string: link)
-                    ToastCenter.shared.show("链接已复制")
-                }
-            } label: {
-                Label("复制链接", systemImage: "link")
-            }
-        } label: {
-            compactActionButton(icon: "ellipsis") {}
+            Spacer(minLength: 0)
         }
+        // 大封面页整页接管下滑关闭（歌词/队列/评论页由各自内部滚动区处理）
+        .contentShape(Rectangle())
+        .gesture(isCompactActive ? nil : swipeToDismissGesture(screenHeight: screenSize.height))
     }
 
-    /// 播放模式菜单项：选中项带勾
     @ViewBuilder
-    private func modeMenuLabel(_ title: String, selected: Bool) -> some View {
-        if selected {
-            Label(title, systemImage: "checkmark")
-        } else {
-            Text(title)
+    private func artworkImage(size: CGFloat) -> some View {
+        ZStack {
+            CoverImage(
+                url: coverURL,
+                size: size,
+                cornerRadius: AppleMusicV2.artworkCornerRadius,
+                emptyHint: player.isBuffering ? "等待开始播放…" : nil
+            )
+
+            // 网易云动态封面：有 videoPlayUrl 时静音循环播放覆盖静态封面
+            if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
+                DynamicCoverPlayer(url: dynamicURL)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: AppleMusicV2.artworkCornerRadius / max(coverScale, 0.1),
+                                                style: .continuous))
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    /// `styles.songInfoRow`
+    ///
+    /// - 大封面态：正常流式布局，居中，`maxWidth` 按参考源码的 72% / 58% 切换；
+    /// - compact 态：由调用方放进 `.overlay(alignment: .topLeading)` 做绝对定位，
+    ///   左侧让出 `miniArtworkSize + 8`，整行水平铺满、两端对齐。
+    private func songInfoRow(miniArtworkSize: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            songInfoLeft
+                .frame(maxWidth: showLyrics ? 205 : 260, alignment: .leading)
+                .padding(.trailing, AppleMusicV2.Title.leftPaddingRight)
+
+            Spacer(minLength: 0)
+
+            songInfoRight
+        }
+        .padding(.leading, compactSongInfo ? miniArtworkSize + AppleMusicV2.Title.compactLeftGap : 0)
+        .padding(.trailing, compactSongInfo ? AppleMusicV2.Title.compactRight : 0)
+        .opacity(songInfoOpacity)
+    }
+
+    private var songInfoLeft: some View {
+        VStack(alignment: .leading, spacing: AppleMusicV2.Title.metaSpacing) {
+            // `styles.songTitleClip { overflow: hidden }` —— 长标题跑马灯
+            MarqueeText(
+                text: track?.name ?? "未在播放",
+                font: .system(size: AppleMusicV2.Title.fontSize, weight: .semibold),
+                color: .white
+            )
+
+            HStack(spacing: 0) {
+                artistText
+                Text(" — ")
+                    .font(.system(size: AppleMusicV2.Title.metaFontSize, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.4))
+                Text(albumText)
+                    .font(.system(size: AppleMusicV2.Title.metaFontSize, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .lineLimit(1)
         }
     }
 
-    private var playbackModeText: String {
-        if player.shuffleEnabled { return "随机播放" }
-        switch player.repeatMode {
-        case .one: return "单曲循环"
-        case .all: return "列表循环"
-        case .off: return "顺序播放"
+    /// 歌手：多歌手时给出选择菜单（对应参考源码 MenuView「选择歌手」）
+    @ViewBuilder
+    private var artistText: some View {
+        let raw = track?.artistNames ?? "未知歌手"
+        // 大封面状态最多 24 字，歌词界面最多 17 字（对应参考源码 maxLen）
+        let maxLen = showLyrics ? 17 : 24
+        let display = raw.count > maxLen ? String(raw.prefix(maxLen)) + ".." : raw
+        let names = splitArtists(raw)
+
+        if names.count <= 1 {
+            Text(display)
+                .font(.system(size: AppleMusicV2.Title.metaFontSize, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
+                .lineLimit(1)
+                .onTapGesture { openArtist(names.first) }
+        } else {
+            Menu {
+                ForEach(names, id: \.self) { name in
+                    Button {
+                        openArtist(name)
+                    } label: {
+                        Label(name, systemImage: "person.crop.circle")
+                    }
+                }
+            } label: {
+                Text(display)
+                    .font(.system(size: AppleMusicV2.Title.metaFontSize, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var albumText: String {
+        let name = track?.album.name ?? ""
+        return name.isEmpty ? "未知专辑" : name
+    }
+
+    private var songInfoRight: some View {
+        HStack(spacing: 0) {
+            Button {
+                toggleFavorite()
+            } label: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .font(.system(size: AppleMusicV2.Title.headerIconSize, weight: .regular))
+                    .foregroundStyle(.white)
+                    .padding(AppleMusicV2.Title.headerIconPadding)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            moreMenu
+        }
+        .padding(.leading, AppleMusicV2.Title.rightMarginLeft)
+    }
+
+    // MARK: - 底部控制栏（对应 RN BottomControls）
+
+    private var bottomControls: some View {
+        VStack(spacing: 0) {
+            AppleMusicV2ProgressSection()
+                .padding(.bottom, AppleMusicV2.Controls.progressSectionBottom)
+
+            // `styles.playControlsRow { justifyContent: space-around }`
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                Button {
+                    player.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: AppleMusicV2.Controls.controlIconSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(AppleMusicV2.Controls.controlPadding)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                playButton
+
+                Button {
+                    player.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: AppleMusicV2.Controls.controlIconSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(AppleMusicV2.Controls.controlPadding)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.top, AppleMusicV2.Controls.playRowMarginTop)
+
+            AppleMusicV2VolumeRow()
+                .padding(.top, AppleMusicV2.Controls.volumeRowTop)
+
+            bottomButtonsRow
+                .padding(.top, AppleMusicV2.Controls.bottomButtonsTop)
+        }
+        .padding(.top, AppleMusicV2.Controls.topMargin)
+    }
+
+    /// `styles.playButton` 88×88 + 圆形按压高亮 + 播放/暂停图标交叉过渡
+    private var playButton: some View {
+        Button {
+            triggerPlayPress()
+            player.togglePlayPause()
+        } label: {
+            ZStack {
+                // `styles.playPressCircle`：点击时淡入、350ms out(quad) 过渡消失
+                Circle()
+                    .fill(AppleMusicV2.Controls.playPressCircleColor)
+                    .frame(width: AppleMusicV2.Controls.playPressCircleSize,
+                           height: AppleMusicV2.Controls.playPressCircleSize)
+                    .opacity(playPressOpacity)
+
+                // 暂停图标： opacity withTiming(isPlaying ? 1 : 0, 180ms)、scale withTiming(isPlaying ? 1 : 0.6, 180ms)
+                Image(systemName: "pause.fill")
+                    .font(.system(size: AppleMusicV2.Controls.controlIconSize, weight: .bold))
+                    .foregroundStyle(.white)
+                    .opacity(player.isPlaying ? 1 : 0)
+                    .scaleEffect(player.isPlaying ? 1 : 0.6)
+                    .animation(AppleMusicV2.Motion.playIconCrossfade, value: player.isPlaying)
+
+                // 播放图标： opacity withTiming(isPlaying ? 0 : 1, 180ms)、scale withTiming(isPlaying ? 0.6 : 1, 180ms)
+                Image(systemName: "play.fill")
+                    .font(.system(size: AppleMusicV2.Controls.controlIconSize, weight: .bold))
+                    .foregroundStyle(.white)
+                    .opacity(player.isPlaying ? 0 : 1)
+                    .scaleEffect(player.isPlaying ? 0.6 : 1)
+                    .animation(AppleMusicV2.Motion.playIconCrossfade, value: player.isPlaying)
+            }
+            .frame(width: AppleMusicV2.Controls.playButtonSize,
+                   height: AppleMusicV2.Controls.playButtonSize)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @State private var playPressOpacity: Double = 0
+
+    /// `triggerPlayPress()`：`playPressAnim = 1` 然后 350ms out(quad) 归零
+    private func triggerPlayPress() {
+        // 立即拉到 1（无动画），再 out(quad) 350ms 淡出 —— 对应 RN 里先赋值再 withTiming(0)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { playPressOpacity = 1 }
+        withAnimation(AppleMusicV2.Motion.playPressFade) {
+            playPressOpacity = 0
+        }
+    }
+
+    /// `styles.bottomButtonsRow`：歌词 / AirPlay / 评论 / 队列（队列右上角带播放模式角标）
+    private var bottomButtonsRow: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            bottomButton(icon: showLyrics ? "quote.bubble.fill" : "quote.bubble",
+                         active: showLyrics) {
+                showLyrics ? hideCompactMode() : showLyricsMode()
+            }
+
+            // AirPlay 路由按钮：原生 MPVolumeView，点击弹出系统 AirPlay 设备面板
+            AirPlayRouteButton()
+                .frame(width: AppleMusicV2.Controls.bottomButtonIconSize + AppleMusicV2.Controls.bottomButtonPadding * 2,
+                       height: AppleMusicV2.Controls.bottomButtonIconSize + AppleMusicV2.Controls.bottomButtonPadding * 2)
+                .padding(AppleMusicV2.Controls.bottomButtonPadding)
+
+            bottomButton(icon: showComments ? "text.bubble.fill" : "text.bubble",
+                         active: showComments) {
+                showComments ? hideCompactMode() : showCommentsMode()
+            }
+
+            bottomButton(icon: "list.bullet", active: showQueue) {
+                showQueue ? hideCompactMode() : showQueueMode()
+            } badge: {
+                queueModeBadge
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func bottomButton(icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        bottomButton(icon: icon, active: active, action: action) { EmptyView() }
+    }
+
+    private func bottomButton<Badge: View>(
+        icon: String,
+        active: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder badge: () -> Badge
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: AppleMusicV2.Controls.bottomButtonIconSize, weight: .medium))
+                .foregroundStyle(active ? .white : AppleMusicV2.Controls.bottomButtonIconColor)
+                .padding(AppleMusicV2.Controls.bottomButtonPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: AppleMusicV2.Controls.bottomButtonRadius, style: .continuous)
+                        .fill(active ? AppleMusicV2.Controls.bottomButtonHighlight : .clear)
+                )
+                .overlay(alignment: .topTrailing) { badge() }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// `styles.queueModeBadge`：18×18 毛玻璃圆点 + 半透明白描边 + 播放模式图标
+    private var queueModeBadge: some View {
+        ZStack {
+            Circle()
+                .fill(.ultraThinMaterial)
+                .overlay(Circle().fill(Color.white.opacity(0.25)))
+            Image(systemName: playbackModeIcon)
+                .font(.system(size: AppleMusicV2.Controls.queueBadgeIconSize, weight: .medium))
+                .foregroundStyle(.white)
+        }
+        .frame(width: AppleMusicV2.Controls.queueBadgeSize,
+               height: AppleMusicV2.Controls.queueBadgeSize)
+        .overlay(
+            Circle().strokeBorder(AppleMusicV2.Controls.queueBadgeBorder, lineWidth: 0.5)
+        )
+        .offset(x: AppleMusicV2.Controls.queueBadgeOffset,
+                y: AppleMusicV2.Controls.queueBadgeOffset)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: - 队列面板（对应 RN EmbeddedPanels 面板 3 / PlaylistQueue amStyle）
+
+    private func queuePanel() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("播放队列 · \(player.queue.count)")
+                .font(.system(size: AppleMusicV2.Queue.titleFontSize, weight: .medium))
+                .tracking(AppleMusicV2.Queue.titleTracking)
+                .foregroundStyle(.white)
+
+            queueModeSegment
+                .padding(.top, AppleMusicV2.Queue.segmentBottom)
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: AppleMusicV2.Queue.rowSpacing) {
+                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { _, item in
+                        queueRow(item)
+                    }
+                    Color.clear.frame(height: AppleMusicV2.Queue.listPaddingBottom)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 6)
+    }
+
+    /// `styles.queueModeSegment`：顺序 / 随机 / 单曲
+    private var queueModeSegment: some View {
+        HStack(spacing: 0) {
+            segmentItem(icon: "repeat", title: "顺序", mode: 0)
+            segmentItem(icon: "shuffle", title: "随机", mode: 2)
+            segmentItem(icon: "repeat.1", title: "单曲", mode: 1, showsDivider: false)
+        }
+        .frame(height: AppleMusicV2.Queue.segmentHeight)
+        .background(AppleMusicV2.Queue.segmentFill)
+        .clipShape(RoundedRectangle(cornerRadius: AppleMusicV2.Queue.segmentRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppleMusicV2.Queue.segmentRadius, style: .continuous)
+                .strokeBorder(AppleMusicV2.Queue.segmentBorder, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func segmentItem(icon: String, title: String, mode: Int, showsDivider: Bool = true) -> some View {
+        let active = appState.playMode == mode
+        Button {
+            appState.playMode = mode
+        } label: {
+            HStack(spacing: AppleMusicV2.Queue.segmentGap) {
+                Image(systemName: icon)
+                    .font(.system(size: active ? 20 : 19))
+                    .foregroundStyle(active ? .white : .white.opacity(0.7))
+                Text(title)
+                    .font(.system(size: AppleMusicV2.Queue.segmentTextSize, weight: .medium))
+                    .foregroundStyle(AppleMusicV2.Queue.segmentTextColor)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(active ? AppleMusicV2.Queue.segmentItemActiveFill : .clear)
+            .overlay(alignment: .trailing) {
+                if showsDivider {
+                    Rectangle()
+                        .fill(AppleMusicV2.Queue.segmentItemDivider)
+                        .frame(width: 1)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// `styles.queueItem`：44/48 封面 + 歌名歌手 + 当前播放喇叭 + 删除
+    private func queueRow(_ item: Track) -> some View {
+        let isCurrent = item.id == track?.id
+        return HStack(spacing: AppleMusicV2.Queue.rowGap) {
+            CoverImage(url: URL(string: item.album.picUrl ?? ""),
+                       size: AppleMusicV2.Queue.rowArtworkSize,
+                       cornerRadius: AppleMusicV2.Queue.rowArtworkRadius)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name)
+                    .font(.system(size: AppleMusicV2.Queue.rowTitleSize, weight: .medium))
+                    .foregroundStyle(isCurrent ? .white : .white.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(item.artistNames)
+                    .font(.system(size: AppleMusicV2.Queue.rowArtistSize, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isCurrent {
+                Image(systemName: "speaker.wave.3")
+                    .font(.system(size: 19))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+
+            Button {
+                if let index = player.queue.firstIndex(where: { $0.id == item.id }) {
+                    player.removeFromQueue(at: index)
+                }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 25))
+                    .foregroundStyle(.white.opacity(0.68))
+                    .frame(width: AppleMusicV2.Queue.rowTrailingWidth,
+                           height: AppleMusicV2.Queue.rowTrailingHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, AppleMusicV2.Queue.rowHPadding)
+        .padding(.vertical, AppleMusicV2.Queue.rowVPadding)
+        .background(isCurrent ? AppleMusicV2.Queue.rowActiveFill : AppleMusicV2.Queue.rowFill,
+                    in: RoundedRectangle(cornerRadius: AppleMusicV2.Queue.rowRadius, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { play(item) }
+    }
+
+    // MARK: - 评论面板（外壳同队列，参考源码复用 queueContent）
+
+    private func commentsPanel() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.7))
+                Text("评论")
+                    .font(.system(size: AppleMusicV2.Queue.titleFontSize, weight: .medium))
+                    .tracking(AppleMusicV2.Queue.titleTracking)
+                    .foregroundStyle(.white)
+            }
+
+            ScrollView(showsIndicators: false) {
+                if let t = track {
+                    CommentsView(track: t)
+                }
+                Color.clear.frame(height: AppleMusicV2.Queue.listPaddingBottom)
+            }
+            .padding(.top, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 6)
+    }
+
+    // MARK: - 面板切换（对应 handleShowLyrics / handleShowQueue / handleShowComments / handleHideCompactMode）
+
+    /// 已处于任意 compact 面板时切换只换内容，不重跑封面/歌曲信息动画，避免顶部信息闪烁
+    private func showLyricsMode() {
+        if !isCompactActive { enterCompactMode() }
+        showQueue = false
+        showComments = false
+        showLyrics = true
+    }
+
+    private func showQueueMode() {
+        if !isCompactActive { enterCompactMode() }
+        showLyrics = false
+        showComments = false
+        showQueue = true
+    }
+
+    private func showCommentsMode() {
+        if !isCompactActive { enterCompactMode() }
+        showLyrics = false
+        showQueue = false
+        showComments = true
+    }
+
+    private var isCompactActive: Bool { showLyrics || showQueue || showComments }
+
+    /// `enterCompactMode()`：封面缩到左上角迷你位、歌曲信息横移、内容淡入上移
+    private func enterCompactMode() {
+        let screen = UIScreen.main.bounds.size
+        let top = Self.safeAreaTopInset
+        let artworkSize = screen.width * AppleMusicV2.artworkWidthRatio
+        let miniSize = AppleMusicV2.Compact.artworkSize
+        let miniScale = miniSize / artworkSize
+
+        // 封面初始中心：内容区水平居中、垂直 = top + 16 + 40 + 封面一半
+        let coverInitX = screen.width / 2
+        let coverInitY = top + AppleMusicV2.Compact.coverInitTopBase + artworkSize / 2
+        // 封面目标：左上角迷你位（左 24、顶 top+14）
+        let destLeft = AppleMusicV2.Compact.destLeft
+        let destTop = top + AppleMusicV2.Compact.topOffset
+        let tx = destLeft + miniSize / 2 - coverInitX
+        let ty = destTop + miniSize / 2 - coverInitY
+
+        // 封面：spring `{damping: 30, stiffness: 220, mass: 1}`
+        withAnimation(AppleMusicV2.Motion.compactSpring) {
+            coverScale = miniScale
+            coverOffset = CGSize(width: tx, height: ty)
+        }
+
+        // 歌曲信息：淡出 120ms → 切换布局 → 淡入 180ms
+        withAnimation(AppleMusicV2.Motion.songInfoFadeOut) { songInfoOpacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            compactSongInfo = true
+            withAnimation(AppleMusicV2.Motion.songInfoFadeIn) { songInfoOpacity = 1 }
+        }
+
+        // 歌词/队列/评论容器：opacity 0→1、translateY 22→0，320ms inOut
+        compactContentVisible = false
+        DispatchQueue.main.async {
+            withAnimation(AppleMusicV2.Motion.compactContentIn) {
+                compactContentVisible = true
+            }
+        }
+    }
+
+    /// `handleHideCompactMode()`：与进入对称
+    private func hideCompactMode() {
+        // 封面 spring 回放大，自然回弹
+        withAnimation(AppleMusicV2.Motion.compactSpring) {
+            coverScale = 1
+            coverOffset = .zero
+        }
+        // 歌词/队列立即隐藏，避免封面放大过程中与下方面板叠加闪烁
+        showLyrics = false
+        showQueue = false
+        showComments = false
+
+        // 歌曲信息：淡出 → 切回原位 → 淡入
+        withAnimation(AppleMusicV2.Motion.songInfoFadeOut) { songInfoOpacity = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            compactSongInfo = false
+            withAnimation(AppleMusicV2.Motion.songInfoFadeIn) { songInfoOpacity = 1 }
+        }
+
+        withAnimation(AppleMusicV2.Motion.compactSpring) {
+            compactContentVisible = false
         }
     }
 
     // MARK: - 整页下滑关闭
-
-    /// 下拉关闭手势。
-    ///
-    /// 之前只有歌词页顶部一个 30pt 高的透明条绑定了下滑手势，且要求 `showLyrics == true`，
-    /// 于是大封面页完全无法下滑关闭，用户只能卡在播放器里。这里改成整页跟手：
-    /// - 只接管「纵向 + 向下」的拉拽，位移超过 10pt 且纵向比横向明显时才启动，避免抢走
-    ///   歌词区的左右滑动 / 进度条拖动；
-    /// - 跟手位移带阻尼（0.45），松手时超过屏高 18% 即关闭，否则弹回；
-    /// - 关闭时先用 0.28s 把页面推下去再调 onDismiss，避免露出生硬的转场。
+    //
+    // 大封面页没有内部滚动视图，可以整页接管下滑关闭（网易云同款手感）：
+    // - 只接管「纵向 + 向下」的拉拽，位移超过 10pt 且纵向比横向明显时才启动；
+    // - 跟手位移带阻尼（0.45），松手时超过屏高 18% 即关闭，否则弹回；
+    // - 关闭时先用 0.28s 把页面推下去再调 onDismiss，避免露出生硬的转场。
     private func swipeToDismissGesture(screenHeight: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 10)
             .onChanged { value in
                 let dy = value.translation.height
                 let dx = value.translation.width
-                // 与歌词滚动 / 进度条拖动的边界：只在明显纵向下拉时接管
                 if !dismissGestureActive {
                     guard dy > 10, abs(dy) > abs(dx) * 1.2 else { return }
                     dismissGestureActive = true
                 }
-                // 只跟正向位移，向上拉不跟手（阻尼 0.45）
-                let offset = max(0, dy) * 0.45
-                dismissDragOffset = offset
-                headerDragOffset = offset
+                dismissDragOffset = max(0, dy) * 0.45
             }
             .onEnded { value in
                 guard dismissGestureActive else { return }
@@ -379,1381 +843,368 @@ struct AppleMusicPlayerView: View {
                 if shouldDismiss {
                     withAnimation(.easeIn(duration: 0.28)) {
                         dismissDragOffset = screenHeight
-                        headerDragOffset = screenHeight
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
                         onDismiss()
-                        // 复位，供下次进入时使用（fullScreenCover 关闭后视图会销毁，这里兜底）
                         dismissDragOffset = 0
-                        headerDragOffset = 0
                     }
                 } else {
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dismissDragOffset = 0
-                        headerDragOffset = 0
                     }
                 }
             }
-    }
-
-    // MARK: - 竖屏布局
-
-    private func portraitLayout(size: CGSize) -> some View {
-        VStack(spacing: 0) {
-            Color.clear.frame(height: ReferencePlaybackPresentationMetrics.headerTopSpacing)
-
-            ZStack {
-                coverPage(size: size)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(showLyrics ? 0 : 1)
-                    // 大封面页没有内部滚动视图，可以整页接管下滑关闭（网易云同款手感）
-                    .contentShape(Rectangle())
-                    .gesture(showLyrics ? nil : swipeToDismissGesture(screenHeight: size.height))
-                lyricsPage
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(showLyrics ? 1 : 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlayPreferenceValue(AppleMusicArtworkFrameKey.self) { artworkFrames in
-                    GeometryReader { proxy in
-                        if let expanded = artworkFrames[.expanded],
-                           let compact = artworkFrames[.compact] {
-                            let expandedFrame = proxy[expanded]
-                            let compactFrame = proxy[compact]
-                            let targetFrame = showLyrics ? compactFrame : expandedFrame
-                            let cornerRadius: CGFloat = showLyrics ? 10 : 18
-
-                            ZStack {
-                                // 封面图片始终作为底层
-                                CoverImage(
-                                    url: coverURL,
-                                    size: targetFrame.width,
-                                    cornerRadius: cornerRadius,
-                                    emptyHint: player.isBuffering ? "等待开始播放…" : nil
-                                )
-                                .frame(width: targetFrame.width, height: targetFrame.height)
-                                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-
-                                // 动态封面视频叠加在上面
-                                if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
-                                    DynamicCoverPlayer(url: dynamicURL)
-                                        .frame(width: targetFrame.width, height: targetFrame.height)
-                                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                                }
-                            }
-                            .shadow(color: .black.opacity(showLyrics ? 0.26 : 0.46), radius: showLyrics ? 9 : 36, y: showLyrics ? 4 : 18)
-                            .scaleEffect(showLyrics ? 1 : (player.isPlaying ? 1 : 0.965))
-                            .position(x: targetFrame.midX, y: targetFrame.midY)
-                            .allowsHitTesting(false)
-                        }
-                    }
-                }
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showLyrics)
-                .animation(.spring(response: 0.36, dampingFraction: 0.84), value: player.isPlaying)
-
-                playbackControls(bottomInset: Self.safeAreaBottomInset)
-                    .offset(y: (showLyrics && hideBottomControls) ? 260 : -20)
-                    .opacity((showLyrics && hideBottomControls) ? 0 : 1)
-                    .animation(.easeInOut(duration: 0.25), value: hideBottomControls)
-                    .animation(.easeInOut(duration: 0.25), value: showLyrics)
-        }
-        .frame(width: size.width, height: size.height)
-    }
-
-    // MARK: - 横屏布局（参考沉浸模式regularLayout，左右分栏）
-
-    private func landscapeLayout(size: CGSize) -> some View {
-        // 横屏时封面尺寸：参考沉浸模式的计算方式
-        let artworkSize = max(ScreenAdapter.h(120), min(ScreenAdapter.h(280), size.height * 0.55, size.width * 0.28))
-
-        return HStack(spacing: 0) {
-            // 左侧：封面 + 歌曲信息 + 进度条 + 控制按钮 + 底部按钮
-            VStack(spacing: 0) {
-                Spacer()
-
-                // 封面
-                ZStack {
-                    CoverImage(
-                        url: coverURL,
-                        size: artworkSize,
-                        cornerRadius: ScreenAdapter.h(16),
-                        emptyHint: player.isBuffering ? "等待开始播放…" : nil
-                    )
-                    .frame(width: artworkSize, height: artworkSize)
-                    .clipShape(RoundedRectangle(cornerRadius: ScreenAdapter.h(16), style: .continuous))
-
-                    // 动态封面视频叠加在上面
-                    if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
-                        DynamicCoverPlayer(url: dynamicURL)
-                            .frame(width: artworkSize, height: artworkSize)
-                            .clipShape(RoundedRectangle(cornerRadius: ScreenAdapter.h(16), style: .continuous))
-                    }
-                }
-                .shadow(color: .black.opacity(0.4), radius: ScreenAdapter.h(24), y: ScreenAdapter.h(12))
-                .scaleEffect(player.isPlaying ? 1 : 0.965)
-                .animation(.spring(response: 0.36, dampingFraction: 0.84), value: player.isPlaying)
-
-                // 歌曲信息
-                HStack(spacing: ScreenAdapter.w(12)) {
-                    VStack(alignment: .leading, spacing: ScreenAdapter.h(4)) {
-                        Text(track?.name ?? "未在播放")
-                            .font(.system(size: ScreenAdapter.h(18), weight: .bold))
-                            .foregroundStyle(primaryColor)
-                            .lineLimit(1)
-                        Group {
-                            if let t = track {
-                                NowPlayingTrackDestinationLinks(
-                                    track: t,
-                                    font: .system(size: ScreenAdapter.h(13), weight: .medium),
-                                    color: secondaryColor,
-                                    onOpenDestination: onOpenDestination
-                                )
-                            } else {
-                                Text(subtitle)
-                                    .font(.system(size: ScreenAdapter.h(13), weight: .medium))
-                                    .foregroundStyle(secondaryColor)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    }
-                    Spacer(minLength: ScreenAdapter.w(8))
-                    compactActionButton(
-                        icon: isLiked ? "heart.fill" : "heart",
-                        active: isLiked
-                    ) { onFavorite() }
-                    moreMenu
-                }
-                .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
-                .padding(.top, ScreenAdapter.h(20))
-
-                // 进度条 + 控制按钮 + 音量条 + 底部按钮
-                VStack(spacing: 0) {
-                    ReferenceScrubber()
-                        .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
-
-                    Spacer().frame(height: ScreenAdapter.h(8))
-
-                    HStack(spacing: ScreenAdapter.w(28)) {
-                        Button {
-                            player.previous()
-                        } label: {
-                            Image(systemName: "backward.fill")
-                                .font(.system(size: ScreenAdapter.h(26), weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            player.togglePlayPause()
-                        } label: {
-                            PlayPauseMorphIcon(isPlaying: player.isPlaying, size: ScreenAdapter.h(32))
-                                .frame(width: ScreenAdapter.h(64), height: ScreenAdapter.h(64))
-                                .foregroundStyle(primaryColor)
-                        }
-                        .buttonStyle(GlassPressButtonStyle(scale: 0.92))
-
-                        Button {
-                            player.next()
-                        } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.system(size: ScreenAdapter.h(26), weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .foregroundStyle(primaryColor)
-
-                    Spacer().frame(height: ScreenAdapter.h(16))
-
-                    // 音量条
-                    ReferenceVolumeControl()
-                        .frame(maxWidth: artworkSize + ScreenAdapter.w(120))
-
-                    Spacer().frame(height: ScreenAdapter.h(16))
-
-                    // 底部按钮
-                    HStack(spacing: ScreenAdapter.w(40)) {
-                        referenceActionButton(icon: "quote.bubble", active: showLyrics) {
-                            guard !lyrics.isEmpty else { return }
-                            showLyrics.toggle()
-                        }
-                        referenceActionButton(icon: "text.bubble", active: showComments) {
-                            showComments = true
-                        }
-                        referenceActionButton(icon: "list.bullet") {
-                            showQueue = true
-                        }
-                    }
-                }
-                .padding(.top, ScreenAdapter.h(20))
-
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, ScreenAdapter.w(40))
-
-            // 右侧：AMLL歌词（如果开启了AMLL）或普通歌词
-            if settings.appleMusicUseAMLL {
-                // AMLL歌词：直接使用AMLLWebLyricsView
-                AMLLWebLyricsView(useAppleMusicSettings: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
-                    .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
-                    .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
-            } else if !lyrics.isEmpty {
-                // 普通歌词：滚动视图
-                ScrollViewReader { proxy in
-                    ScrollView(showsIndicators: false) {
-                        LazyVStack(alignment: .leading, spacing: ScreenAdapter.h(22)) {
-                            Color.clear.frame(height: ScreenAdapter.h(60))
-                            ForEach(lyrics) { line in
-                                lyricLine(line, isFocused: line.id == currentVisualLyricID)
-                                    .id(line.id)
-                            }
-                            Color.clear.frame(height: ScreenAdapter.h(60))
-                        }
-                        .padding(.horizontal, ScreenAdapter.w(24))
-                    }
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: .black, location: 0.1),
-                                .init(color: .black, location: 0.9),
-                                .init(color: .clear, location: 1),
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                            scrollToPlaybackLyric(proxy: proxy, animated: false)
-                        }
-                    }
-                    .onChange(of: currentPlaybackLyricID) { _ in
-                        guard !isDraggingLyrics else { return }
-                        scrollToPlaybackLyric(proxy: proxy, animated: true)
-                    }
-                    .simultaneousGesture(
-                        DragGesture().onChanged { _ in
-                            isDraggingLyrics = true
-                            resumeTask?.cancel()
-                            resumeTask = Task {
-                                try? await Task.sleep(for: .seconds(3))
-                                guard !Task.isCancelled else { return }
-                                isDraggingLyrics = false
-                            }
-                        }
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.trailing, ScreenAdapter.w(40))
-            } else {
-                // 无歌词时显示占位
-                VStack(spacing: ScreenAdapter.h(10)) {
-                    Image(systemName: "quote.bubble")
-                        .font(.system(size: ScreenAdapter.h(36), weight: .light))
-                        .foregroundStyle(.white.opacity(0.4))
-                    Text("暂无歌词")
-                        .font(.system(size: ScreenAdapter.h(15), weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.86))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .padding(.vertical, size.height < 500 ? ScreenAdapter.h(16) : ScreenAdapter.h(32))
     }
 
     // MARK: - 背景
+    //
+    // 参考源码 `bgScale/bgTranslateX/bgTranslateY` 慢速流动 + AMLL 流动背景。
+    // SwiftUI 侧沿用项目已实现的 CoverBlurView（模糊封面 + 呼吸缩放 + 渐变色缓慢摆动），
+    // 参数已按参考源码对齐（AppleMusicV2.Motion.Background）。
 
     @ViewBuilder
-    private var playerBackground: some View {
-        let isDark = settings.appleMusicBackgroundMode == .dark
+    private var backgroundLayer: some View {
         ZStack {
-            // 底层背景：暗色用黑色，浅色用白色
-            (isDark ? Color.black : Color.white)
-                .ignoresSafeArea()
+            Color.black
 
-            // 模糊封面背景（AMLL 和非 AMLL 模式都有）
             CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
-                .ignoresSafeArea()
+                .overlay(Color.black.opacity(0.48))
 
-            // AMLL 歌词只在展开歌词页时显示，大封面状态隐藏
+            // AMLL 歌词页（背景流动 + 歌词一体）。
+            // 参考源码 `amllShowLyrics = showLyrics && !showQueue`：队列/评论页隐藏歌词但保留流动背景。
             if settings.appleMusicUseAMLL && showLyrics {
                 AMLLWebLyricsView(useAppleMusicSettings: true)
-                    .ignoresSafeArea()
                     .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
                     .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
                     .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
-            }
-        }
-    }
-
-    // MARK: - 封面页
-
-    private func coverPage(size: CGSize) -> some View {
-        let contentWidth = max(size.width - ScreenAdapter.w(64), 0)
-        let artworkSize = min(contentWidth, min(size.height * 0.50, ScreenAdapter.h(390)))
-
-        return VStack(spacing: 0) {
-            Color.clear.frame(height: ScreenAdapter.h(160))
-
-            // 大封面占位符（记录位置）
-            Color.clear
-                .frame(width: artworkSize, height: artworkSize)
-                .anchorPreference(
-                    key: AppleMusicArtworkFrameKey.self,
-                    value: .bounds
-                ) { [.expanded: $0] }
-
-            if showLyricPreview {
-                HStack(spacing: ScreenAdapter.w(12)) {
-                    VStack(alignment: .leading, spacing: ScreenAdapter.h(5)) {
-                        HStack(spacing: ScreenAdapter.w(9)) {
-                            Text(track?.name ?? "未在播放")
-                                .font(.system(size: ScreenAdapter.h(22), weight: .bold))
-                                .foregroundStyle(primaryColor)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                        }
-                        Group {
-                            if let t = track {
-                                NowPlayingTrackDestinationLinks(
-                                    track: t,
-                                    font: .system(size: ScreenAdapter.h(13.5), weight: .medium),
-                                    color: secondaryColor,
-                                    onOpenDestination: onOpenDestination
-                                )
-                            } else {
-                                Text(subtitle)
-                                    .font(.system(size: ScreenAdapter.h(13.5), weight: .medium))
-                                    .foregroundStyle(secondaryColor)
-                            }
-                        }
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    .opacity(amllReady ? 1 : 0)
+                    .onAppear {
+                        // 兜底超时：极端情况下页面未发送 ready 消息，3 秒后也强制就绪
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { amllReady = true }
                     }
-                    Spacer(minLength: ScreenAdapter.w(8))
-                    compactActionButton(
-                        icon: isLiked ? "heart.fill" : "heart",
-                        active: isLiked
-                    ) { onFavorite() }
-                    moreMenu
-                }
-                .frame(maxWidth: ScreenAdapter.w(420))
-                .padding(.top, ScreenAdapter.h(22))
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.title)))
-
-                MiniLyricsPreview {
-                    guard !lyrics.isEmpty else { return }
-                    WellHaptics.tap()
-                    showLyrics = true
-                }
-                .padding(.top, ScreenAdapter.h(36))
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.previewLyric)))
-            } else {
-                compactTrackHeader
-                    .padding(.top, ScreenAdapter.h(40))
             }
 
-            Spacer(minLength: 0).frame(height: ScreenAdapter.h(24))
+            // 静态模糊封面兜底：AMLL WebView 首次初始化（约 3 秒）期间盖住黑屏/loading，
+            // 就绪后延迟 400ms 再 600ms 淡出露出流动背景，用户感觉不到等待。
+            if showFallbackBackground && settings.appleMusicUseAMLL && showLyrics {
+                CoverImage(url: coverURL, size: 1, cornerRadius: 0)
+                    .hidden()
+                    .overlay { Color.black.opacity(0.45) }
+                    .transition(.opacity)
+            }
         }
-        .padding(.horizontal, ScreenAdapter.w(32))
-    }
-
-    private var compactTrackHeader: some View {
-        HStack(spacing: ScreenAdapter.w(12)) {
-            VStack(alignment: .leading, spacing: ScreenAdapter.h(4)) {
-                Text(track?.name ?? "未在播放")
-                    .font(.system(size: ScreenAdapter.h(16), weight: .semibold))
-                    .foregroundStyle(primaryColor)
-                    .lineLimit(1)
-                Group {
-                    if let t = track {
-                        NowPlayingTrackDestinationLinks(
-                            track: t,
-                            font: .system(size: ScreenAdapter.h(12), weight: .medium),
-                            color: secondaryColor,
-                            onOpenDestination: onOpenDestination
-                        )
-                    } else {
-                        Text(subtitle)
-                            .font(.system(size: ScreenAdapter.h(12), weight: .medium))
-                            .foregroundStyle(secondaryColor)
-                            .lineLimit(1)
-                    }
+        .onChange(of: amllReady) { ready in
+            guard ready, showFallbackBackground else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation(.easeOut(duration: AppleMusicV2.Motion.fallbackBgFade)) {
+                    showFallbackBackground = false
                 }
-            }
-            Spacer(minLength: 0)
-            compactActionButton(
-                icon: isLiked ? "heart.fill" : "heart",
-                active: isLiked
-            ) { onFavorite() }
-            moreMenu
-        }
-        .frame(maxWidth: ScreenAdapter.w(420))
-    }
-
-    // MARK: - 歌词页
-
-    private var lyricsPage: some View {
-        VStack(spacing: 0) {
-            // 歌词页顶部下拉区：覆盖「横条 + 歌曲信息头」，下滑即关闭播放器。
-            // 之前这块只有 30pt 高，手指很难命中；现在把歌曲信息头一起并入热区，
-            // 但真正的歌词滚动区不受影响（手势只挂在这一段上）。
-            VStack(spacing: 0) {
-                // 顶部小横条（视觉上不可见，仅作抓取提示）
-                Capsule()
-                    .fill(.clear)
-                    .frame(width: 36, height: 5)
-                    .padding(.top, ScreenAdapter.h(10))
-                    .padding(.bottom, ScreenAdapter.h(8))
-
-                lyricsHeader
-                    .padding(.horizontal, ScreenAdapter.w(24))
-                    .padding(.top, ScreenAdapter.h(52))
-                    .padding(.bottom, ScreenAdapter.h(10))
-            }
-            .contentShape(Rectangle())
-            .offset(y: showLyrics ? headerDragOffset : 0)
-            .gesture(showLyrics ? swipeToDismissGesture(screenHeight: UIScreen.main.bounds.height) : nil)
-
-            if settings.appleMusicUseAMLL {
-                // AMLL已在底层渲染歌词，这里只保留头部，剩余空间透明
-                Color.clear.frame(maxHeight: .infinity)
-            } else if lyrics.isEmpty {
-                emptyLyricsView
-            } else {
-                lyricsScrollView
             }
         }
     }
 
-    // MARK: - 歌词滚动区（独立子视图，避免类型检查超时）
+    // MARK: - 衍生数据
 
-    private func lyricRow(_ line: LyricLine, isFocused: Bool) -> some View {
-        lyricLine(line, isFocused: isFocused)
-            .id(line.id)
-            .background {
-                GeometryReader { rowGeometry in
-                    Color.clear.preference(
-                        key: ReferenceLyricCenterKey.self,
-                        value: [(line.id ?? 0): rowGeometry.frame(in: .named("referenceLyricsViewport")).midY]
-                    )
-                }
-            }
-    }
+    private var isFavorite: Bool { account.isLiked(track: track ?? placeholderTrack) }
 
-    private var lyricsScrollView: some View {
-        ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: ScreenAdapter.h(26)) {
-                    Color.clear.frame(height: max(ScreenAdapter.h(88), lyricsViewportHeight * 0.30))
-                    ForEach(lyrics) { line in
-                        lyricRow(line, isFocused: line.id == currentVisualLyricID)
-                    }
-                    Color.clear.frame(height: max(110, lyricsViewportHeight * 0.34))
-                }
-                .padding(.horizontal, 28)
-            }
-            .coordinateSpace(name: "referenceLyricsViewport")
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black, location: 0.12),
-                        .init(color: .black, location: 0.84),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .background {
-                GeometryReader { viewport in
-                    Color.clear
-                        .onAppear { lyricsViewportHeight = viewport.size.height }
-                        .onChange(of: viewport.size.height) { height in
-                            lyricsViewportHeight = height
-                        }
-                }
-            }
-            .onPreferenceChange(ReferenceLyricCenterKey.self) { centers in
-                lyricCenters = centers
-                updateFocusedLyric(from: centers)
-            }
-            .simultaneousGesture(lyricsDragGesture(proxy: proxy))
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                    scrollToPlaybackLyric(proxy: proxy, animated: false)
-                }
-            }
-            .onChange(of: currentPlaybackLyricID) { _ in
-                guard !isDraggingLyrics else { return }
-                scrollToPlaybackLyric(proxy: proxy, animated: true)
-            }
-            .onChange(of: track?.id) { _ in
-                resumeTask?.cancel()
-                isDraggingLyrics = false
-                focusedLyricID = nil
-            }
-        }
-    }
-
-    private var lyricsHeader: some View {
-        HStack(spacing: ScreenAdapter.w(12)) {
-            // 小封面占位符（记录位置）
-            Color.clear
-                .frame(width: ScreenAdapter.h(48), height: ScreenAdapter.h(48))
-                .anchorPreference(
-                    key: AppleMusicArtworkFrameKey.self,
-                    value: .bounds
-                ) { [.compact: $0] }
-
-            VStack(alignment: .leading, spacing: ScreenAdapter.h(3)) {
-                HStack(spacing: ScreenAdapter.w(7)) {
-                    Text(track?.name ?? "未在播放")
-                        .font(.system(size: ScreenAdapter.h(15), weight: .semibold))
-                        .foregroundStyle(primaryColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Group {
-                    if let t = track {
-                        NowPlayingTrackDestinationLinks(
-                            track: t,
-                            font: .system(size: ScreenAdapter.h(12), weight: .medium),
-                            color: secondaryColor,
-                            onOpenDestination: onOpenDestination
-                        )
-                    } else {
-                        Text(subtitle)
-                            .font(.system(size: ScreenAdapter.h(12), weight: .medium))
-                            .foregroundStyle(secondaryColor)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
-            compactActionButton(
-                icon: isLiked ? "heart.fill" : "heart",
-                active: isLiked
-            ) { onFavorite() }
-            moreMenu
-        }
-    }
-
-    // MARK: - 播放控制栏
-
-    private func playbackControls(bottomInset: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            ReferenceScrubber()
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.progress)))
-
-            Spacer().frame(height: ScreenAdapter.h(5))
-
-            HStack(spacing: ScreenAdapter.h(36)) {
-                Button {
-                    player.previous()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: ScreenAdapter.h(32), weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.previous)))
-
-                Button {
-                    player.togglePlayPause()
-                } label: {
-                    PlayPauseMorphIcon(isPlaying: player.isPlaying, size: ScreenAdapter.h(38))
-                        .frame(width: ScreenAdapter.h(80), height: ScreenAdapter.h(80))
-                        .foregroundStyle(primaryColor)
-                }
-                .buttonStyle(GlassPressButtonStyle(scale: 0.92))
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.play)))
-
-                Button {
-                    player.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: ScreenAdapter.h(32), weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.next)))
-            }
-            .foregroundStyle(primaryColor)
-            .frame(maxWidth: ScreenAdapter.w(320))
-
-            Spacer().frame(height: ScreenAdapter.h(25))
-
-            // 常驻音量条（替代底部音量按钮）
-            ReferenceVolumeControl()
-                .frame(maxWidth: ScreenAdapter.w(420))
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.volume)))
-
-            Spacer().frame(height: ScreenAdapter.h(30))
-
-            HStack(spacing: ScreenAdapter.h(60)) {
-                referenceActionButton(icon: "quote.bubble", active: showLyrics) {
-                    guard !lyrics.isEmpty else { return }
-                    showLyrics.toggle()
-                }
-                referenceActionButton(icon: "text.bubble", active: showComments) {
-                    showComments = true
-                }
-                referenceActionButton(icon: "list.bullet") {
-                    showQueue = true
-                }
-            }
-            .frame(maxWidth: ScreenAdapter.w(420))
-            .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.actions)))
-        }
-        .padding(.horizontal, ScreenAdapter.w(24))
-        .padding(.top, ScreenAdapter.h(10))
-        .padding(.bottom, ScreenAdapter.h(70))
-        .gesture(commentsGesture)
-        .scaleEffect(CGSize(width: 1.0, height: settings.appleMusicControlsHeight), anchor: .bottom)
-    }
-
-    private func referenceActionButton(icon: String, active: Bool = false, tint: Color = .white, action: @escaping () -> Void) -> some View {
-        Button {
-            action()
-        } label: {
-            Image(systemName: icon)
-                .font(.system(size: ScreenAdapter.h(18), weight: .semibold))
-                .foregroundStyle(active ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(58), height: ScreenAdapter.h(58))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func compactActionButton(icon: String, active: Bool = false, action: @escaping () -> Void) -> some View {
-        Button {
-            action()
-        } label: {
-            Image(systemName: icon)
-                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
-                .foregroundStyle(active ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(38), height: ScreenAdapter.h(38))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var emptyLyricsView: some View {
-        VStack(spacing: ScreenAdapter.h(10)) {
-            Spacer()
-            Image(systemName: "quote.bubble")
-                .font(.system(size: ScreenAdapter.h(34), weight: .light))
-                .foregroundStyle(.white.opacity(0.42))
-            Text("暂无歌词")
-                .font(.system(size: ScreenAdapter.h(15), weight: .semibold))
-                .foregroundStyle(.white.opacity(0.86))
-            Text("点击封面区域返回歌曲页面")
-                .font(.system(size: ScreenAdapter.h(12)))
-                .foregroundStyle(.white.opacity(0.46))
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            WellHaptics.tap()
-            showLyrics = false
-        }
-    }
-
-    // MARK: - 派生数据
-
-    private var isVIP: Bool {
-        guard let t = track else { return false }
-        return t.fee == 1 || t.fee == 4
-    }
-
-    private var isLiked: Bool {
-        guard let t = track else { return false }
-        return account.isLiked(track: t)
-    }
-
-    private func onFavorite() {
+    private func toggleFavorite() {
         guard let t = track else { return }
         Task { await AccountStore.shared.toggleLike(trackID: t.id, track: t) }
     }
 
-    /// 播放模式图标：当前项目 repeatMode + shuffleEnabled 分离。
     private var playbackModeIcon: String {
-        if player.shuffleEnabled { return "shuffle" }
-        switch player.repeatMode {
-        case .one: return "repeat.1"
-        case .all: return "repeat"
-        case .off: return "repeat"
+        switch appState.playMode {
+        case 2: return "shuffle"
+        case 1: return "repeat.1"
+        default: return "repeat"
         }
     }
 
-    private var volumeIcon: String {
-        switch player.volume {
-        case 0: return "speaker.slash"
-        case ..<0.4: return "speaker.wave.1"
-        case ..<0.75: return "speaker.wave.2"
-        default: return "speaker.wave.3"
-        }
+    private func play(_ item: Track) {
+        player.play(tracks: player.queue, source: .none, startAt: item)
     }
 
-    private var currentPlaybackLyricIndex: Int? {
-        guard !lyrics.isEmpty else { return nil }
-        let progress = LyricTiming.effectiveProgress(clock.progress, userOffset: lyricOffset)
-        var low = 0
-        var high = lyrics.count - 1
-        var answer: Int?
-        while low <= high {
-            let mid = (low + high) / 2
-            if lyrics[mid].time <= progress {
-                answer = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-        return answer
+    private func splitArtists(_ raw: String) -> [String] {
+        raw.split(whereSeparator: { "/、,&".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
-    private var currentPlaybackLyricID: Int? {
-        guard let index = currentPlaybackLyricIndex, lyrics.indices.contains(index) else { return nil }
-        return lyrics[index].id
-    }
-
-    private var currentVisualLyricID: Int? {
-        isDraggingLyrics ? focusedLyricID : (focusedLyricID ?? currentPlaybackLyricID)
-    }
-
-    private var subtitle: String {
-        guard let t = track else { return "" }
-        let parts = [t.artistNames, t.album.name].filter { !$0.isEmpty }
-        return parts.isEmpty ? "未知歌曲" : parts.joined(separator: " · ")
-    }
-
-    private func lyricLine(_ line: LyricLine, isFocused: Bool) -> some View {
-        Button {
-            WellHaptics.tap()
-            player.seek(to: LyricTiming.seekTime(for: line, userOffset: lyricOffset))
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(line.text.isEmpty ? " " : line.text)
-                        .font(.system(size: isFocused ? 27 : 23, weight: isFocused ? .bold : .semibold))
-                        .foregroundStyle(primaryColor.opacity(isFocused ? 1 : 0.36))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if isFocused && isDraggingLyrics {
-                        Spacer(minLength: 8)
-                        Text(wellamTimeString(line.time))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(secondaryColor.opacity(0.82))
-                    }
-                }
-                if isFocused, let translation = line.translation, !translation.isEmpty {
-                    Text(translation)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(secondaryColor.opacity(0.72))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .scaleEffect(isFocused ? 1.06 : 0.84, anchor: .leading)
-            .blur(radius: isFocused ? 0 : 0.7)
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: isFocused)
-    }
-
-    private func updateFocusedLyric(from centers: [Int: CGFloat]) {
-        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
-        let center = lyricsViewportHeight / 2
-        focusedLyricID = centers.min { abs($0.value - center) < abs($1.value - center) }?.key
-    }
-
-    private func scrollToPlaybackLyric(proxy: ScrollViewProxy, animated: Bool) {
-        guard let id = currentPlaybackLyricID else { return }
-        let action = { proxy.scrollTo(id, anchor: .center) }
-        if animated {
-            withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.38)) { action() }
+    private func openArtist(_ name: String?) {
+        guard let name, !name.contains("未知") else { return }
+        let matched = track?.artists.first { $0.name == name } ?? track?.artists.first
+        guard let artist = matched else { return }
+        let summary = ArtistSummary(id: artist.id,
+                                    name: artist.name,
+                                    picUrl: nil,
+                                    sourcePlatform: track?.sourcePlatform,
+                                    singerMid: artist.singerMid)
+        if let mid = artist.singerMid {
+            onOpenDestination(.artistWithMid(artist.id, mid, summary))
         } else {
-            action()
+            onOpenDestination(.artist(artist.id))
         }
     }
 
-    private func lyricsDragGesture(proxy: ScrollViewProxy) -> some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                isDraggingLyrics = true
-                resumeTask?.cancel()
-                updateFocusedLyric(from: lyricCenters)
-                // 下滑隐藏底部控制区域，上滑显示
-                if value.translation.height > 15 {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        hideBottomControls = true
-                    }
-                } else if value.translation.height < -15 {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        hideBottomControls = false
-                    }
-                }
-                // 和沉浸模式一致：拖动开始后3秒自动恢复跟随播放
-                resumeTask = Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(3))
-                    guard !Task.isCancelled else { return }
-                    isDraggingLyrics = false
-                    if let currentID = currentPlaybackLyricID {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                            proxy.scrollTo(currentID, anchor: .center)
-                        }
-                    }
-                }
-            }
+    private var placeholderTrack: Track {
+        Track(id: -1,
+              name: "",
+              artistNames: "",
+              artists: [],
+              album: Album(id: -1, name: "", picUrl: nil, albumMid: nil),
+              duration: 0,
+              sourcePlatform: nil,
+              fee: 0,
+              platformSongId: nil)
     }
 
-    private var commentsGesture: some Gesture {
-        DragGesture(minimumDistance: 25)
-            .onEnded { value in
-                guard value.translation.height < -54, abs(value.translation.height) > abs(value.translation.width) else { return }
-                guard track != nil else { return }
-                WellHaptics.medium()
-                showComments = true
-            }
-    }
-
-    // MARK: - 颜色
-
-    private var primaryColor: Color {
-        if primaryHex.hasPrefix("#"), let color = Color(hex: primaryHex) { return color }
-        return .white
-    }
-
-    private var secondaryColor: Color {
-        if secondaryHex.hasPrefix("#"), let color = Color(hex: secondaryHex) { return color }
-        return .white.opacity(0.58)
-    }
-
-    private var accentColor: Color {
-        if accentHex.hasPrefix("#"), let color = Color(hex: accentHex) { return color }
-        return Color(red: 1.0, green: 0.28, blue: 0.36)
-    }
-
-    private var volumeColor: Color {
-        if volumeHex.hasPrefix("#"), let color = Color(hex: volumeHex) { return color }
-        return primaryColor
-    }
-
-    // iOS 原生弹窗输入自定义睡眠定时
-    private func showCustomSleepTimerAlert() {
-        let alert = UIAlertController(
-            title: "自定义睡眠定时",
-            message: "请输入分钟数（1-600）",
-            preferredStyle: .alert
-        )
-        alert.addTextField { textField in
-            textField.placeholder = "30"
-            textField.keyboardType = .numberPad
-            textField.text = "30"
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "开始", style: .default) { _ in
-            if let text = alert.textFields?.first?.text,
-               let minutes = Int(text), minutes > 0 && minutes <= 600 {
-                player.sleepTimer.schedule(afterMinutes: minutes)
-            }
-        })
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
-            rootVC.present(alert, animated: true)
-        }
-    }
-}
-
-// MARK: - 进度条
-
-private struct ReferenceScrubber: View {
-    @EnvironmentObject private var player: PlayerService
-    @ObservedObject private var clock = PlayerService.shared.clock
-    @State private var scrubbing = false
-    @State private var scrubValue: Double = 0
-    @State private var isSeeking = false
-
-    private var totalDuration: Double {
-        max(max(player.duration, player.currentTrack?.duration ?? 0), 1)
-    }
-
-    private var displayTime: Double {
-        (scrubbing || isSeeking) ? scrubValue : clock.progress
-    }
-
-    var body: some View {
-        let total = totalDuration
-        let time = displayTime
-
-        VStack(spacing: 6) {
-            GeometryReader { geometry in
-                let width = geometry.size.width
-                let progress = CGFloat(min(max(time / total, 0), 1))
-                let filledWidth = width * progress
-                let trackH: CGFloat = scrubbing ? 15 : 7
-                let bubbleX = max(-width / 2 + 31, min(width / 2 - 31, filledWidth - width / 2))
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.18))
-                        .frame(height: trackH)
-
-                    Capsule()
-                        .fill(.white.opacity(0.55))
-                        .frame(width: max(0, filledWidth), height: trackH)
-                }
-                .frame(height: 30)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            if !scrubbing {
-                                scrubValue = clock.progress
-                            }
-                            scrubbing = true
-                            isSeeking = false
-                            let ratio = min(max(value.location.x / max(width, 1), 0), 1)
-                            scrubValue = ratio * total
-                        }
-                        .onEnded { _ in
-                            player.seek(to: scrubValue)
-                            scrubbing = false
-                            isSeeking = true
-                        }
-                )
-                .overlay(alignment: .top) {
-                    if scrubbing {
-                        Text(wellamTimeString(scrubValue))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.black.opacity(0.5), in: Capsule())
-                            .offset(x: bubbleX, y: -30)
-                            .transition(.scale(scale: 0.9).combined(with: .opacity))
-                    }
-                }
-            }
-            .frame(height: 30)
-            .onChange(of: clock.progress) { newProgress in
-                if isSeeking, abs(newProgress - scrubValue) < 0.3 {
-                    isSeeking = false
-                }
-            }
-
-            HStack {
-                Text(wellamTimeString(time))
-                Spacer()
-                Text("-" + wellamTimeString(max(0, total - time)))
-            }
-            .font(.system(size: 11, weight: .regular, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.52))
-        }
-        .frame(maxWidth: 420)
-        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: scrubbing)
-    }
-}
-
-// MARK: - 音量
-
-private struct ReferenceVolumeControl: View {
-    @EnvironmentObject private var player: PlayerService
-    @State private var isDragging = false
-    @State private var dragValue: Double = 0
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.fill")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.white.opacity(0.5))
-                .frame(width: 16, height: 20)
-
-            GeometryReader { geo in
-                let width = geo.size.width
-                let fraction = isDragging ? dragValue : Double(player.volume)
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.18))
-                        .frame(height: 7)
-                    Capsule()
-                        .fill(.white.opacity(0.55))
-                        .frame(width: width * CGFloat(fraction), height: 7)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            isDragging = true
-                            let val = Double(min(max(value.location.x / width, 0), 1))
-                            dragValue = val
-                            player.volume = Float(val)
-                        }
-                        .onEnded { value in
-                            let val = Double(min(max(value.location.x / width, 0), 1))
-                            dragValue = val
-                            player.volume = Float(val)
-                            isDragging = false
-                        }
-                )
-            }
-            .frame(height: 20)
-
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.white.opacity(0.5))
-                .frame(width: 16, height: 20)
-        }
-        .frame(height: 20)
-    }
-}
-
-// MARK: - 迷你歌词预览（沉浸模式样式）
-
-private struct MiniLyricsPreview: View {
-    let action: () -> Void
-
-    @EnvironmentObject private var player: PlayerService
-    @ObservedObject private var lyricsCursor = PlayerService.shared.lyricsCursor
-
-    private var currentLines: (previous: LyricLine?, current: LyricLine?, next: LyricLine?) {
-        guard let lyrics = player.lyrics, !lyrics.isEmpty else { return (nil, nil, nil) }
-        guard let index = lyricsCursor.activeIndex else {
-            return (nil, nil, lyrics.lines.first)
-        }
-        let all = lyrics.lines
-        return (
-            index > 0 ? all[index - 1] : nil,
-            all[index],
-            index + 1 < all.count ? all[index + 1] : nil
-        )
-    }
-
-    var body: some View {
-        let (_, current, next) = currentLines
-        Button(action: action) {
-            VStack(spacing: 8) {
-                if current == nil && next == nil {
-                    Text("暂无歌词")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.54))
-                } else {
-                    line(current, emphasized: true)
-                    line(next, emphasized: false)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 70)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: current?.id)
-    }
+    // MARK: - 三点菜单（对应 RN `menuActions` + `handleMenuPress`）
 
     @ViewBuilder
-    private func line(_ line: LyricLine?, emphasized: Bool) -> some View {
-        Text(line?.text.isEmpty == false ? line!.text : " ")
-            .font(.system(size: emphasized ? 17 : 14, weight: emphasized ? .bold : .medium))
-            .foregroundStyle(.white.opacity(emphasized ? 1 : 0.45))
-            .lineLimit(1)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 28)
-            .id(line?.id)
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
-    }
-}
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                openAlbum()
+            } label: {
+                Label("查看专辑", systemImage: "square.stack")
+            }
 
-// MARK: - QueueView
+            Button {
+                showCommentsMode()
+            } label: {
+                Label("评论", systemImage: "text.bubble")
+            }
 
-private struct QueueView: View {
-    @EnvironmentObject private var player: PlayerService
-    @Environment(\.dismiss) private var dismiss
+            Button {
+                shareSong()
+            } label: {
+                Label("分享", systemImage: "square.and.arrow.up")
+            }
 
-    private var playbackModeIcon: String {
-        if player.shuffleEnabled { return "shuffle" }
-        switch player.repeatMode {
-        case .one: return "repeat.1"
-        case .all: return "repeat"
-        case .off: return "repeat"
-        }
-    }
+            Button {
+                showAddToPlaylist = true
+            } label: {
+                Label("添加至歌单", systemImage: "folder.badge.plus")
+            }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // 拖动指示条
-            Capsule()
-                .fill(.secondary.opacity(0.45))
-                .frame(width: 36, height: 5)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+            Divider()
 
-            // 标题栏：标题 + 数量 + 循环播放 + 清空
-            HStack(spacing: 8) {
-                Text("播放队列")
-                    .font(.system(size: 17, weight: .bold))
-                Text("\(player.queue.count) 首")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
+            // `lyricDelay` 子菜单：-3.0 → +3.0 秒
+            Menu {
+                ForEach([-3.0, -2.0, -1.0, -0.5, -0.2, 0, 0.2, 0.5, 1.0, 2.0, 3.0], id: \.self) { value in
+                    Button {
+                        applyLyricDelay(value)
+                    } label: {
+                        if abs(appState.lyricOffset - value) < 0.01 {
+                            Label(delayTitle(value), systemImage: "checkmark")
+                        } else {
+                            Text(delayTitle(value))
+                        }
+                    }
+                }
+            } label: {
+                Label(lyricDelayLabel, systemImage: "clock")
+            }
+
+            // 播放模式（自设置页迁到播放器界面）
+            Menu {
+                Button { appState.playMode = 0 } label: { modeLabel("顺序播放", 0) }
+                Button { appState.playMode = 2 } label: { modeLabel("随机播放", 2) }
+                Button { appState.playMode = 1 } label: { modeLabel("单曲循环", 1) }
+            } label: {
+                Label("播放模式", systemImage: "repeat")
+            }
+
+            Button {
+                showLyricOffsetSheet = true
+            } label: {
+                Label("歌词偏移", systemImage: "timer")
+            }
+
+            Divider()
+
+            // 睡眠定时
+            Menu {
+                ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
+                    Button("\(minutes) 分钟") {
+                        player.sleepTimer.schedule(afterMinutes: minutes)
+                    }
+                    .disabled(!player.hasCurrentTrack)
+                }
                 Button {
-                    player.cyclePlaybackMode()
+                    player.sleepTimer.scheduleAtEndOfCurrentTrack()
                 } label: {
-                    Image(systemName: playbackModeIcon)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(player.shuffleEnabled ? Color.accentColor : .primary)
-                        .frame(width: 36, height: 36)
+                    Label("当前歌曲播放完", systemImage: "music.note")
                 }
-                .buttonStyle(.plain)
-                Button(role: .destructive) {
-                    player.clearQueue()
-                } label: {
-                    Text("清空")
-                        .font(.system(size: 15, weight: .medium))
-                }
-                .disabled(player.queue.isEmpty)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
-
-            if player.queue.isEmpty {
-                Spacer()
-                EmptyStateView(icon: "music.note.list", title: "播放队列为空")
-                Spacer()
-            } else {
-                List {
-                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
-                        row(track, index: index)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
-                    }
-                    .onDelete { offsets in
-                        // 从大到小删除，避免索引漂移
-                        for index in offsets.sorted(by: >) where player.queue.indices.contains(index) {
-                            player.removeFromQueue(at: index)
-                        }
+                .disabled(!player.hasCurrentTrack)
+                if player.sleepTimer.state.isActive {
+                    Divider()
+                    Button("关闭定时器", role: .destructive) {
+                        player.sleepTimer.cancel()
                     }
                 }
-                .scrollContentBackground(.hidden)
-                .listStyle(.plain)
+            } label: {
+                Label(player.sleepTimer.state.isActive ? "睡眠定时（进行中）" : "睡眠定时",
+                      systemImage: "timer")
             }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: AppleMusicV2.Title.headerIconSize, weight: .regular))
+                .foregroundStyle(.white)
+                .padding(AppleMusicV2.Title.headerIconPadding)
+                .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
-    private func row(_ track: Track, index: Int) -> some View {
-        let isCurrent = index == player.currentIndex
-        HStack(spacing: 12) {
-            CoverImage(url: URL(string: track.album.picUrl ?? ""), size: 46, cornerRadius: 9)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track.name)
-                    .font(.system(size: 15, weight: isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isCurrent ? Theme.accent : .primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(track.artistNames)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 0)
-            if isCurrent {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.accent)
-            } else {
-                Text(Formatters.duration(track.duration))
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            player.play(tracks: player.queue, source: .none, startAt: track)
-            dismiss()
-        }
-    }
-}
-
-// MARK: - Sheet 辅助修饰器
-
-/// 评论区 sheet：iOS 16.4+ 使用半屏 detents + 透明背景（CommentsView 自绘背景）。
-private struct CommentsSheetDetents: ViewModifier {
-    func body(content: Content) -> some View {
-        Group {
-            if #available(iOS 16.4, *) {
-                content
-                    .presentationDetents([.medium, .large])
-                    .presentationBackground(.white)
-            } else if #available(iOS 16.0, *) {
-                content
-                    .presentationDetents([.medium, .large])
-            } else {
-                content
-            }
-        }
-    }
-}
-
-extension View {
-    @ViewBuilder
-    func presentationDetentsSafe() -> some View {
-        if #available(iOS 16.0, *) {
-            self.presentationDetents([.medium])
+    private func modeLabel(_ title: String, _ mode: Int) -> some View {
+        if appState.playMode == mode {
+            Label(title, systemImage: "checkmark")
         } else {
-            self
+            Text(title)
         }
+    }
+
+    private var lyricDelayLabel: String {
+        let value = appState.lyricOffset
+        guard value != 0 else { return "歌词时间微调" }
+        let direction = value > 0 ? "提前" : "推迟"
+        let abs = Swift.abs(value)
+        let text = abs.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", abs)
+            : String(format: "%.1f", abs)
+        return "歌词时间微调（当前\(value > 0 ? "+" : "")\(text)秒\(direction)）"
+    }
+
+    private func delayTitle(_ value: Double) -> String {
+        if value == 0 { return "复位（0.0秒）" }
+        let abs = Swift.abs(value)
+        let text = abs.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.1f", abs)
+            : String(format: "%.1f", abs)
+        if value < 0 { return "-\(text)秒（歌词推迟）" }
+        if value > 0 { return "+\(text)秒（歌词提前）" }
+        return "\(text)秒"
+    }
+
+    private func applyLyricDelay(_ value: Double) {
+        appState.lyricOffset = value
+        settings.lyricOffset = value
+        if value == 0 {
+            ToastCenter.shared.show("歌词时间已复位")
+        } else {
+            let direction = value > 0 ? "前" : "后"
+            ToastCenter.shared.show("歌词移到 \(String(format: "%.1f", Swift.abs(value))) 秒\(direction)")
+        }
+    }
+
+    private func openAlbum() {
+        guard let t = track else { return }
+        let summary = AlbumSummary(id: t.album.id,
+                                   name: t.album.name,
+                                   picUrl: t.album.picUrl,
+                                   sourcePlatform: t.sourcePlatform,
+                                   albumMid: t.album.albumMid)
+        if let mid = t.album.albumMid {
+            onOpenDestination(.albumWithMid(t.album.id, mid, summary))
+        } else {
+            onOpenDestination(.album(t.album.id))
+        }
+    }
+
+    private func shareSong() {
+        guard let t = track else { return }
+        let link: String
+        switch t.sourcePlatform {
+        case "tx":
+            link = "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
+        case "kg":
+            link = "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
+        default:
+            link = "https://music.163.com/#/song?id=\(t.id)"
+        }
+        Platform.copyToPasteboard(string: link)
+        ToastCenter.shared.show("链接已复制")
     }
 }
 
-// MARK: - 音量弹窗（照搬沉浸模式）
+// MARK: - 内容淡入 + 上移（对应 RN `compactContentAnimStyle`）
 
-private struct CompactVolumePopover: View {
-    @EnvironmentObject private var player: PlayerService
-    @State private var isDragging = false
+private struct CompactContentTransition: ViewModifier {
+    let visible: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible ? 0 : 22)
+    }
+}
+
+// MARK: - 跑马灯（对应 RN `marqueeAnim` + `styles.songTitleClip`）
+//
+// 歌名超出容器宽度时横向循环滚动：滚动到尾部停顿，再回到起点。
+// 参考源码用 reanimated 的 `withRepeat(withSequence(withTiming(...), withDelay(...)), -1, false)`。
+
+struct MarqueeText: View {
+    let text: String
+    let font: Font
+    let color: Color
+
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+
+    private var overflow: CGFloat { max(0, textWidth - containerWidth) }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 16, weight: .medium))
+        // 用隐藏的完整文本量出真实宽度，容器宽度决定是否需要滚动
+        ZStack(alignment: .leading) {
+            Text(text)
+                .font(font)
+                .lineLimit(1)
+                .fixedSize()
+                .hidden()
+                .background(
+                    GeometryReader { textGeo in
+                        Color.clear
+                            .onAppear { textWidth = textGeo.size.width }
+                            .onChange(of: text) { _ in textWidth = textGeo.size.width }
+                            .onChange(of: textGeo.size.width) { newValue in textWidth = newValue }
+                    }
+                )
 
             GeometryReader { geo in
-                let height = geo.size.height
-                let fraction = min(max(CGFloat(player.volume), 0), 1)
-                ZStack(alignment: .bottom) {
-                    Capsule().fill(.white.opacity(0.22))
-                    Capsule().fill(.white.opacity(0.82))
-                        .frame(height: height * fraction)
-                }
-                .frame(width: isDragging ? 12 : 8)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            isDragging = true
-                            updateVolume(at: value.location.y, height: height)
-                        }
-                        .onEnded { value in
-                            updateVolume(at: value.location.y, height: height)
-                            isDragging = false
-                        }
-                )
-                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isDragging)
-            }
-            .frame(width: 32, height: 132)
-            .accessibilityElement()
-            .accessibilityLabel("音量")
-            .accessibilityValue("\(Int((player.volume * 100).rounded()))%")
-            .accessibilityAdjustableAction(adjustVolume)
-
-            Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.fill")
-                .font(.system(size: 14, weight: .medium))
-        }
-        .foregroundStyle(.white.opacity(0.85))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(alignment: .bottom) {
-            Triangle()
-                .fill(.white.opacity(0.18))
-                .frame(width: 16, height: 8)
-                .offset(y: 8)
-        }
-    }
-
-    private func updateVolume(at location: CGFloat, height: CGFloat) {
-        guard height > 0 else { return }
-        player.volume = Float(min(max(1 - location / height, 0), 1))
-    }
-
-    private func adjustVolume(_ direction: AccessibilityAdjustmentDirection) {
-        let step: Float = 0.05
-        switch direction {
-        case .increment: player.volume = min(player.volume + step, 1)
-        case .decrement: player.volume = max(player.volume - step, 0)
-        @unknown default: break
-        }
-    }
-}
-
-private struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path { path in
-            path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.closeSubpath()
-        }
-    }
-}
-
-// MARK: - 歌词偏移调整面板
-
-struct LyricOffsetSheet: View {
-    @EnvironmentObject private var settings: SettingsManager
-    @Environment(\.dismiss) private var dismiss
-
-    private var offsetText: String {
-        if settings.lyricOffset == 0 { return "同步" }
-        return settings.lyricOffset > 0
-            ? "提前 \(String(format: "%.1f", settings.lyricOffset))s"
-            : "延后 \(String(format: "%.1f", -settings.lyricOffset))s"
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("歌词进度偏移")
-                                .font(.system(size: 16, weight: .medium))
-                            Spacer()
-                            Text(offsetText)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.red)
-                        }
-                        Slider(
-                            value: $settings.lyricOffset,
-                            in: -10...10,
-                            step: 0.1
-                        )
-                        .tint(.red)
-                        Text("歌词与音频不同步时手动校正（正数提前、负数延后）")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            Button("重置") {
-                                settings.lyricOffset = 0
-                            }
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.red)
-                        }
+                Text(text)
+                    .font(font)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .offset(x: offset)
+                    .onAppear { containerWidth = geo.size.width; restart() }
+                    .onChange(of: geo.size.width) { newValue in
+                        containerWidth = newValue
+                        restart()
                     }
-                    .padding(.vertical, 8)
-                }
+                    .onChange(of: text) { _ in restart() }
             }
-            .navigationTitle("歌词偏移")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
+            .clipped()
+        }
+    }
+
+    private func restart() {
+        offset = 0
+        guard overflow > 1 else { return }
+        let duration = Double(overflow) / Double(AppleMusicV2.Motion.Marquee.pointsPerSecond)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [overflow, duration] in
+            guard overflow > 1 else { return }
+            withAnimation(.linear(duration: duration)) { offset = -overflow }
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + AppleMusicV2.Motion.Marquee.pause) {
+                withAnimation(.linear(duration: 0.4)) { offset = 0 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + AppleMusicV2.Motion.Marquee.pause) {
+                    restart()
                 }
             }
         }
-        .presentationDetentsSafe()
     }
 }

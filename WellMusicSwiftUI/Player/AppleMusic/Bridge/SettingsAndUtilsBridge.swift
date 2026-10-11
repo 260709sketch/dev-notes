@@ -117,6 +117,9 @@ final class SettingsManager: ObservableObject {
 
     @AppStorage("wellmusic.player.autoSkipOnFailure") var autoSkipOnFailure: Bool = true
 
+    /// 断开蓝牙耳机 / 拔出耳机时自动暂停播放（默认开启）
+    @AppStorage("wellmusic.player.bluetoothAutoPause") var bluetoothAutoPause: Bool = true
+
     @AppStorage("wellmusic.player.swipeSwitchSong") var swipeSwitchSong: Bool = true
 
     /// 无损/高音质

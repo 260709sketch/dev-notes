@@ -31,7 +31,19 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      # 1) 模拟器 Release 构建：验证代码可编译
+      # 1) 单元测试：验证播放器移植的常量/几何/派生逻辑（各平台映射含音质档位）
+      - name: Run unit tests
+        run: |
+          xcodebuild \
+            -project WellMusicSwiftUI.xcodeproj \
+            -scheme WellMusicSwiftUI \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -derivedDataPath build/tests \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      # 2) 模拟器 Release 构建：验证代码可编译
       - name: Build (Simulator, Release)
         run: |
           xcodebuild \
@@ -43,7 +55,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      # 2) 真机构建（无签名）：产出 .app → 打包 ipa 供签名
+      # 3) 真机构建（无签名）：产出 .app → 打包 ipa 供签名
       - name: Build (Device, Release, unsigned)
         run: |
           xcodebuild \
