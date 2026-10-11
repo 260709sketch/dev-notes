@@ -392,19 +392,51 @@ final class CoverBlurView: UIView {
     /// 背景动态效果：模糊封面缓慢呼吸缩放 + 主色渐变端点缓慢摆动。
     private func startBackgroundAnimations() {
         imageView.layer.removeAnimation(forKey: "wellmusicBgBreathe")
+        imageView.layer.removeAnimation(forKey: "wellmusicBgPanX")
+        imageView.layer.removeAnimation(forKey: "wellmusicBgPanY")
         gradientLayer.removeAnimation(forKey: "wellmusicGradStart")
         gradientLayer.removeAnimation(forKey: "wellmusicGradEnd")
         imageView.transform = .identity
 
+        // 严格对齐参考源码 `WellMusicAppleMusicV2Player.tsx` 的位图流动背景：
+        //   bgScale       1.1  → 1.15   20000ms  inOut(ease)  自动反向 → 等效 autoreverses
+        //   bgTranslateX  -20  → +20    15000ms  inOut(ease)
+        //   bgTranslateY  -15  → +15    18000ms  inOut(ease)
+        // RN 用 `withRepeat(withSequence(A, B), -1, true)`：A→B→A 单程各 20s/15s/18s，
+        // CABasicAnimation 的 `autoreverses = true` + 单程 duration 与之完全等价。
+        // 注：RN 的 translate 是相对于原点的 ±值，这里拆成「单程半幅」以配合 autoreverses。
+
+        // 1) 呼吸缩放：1.1 → 1.15（基准 1.1，振幅 0.05）
         let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 1.0
-        scale.toValue = 1.10
-        scale.duration = 14
+        scale.fromValue = AppleMusicV2.Motion.Background.scaleFrom
+        scale.toValue = AppleMusicV2.Motion.Background.scaleTo
+        scale.duration = AppleMusicV2.Motion.Background.scaleDuration
         scale.autoreverses = true
         scale.repeatCount = .infinity
         scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         imageView.layer.add(scale, forKey: "wellmusicBgBreathe")
 
+        // 2) 横向平移：-20 → +20（振幅 20pt）
+        let panX = CABasicAnimation(keyPath: "transform.translation.x")
+        panX.fromValue = -AppleMusicV2.Motion.Background.translateX
+        panX.toValue = AppleMusicV2.Motion.Background.translateX
+        panX.duration = AppleMusicV2.Motion.Background.translateXDuration
+        panX.autoreverses = true
+        panX.repeatCount = .infinity
+        panX.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        imageView.layer.add(panX, forKey: "wellmusicBgPanX")
+
+        // 3) 纵向平移：-15 → +15（振幅 15pt）
+        let panY = CABasicAnimation(keyPath: "transform.translation.y")
+        panY.fromValue = -AppleMusicV2.Motion.Background.translateY
+        panY.toValue = AppleMusicV2.Motion.Background.translateY
+        panY.duration = AppleMusicV2.Motion.Background.translateYDuration
+        panY.autoreverses = true
+        panY.repeatCount = .infinity
+        panY.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        imageView.layer.add(panY, forKey: "wellmusicBgPanY")
+
+        // 渐变色缓慢摆动（背景基调的呼吸感，不属参考源码但保留既有观感）
         let start = CABasicAnimation(keyPath: "startPoint")
         start.fromValue = NSValue(cgPoint: CGPoint(x: 0.5, y: 0))
         start.toValue = NSValue(cgPoint: CGPoint(x: 0.68, y: 0))

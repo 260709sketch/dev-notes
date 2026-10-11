@@ -35,6 +35,59 @@ final class AppleMusicV2StyleTests: XCTestCase {
         XCTAssertEqual(AppleMusicV2.miniArtworkCornerRadius, 12)
     }
 
+    // MARK: - 封面动态圆角（对应 RN `albumArtRoundStyle`）
+
+    /// 大封面：`sc = 1` → 视觉圆角 24，形状圆角也 24（不折算）。
+    func testArtworkRadiusAtLargeScaleIsTwentyFour() {
+        let miniScale = 80.0 / (393 * 0.86)   // iPhone 14 Pro 基准
+        let radius = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: 1, miniScale: miniScale)
+        XCTAssertEqual(radius, 24, accuracy: 0.0001)
+    }
+
+    /// 小封面：`sc = miniScale` → 视觉圆角 12。
+    /// 形状圆角 = 12 / miniScale，乘以 scale 后视觉落地正好 12。
+    func testArtworkRadiusAtMiniScaleLandsOnTwelve() {
+        let miniScale = 80.0 / (393 * 0.86)
+        let shape = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: miniScale, miniScale: miniScale)
+        // 视觉圆角 = 形状圆角 * scale
+        XCTAssertEqual(shape * miniScale, 12, accuracy: 0.0001)
+    }
+
+    /// 中间任意缩放：视觉圆角线性落在 24 → 12 之间。
+    func testArtworkRadiusInterpolatesVisually() {
+        let miniScale = 80.0 / (393 * 0.86)
+        for step in stride(from: 0.0, through: 1.0, by: 0.1) {
+            let sc = miniScale + (1 - miniScale) * CGFloat(step)
+            let shape = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: sc, miniScale: miniScale)
+            let visual = shape * sc
+            let expected = 12 + (24 - 12) * CGFloat(step)
+            XCTAssertEqual(visual, expected, accuracy: 0.0001,
+                           "sc=\(sc) 时视觉圆角应为 \(expected)，实际 \(visual)")
+        }
+    }
+
+    /// 两端常量本身就是 24 / 12，防止有人把公式里的魔法数改掉。
+    func testArtworkRadiusEndpointsArePinned() {
+        XCTAssertEqual(AppleMusicV2.ArtworkRadius.large, 24)
+        XCTAssertEqual(AppleMusicV2.ArtworkRadius.mini, 12)
+    }
+
+    /// 退化保护：`miniScale >= 1`（大/小封面同尺寸）时不得除零/产生 NaN。
+    func testArtworkRadiusDoesNotBlowUpWhenMiniScaleIsOne() {
+        let radius = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: 1, miniScale: 1)
+        XCTAssertTrue(radius.isFinite)
+        XCTAssertEqual(radius, 24, accuracy: 0.0001)
+    }
+
+    /// `scale` 传入 0 或负数时按 0.1 兜底（对应 RN `Math.max(coverScaleAnim.value, 0.1)`）。
+    func testArtworkRadiusClampsNonPositiveScale() {
+        let miniScale = 80.0 / (393 * 0.86)
+        let zero = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: 0, miniScale: miniScale)
+        let clamped = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: 0.1, miniScale: miniScale)
+        XCTAssertEqual(zero, clamped, accuracy: 0.0001)
+        XCTAssertTrue(zero.isFinite)
+    }
+
     func testTitleStyleMatchesReference() {
         // styles.songTitle: fontSize 18 / fontWeight 600
         XCTAssertEqual(AppleMusicV2.Title.fontSize, 18)

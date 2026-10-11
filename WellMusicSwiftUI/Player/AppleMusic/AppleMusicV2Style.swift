@@ -19,6 +19,39 @@ enum AppleMusicV2 {
     static let artworkCornerRadius: CGFloat = 24
     /// 小封面圆角（参考 `miniArtworkSize` 落点：圆角 12）
     static let miniArtworkCornerRadius: CGFloat = 12
+
+    /// 封面「视觉圆角」随缩放插值的两端值。
+    ///
+    /// 参考源码 `albumArtRoundStyle`：
+    /// ```js
+    /// const target = 24 - (1 - sc) / (1 - miniArtworkScale) * 12
+    /// return { borderRadius: target / sc }   // RN 的 borderRadius 会被 transform scale 折算
+    /// ```
+    /// 即 **视觉圆角** `= target`：大封面 `sc = 1` → 24；小封面 `sc = miniScale` → 12。
+    /// Apple Music 的小封面明显更圆，这个渐变是它的标志性细节，不能简化为恒定圆角。
+    enum ArtworkRadius {
+        /// 大封面视觉圆角（= `artworkCornerRadius`）
+        static let large: CGFloat = 24
+        /// 小封面视觉圆角
+        static let mini: CGFloat = 12
+
+        /// 按当前缩放比例换算「形状圆角」（供 SwiftUI `RoundedRectangle` 使用）。
+        ///
+        /// SwiftUI 与 RN 的折算方式不同：
+        /// - RN 的 `borderRadius` 会被 `transform: scale` **反比折算**，所以源码要 `target / sc`；
+        /// - SwiftUI 的 `scaleEffect` 同样会缩放形状圆角，`clipShape` 的 `cornerRadius` 也要 `target / sc`
+        ///   才能让**视觉**圆角落在上式的 `target` 上。
+        ///
+        /// - Parameter scale: 当前 `coverScale`（1 = 大封面，`miniScale` = 左上角迷你位）
+        /// - Parameter miniScale: 迷你位缩放比 `miniArtworkSize / mainArtworkSize`
+        static func shapeRadius(forScale scale: CGFloat, miniScale: CGFloat) -> CGFloat {
+            let sc = max(scale, 0.1)
+            // miniScale 逼近 1 时上式除零：此时大/小封面同尺寸，直接退回大圆角
+            guard miniScale < 0.999 else { return large / sc }
+            let target = large - (1 - sc) / (1 - miniScale) * (large - mini)
+            return target / sc
+        }
+    }
     /// `styles.albumArtwork.shadowOffset {width:0,height:18} / shadowOpacity 0.5 / shadowRadius 32`
     static let artworkShadowRadius: CGFloat = 32
     static let artworkShadowY: CGFloat = 18

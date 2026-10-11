@@ -242,18 +242,21 @@ struct AppleMusicPlayerView: View {
 
     private func artworkAndInfo(screenSize: CGSize) -> some View {
         let artworkSize = screenSize.width * AppleMusicV2.artworkWidthRatio
+        // 迷你位缩放比（对应 RN `miniArtworkScale = miniArtworkSize / mainArtworkSize`）
+        let miniScale = AppleMusicV2.Compact.artworkSize / artworkSize
+        // 封面「视觉圆角」按缩放插值：大封面 24 → 小封面 12（对应 RN `albumArtRoundStyle`）
+        let artworkShapeRadius = AppleMusicV2.ArtworkRadius.shapeRadius(forScale: coverScale,
+                                                                      miniScale: miniScale)
 
         return VStack(spacing: 0) {
             // `styles.artworkWrapper { alignItems: center, marginTop: 40 }`
             ZStack {
-                artworkImage(size: artworkSize)
+                artworkImage(size: artworkSize, shapeRadius: artworkShapeRadius)
                     // transform 顺序：translate 在前、scale 在后 —— scale 最后施加，
                     // translate 是绝对像素位移、不被缩放比例折算（与参考源码一致）
                     .offset(coverOffset)
                     .scaleEffect(coverScale)
-                    // 动态圆角：`borderRadius: 24 / max(coverScaleAnim, 0.1)`，缩放时保持视觉圆角一致
-                    .clipShape(RoundedRectangle(cornerRadius: AppleMusicV2.artworkCornerRadius / max(coverScale, 0.1),
-                                                style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: artworkShapeRadius, style: .continuous))
                     .shadow(color: .black.opacity(AppleMusicV2.artworkShadowOpacity * coverScale),
                             radius: AppleMusicV2.artworkShadowRadius * coverScale,
                             y: AppleMusicV2.artworkShadowY * coverScale)
@@ -288,7 +291,7 @@ struct AppleMusicPlayerView: View {
     }
 
     @ViewBuilder
-    private func artworkImage(size: CGFloat) -> some View {
+    private func artworkImage(size: CGFloat, shapeRadius: CGFloat) -> some View {
         ZStack {
             CoverImage(
                 url: coverURL,
@@ -301,8 +304,7 @@ struct AppleMusicPlayerView: View {
             if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
                 DynamicCoverPlayer(url: dynamicURL)
                     .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: AppleMusicV2.artworkCornerRadius / max(coverScale, 0.1),
-                                                style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: shapeRadius, style: .continuous))
                     .transition(.opacity)
             }
         }
