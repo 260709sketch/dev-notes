@@ -72,6 +72,43 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("歌词背景") {
+                    Picker("渲染方式", selection: $settings.amllBackgroundMode) {
+                        ForEach(AMLLBackgroundMode.allCases) { mode in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mode.displayName)
+                                Text(mode.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .tag(mode)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    Text("流动背景会根据专辑封面取色生成缓慢流动的光斑。「模糊」档在其上叠加高斯模糊，观感更柔和，也更省电。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    // 只有真正会渲染流动层时才需要画质档位
+                    if settings.amllBackgroundMode == .blurFlow || settings.amllBackgroundMode == .flowing {
+                        Picker("渲染质量", selection: $settings.amllBackgroundQuality) {
+                            ForEach(AMLLBackgroundQuality.allCases) { quality in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(quality.displayName)
+                                    Text(quality.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .tag(quality)
+                            }
+                        }
+                        .pickerStyle(.navigationLink)
+                        Text("流动背景是覆盖全屏的 GPU 着色器，档位直接作用于渲染器的帧率与渲染分辨率。老机型或低电量时建议选「省电」。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("关于") {
                     HStack {
                         Text("版本")

@@ -47,6 +47,13 @@ struct AMLLWebLyricsView: View {
     /// 是否使用 Apple Music 独立的 AMLL 设置（和沉浸模式v2分开）
     var useAppleMusicSettings: Bool = false
 
+    /// 是否允许这一层渲染 AMLL 背景（流动光斑 / 模糊底）。
+    ///
+    /// 同一个播放页里 AMLL 只会挂一次背景：竖屏时由 `playerBackground`
+    /// 里那一层负责，横屏时由右侧分栏那一层负责。另一处必须传 `false`，
+    /// 否则会渲染两份全屏 GPU 背景，既互相打架又浪费性能。
+    var rendersBackground: Bool = true
+
     /// 硬校准触发器：每 +1 表示「播放位置被外力改写了（拖动结束 / 跳转），请立刻校准歌词页时钟」。
     ///
     /// 参考 RN 版的 `seekCommand = { seq, time }`：用**自增序号 + 目标时间**表达一次离散事件。
@@ -76,6 +83,16 @@ struct AMLLWebLyricsView: View {
         useAppleMusicSettings ? settings.appleMusicAmllFontWeight : settings.amllFontWeight
     }
 
+    /// 当前专辑的标识，喂给 AMLL 流动背景做取色。
+    ///
+    /// 官方 `setAlbum(id)` 期望的是 **AMLL 专辑 id**，它会用这个 id 去
+    /// 它自己的接口取专辑封面再取色。我们这里拿不到那个 id，于是改为
+    /// 交给页面直接用封面图 URL（见 `AMLLBridge.setAlbumImage`）。
+    /// 这里返回的是封面图地址，作为图片源传给页面。
+    private var currentAlbumID: String? {
+        player.currentTrack?.album.picUrl
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
@@ -86,7 +103,10 @@ struct AMLLWebLyricsView: View {
                 fontSize: currentFontSize,
                 fontWeight: currentFontWeight,
                 calibrationSeq: calibrationSeq,
-                calibrationTime: calibrationTime
+                calibrationTime: calibrationTime,
+                backgroundMode: rendersBackground ? settings.amllBackgroundMode : .off,
+                backgroundQuality: settings.amllBackgroundQuality,
+                albumID: currentAlbumID
             )
             .frame(width: width, height: geometry.size.height)
             .mask(
@@ -161,6 +181,12 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     /// 硬校准事件的自增序号与目标时间，见 `AMLLWebLyricsView.calibrationSeq`。
     let calibrationSeq: Int
     let calibrationTime: TimeInterval
+    /// AMLL 背景渲染方式（流动 / 模糊流动 / 静态 / 关闭）。
+    let backgroundMode: AMLLBackgroundMode
+    /// 背景渲染质量档位（帧率 + 分辨率倍率）。
+    let backgroundQuality: AMLLBackgroundQuality
+    /// 封面图 URL，供页面用它取色生成流动背景。
+    let albumID: String?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -184,6 +210,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         web.scrollView.bounces = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
         context.coordinator.attach(web)
+        // 注意：这里加载的是 `AMLLLyricsPage.html`——由官方 `AMLLLyrics.html`
+        // 注入兼容层生成（见 build_amll_page.py）。它与官方同源，因此保留了
+        // 流动背景渲染器（`Fu`），同时把 `window.amll` 包装成本项目在用的
+        // `window.AMLLBridge`（含硬校准硬通道）。
         if let url = Bundle.main.url(forResource: "AMLLLyricsPage", withExtension: "html") {
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
@@ -212,7 +242,9 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     func updateUIView(_ web: WKWebView, context: Context) {
         context.coordinator.update(lyrics: lyrics, showsTranslation: showsTranslation, showsRomaji: showsRomaji,
                                    fontSize: fontSize, fontWeight: fontWeight,
-                                   calibrationSeq: calibrationSeq, calibrationTime: calibrationTime)
+                                   calibrationSeq: calibrationSeq, calibrationTime: calibrationTime,
+                                   backgroundMode: backgroundMode, backgroundQuality: backgroundQuality,
+                                   albumID: albumID)
     }
 
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
@@ -295,7 +327,13 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         func update(lyrics: ParsedLyrics, showsTranslation: Bool, showsRomaji: Bool, fontSize: CGFloat, fontWeight: Int,
-                    calibrationSeq: Int, calibrationTime: TimeInterval) {
+                    calibrationSeq: Int, calibrationTime: TimeInterval,
+                    backgroundMode: AMLLBackgroundMode, backgroundQuality: AMLLBackgroundQuality,
+                    albumID: String?) {
+            // 背景设置优先处理：它和歌词签名无关，且切换背景时应当**立刻**生效，
+            // 不必等下一次歌词刷新。
+            applyBackground(mode: backgroundMode, quality: backgroundQuality, albumID: albumID)
+
             // 硬校准事件优先于歌词加载处理：它与歌词签名无关，且必须在本次 SwiftUI 更新里
             // 立刻下发，否则要等下一次 update 才生效（期间歌词已经跑偏）。
             if lastCalibrationSeq != calibrationSeq {
@@ -349,6 +387,74 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         private var flushWork: DispatchWorkItem?
+
+        // MARK: - 背景渲染
+
+        /// 上一次真正下发过的背景配置。
+        ///
+        /// `updateUIView` 在一次歌曲加载里会跑很多遍，背景配置绝大多数时候不变；
+        /// 不做去重的话会反复下发 JS、反复重建 CSS 自定义属性，白白触发合成层重绘。
+        private var appliedBackground: (mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality)?
+        private var appliedAlbumImage: String?
+
+        /// 「最新意图」——即使页面还没就绪也先记下来，等 `ready` 后重放。
+        private var desiredBackground: (mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality)?
+        private var desiredAlbumImage: String?
+
+        /// 按用户选择的模式驱动页面背景。
+        private func applyBackground(mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality, albumID: String?) {
+            // 无论页面是否就绪都先记录意图，`ready` 回调里会重放。
+            desiredBackground = (mode, quality)
+            desiredAlbumImage = albumID
+
+            guard ready else { return }
+
+            let qualityChanged = appliedBackground?.quality != quality
+            let modeChanged = appliedBackground?.mode != mode
+            let albumChanged = appliedAlbumImage != albumID
+
+            // 三者都没变：什么都不做（这是绝大多数 update 的情况）。
+            guard qualityChanged || modeChanged || albumChanged else { return }
+            appliedBackground = (mode, quality)
+            appliedAlbumImage = albumID
+
+            var commands: [String] = []
+
+            if modeChanged {
+                // 模式切换：页面侧负责隐藏/显示 #bg、设置模糊与不透明度。
+                commands.append("AMLLBridge.setBackgroundMode('\(mode.bridgeValue)')")
+            } else if qualityChanged {
+                // 只调了画质：模糊半径跟着模式走，需要重申一次。
+                commands.append("AMLLBridge.setBackgroundMode('\(mode.bridgeValue)')")
+            }
+
+            if qualityChanged {
+                // 画质档位：帧率与渲染分辨率。
+                //
+                // ⚠️ 官方页没有把渲染器的 `setFPS` / `setRenderScale` 挂到
+                // `window.amll` 上，因此在页面里被桥接为「尽力而为」：
+                // 真正生效的是我们注入层里的 `setBackgroundFPS/RenderScale`，
+                // 它们记录数值并在可用的通道上应用。低档位确实能省电，
+                // 因为背景层在模糊模式下本身就以低分辨率合成。
+                commands.append("AMLLBridge.setBackgroundFPS(\(quality.fps))")
+                commands.append("AMLLBridge.setBackgroundRenderScale(\(quality.renderScale))")
+            }
+
+            if albumChanged, let albumID, !albumID.isEmpty {
+                // 用封面直链取色。官方 setAlbum(id) 需要 AMLL 自己的专辑 id，
+                // 我们拿不到，所以走图片通道。
+                commands.append("AMLLBridge.setAlbumImage('\(escaped(albumID))')")
+            }
+
+            guard !commands.isEmpty else { return }
+            run(commands.joined(separator: "; "))
+        }
+
+        /// 单引号字符串转义，避免 URL 里的引号截断 JS。
+        private func escaped(_ value: String) -> String {
+            value.replacingOccurrences(of: "\\", with: "\\\\")
+                 .replacingOccurrences(of: "'", with: "\\'")
+        }
         /// Whether the lines on the page are real lyrics (not the empty placeholder between two songs).
         private var loadedHasContent = false
 
@@ -494,18 +600,43 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+            guard let body = message.body as? [String: Any] else { return }
+            // 官方页用 `{name: "ready", data: {...}}`；注入层沿用同一约定。
+            // 旧版页面用的是 `{type: ...}`，两种都接住，避免切换页面时静默失联。
+            let type = (body["name"] as? String) ?? (body["type"] as? String)
+            guard let type else { return }
+            // 官方把负载放在 `data` 里；旧版是平铺在顶层。统一取出来。
+            let payload = (body["data"] as? [String: Any]) ?? body
+
             switch type {
             case "ready":
                 ready = true
                 flushWork?.cancel()
                 applyFontWeight(fontWeight)
+                // 页面刚就绪：把背景配置重放一次。
+                // `updateUIView` 里那次下发会因为 `ready == false` 被挡掉，
+                // 不去重放的话，用户改过的背景设置要等下一次 update 才生效。
+                appliedBackground = nil
+                appliedAlbumImage = nil
+                replayBackground()
                 flushPending()
             case "fps":
-                let fps = (body["fps"] as? NSNumber)?.intValue ?? 0
+                let fps = (payload["fps"] as? NSNumber)?.intValue ?? 0
                 print("[AMLL] 歌词页实测帧率: \(fps) fps（屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz）")
+            case "bgTuning":
+                // 注入层在页面就绪后回报：是否成功截获到官方流动背景渲染器，
+                // 以及当前生效的帧率 / 分辨率档位。
+                //
+                // 这一条很有用：官方页把渲染器藏在模块作用域里，我们只能靠
+                // `Function.prototype.bind` 的 hook 去截获。若某天官方改版让
+                // hook 失灵，这里会打印 gotRenderer=false，性能档位就退化为
+                // 无效——有这行日志能立刻定位，而不是等用户反馈「设置没反应」。
+                let got = (payload["gotRenderer"] as? Bool) ?? ((payload["gotRenderer"] as? NSNumber)?.boolValue ?? false)
+                let fps = (payload["fps"] as? NSNumber)?.intValue ?? 0
+                let scale = (payload["scale"] as? NSNumber)?.doubleValue ?? 0
+                print("[AMLL] 背景渲染器接入: \(got ? "成功" : "失败")，\(fps) fps · \(scale)x 渲染分辨率")
             case "seek":
-                guard let milliseconds = (body["time"] as? NSNumber)?.doubleValue else { return }
+                guard let milliseconds = (payload["time"] as? NSNumber)?.doubleValue else { return }
                 // The page works in lyric time (clock + offset): undo the offset to get the playback position.
                 let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
                 let target = max(0, milliseconds / 1000 - offset)
@@ -516,6 +647,14 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        /// 页面就绪后重放背景配置。
+        ///
+        /// 需要保存一份「最新意图」，因为 `ready` 回调只能拿到当时的值。
+        private func replayBackground() {
+            guard let pending = desiredBackground else { return }
+            applyBackground(mode: pending.mode, quality: pending.quality, albumID: desiredAlbumImage)
         }
 
         /// The lyric lines in AMLL's `LyricLine` shape, as a JavaScript string literal holding the JSON.

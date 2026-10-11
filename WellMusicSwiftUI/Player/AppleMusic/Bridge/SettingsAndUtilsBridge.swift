@@ -9,6 +9,118 @@ enum LyricsAnnotation: String, Codable {
     case romaji
 }
 
+// MARK: - AMLLBackgroundMode
+/// AMLL 歌词页的背景渲染方式。
+///
+/// 流动背景由官方 AMLL 页面里的渲染器（`Fu`）绘制：它从专辑封面取色，
+/// 生成持续流动的渐变光斑。这里给用户四档选择，在观感与耗电之间自行取舍。
+enum AMLLBackgroundMode: String, Codable, CaseIterable, Identifiable {
+    /// 流动背景 + 高斯模糊（推荐）：光斑柔和，GPU 开销可控
+    case blurFlow
+    /// 流动背景：官方原始观感，光斑清晰锐利
+    case flowing
+    /// 静态背景：完全不渲染流动层，最省电；只留 SwiftUI 底图
+    case still
+    /// 不使用 AMLL 背景：完全交给 SwiftUI 的模糊封面
+    case off
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .blurFlow: return "流动背景（模糊）"
+        case .flowing: return "流动背景"
+        case .still: return "静态背景"
+        case .off: return "不使用（跟随播放器）"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .blurFlow: return "专辑取色流动光斑，叠加高斯模糊，观感柔和、功耗适中"
+        case .flowing: return "专辑取色流动光斑，官方原版观感，GPU 占用最高"
+        case .still: return "关闭流动渲染，纯底色 + 歌词，最省电"
+        case .off: return "背景完全由播放器的模糊封面提供"
+        }
+    }
+
+    /// 对应的页面端模式名。
+    var bridgeValue: String {
+        switch self {
+        case .blurFlow: return "blurOnly"
+        case .flowing: return "flowing"
+        case .still: return "still"
+        case .off: return "off"
+        }
+    }
+
+    /// 高斯模糊半径（px）。只有 `blurFlow` 需要。
+    var blurRadius: Double {
+        switch self {
+        case .blurFlow: return 28
+        case .flowing, .still, .off: return 0
+        }
+    }
+
+    /// 背景层不透明度。
+    var layerOpacity: Double {
+        switch self {
+        case .blurFlow: return 0.72
+        case .flowing: return 1.0
+        case .still, .off: return 0
+        }
+    }
+}
+
+// MARK: - AMLLBackgroundQuality
+/// AMLL 流动背景的渲染质量档位。
+///
+/// 流动背景是 GPU 密集的：它是全屏 GPU 着色器，每帧都要重绘整块背景。
+/// 官方默认 `setFPS(40)` + `setRenderScale(0.5)`，本身已经做过一次折中。
+/// 这里把它做成用户可调的三档，让低电量 / 老机型可以再降一档。
+enum AMLLBackgroundQuality: String, Codable, CaseIterable, Identifiable {
+    /// 省电：30 fps + 0.4 倍分辨率
+    case power
+    /// 均衡：40 fps + 0.5 倍分辨率（官方默认）
+    case balanced
+    /// 观感优先：60 fps + 0.75 倍分辨率
+    case high
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .power: return "省电"
+        case .balanced: return "均衡"
+        case .high: return "高画质"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .power: return "30 帧 · 0.4x 渲染分辨率，最省电"
+        case .balanced: return "40 帧 · 0.5x 渲染分辨率，官方默认"
+        case .high: return "60 帧 · 0.75x 渲染分辨率，最流畅但更耗电"
+        }
+    }
+
+    var fps: Int {
+        switch self {
+        case .power: return 30
+        case .balanced: return 40
+        case .high: return 60
+        }
+    }
+
+    var renderScale: Double {
+        switch self {
+        case .power: return 0.4
+        case .balanced: return 0.5
+        case .high: return 0.75
+        }
+    }
+}
+
 // MARK: - AppleMusicBackgroundMode
 enum AppleMusicBackgroundMode: String, Codable, CaseIterable {
     case gradient
@@ -129,6 +241,13 @@ final class SettingsManager: ObservableObject {
 
     /// 是否使用 AMLL 逐字歌词渲染（Apple Music 播放器）
     @AppStorage("wellmusic.appleMusic.useAMLL") var appleMusicUseAMLL: Bool = true
+
+    /// AMLL 歌词页的背景渲染方式（流动 / 模糊流动 / 静态 / 关闭）
+    @AppStorage("wellmusic.amll.backgroundMode") var amllBackgroundMode: AMLLBackgroundMode = .blurFlow
+
+    /// AMLL 流动背景的渲染质量：帧率与分辨率倍率。
+    /// 越低越省电；`high` 用于观感优先。
+    @AppStorage("wellmusic.amll.backgroundQuality") var amllBackgroundQuality: AMLLBackgroundQuality = .balanced
 
     @AppStorage("wellmusic.appleMusic.controlsHeight") var appleMusicControlsHeight: Double = 1.0
 

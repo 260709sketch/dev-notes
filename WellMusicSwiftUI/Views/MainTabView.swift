@@ -249,18 +249,6 @@ struct MiniPlayerView: View {
             Capsule().strokeBorder(.white.opacity(colorScheme == .dark ? 0.08 : 0.22), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 12, y: 4)
-        // 底部进度细线
-        .overlay(alignment: .bottom) {
-            GeometryReader { geo in
-                Capsule()
-                    .fill(AppTheme.accent)
-                    .frame(width: geo.size.width * min(player.duration > 0 ? player.currentTime / player.duration : 0, 1), height: 2)
-            }
-            .frame(height: 2)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 3)
-        }
     }
 }
 

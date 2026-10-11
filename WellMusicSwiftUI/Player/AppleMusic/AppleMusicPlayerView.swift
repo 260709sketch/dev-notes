@@ -283,9 +283,13 @@ struct AppleMusicPlayerView: View {
                 coverPage(size: size)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .opacity(showLyrics ? 0 : 1)
+                    // ⚠️ 关键：`.opacity(0)` 的视图**依然接收点击**。不加这行，
+                    // 未展开的歌词页会盖在封面页上吃掉所有点击（表现为「什么都点不了」）。
+                    .allowsHitTesting(!showLyrics)
                 lyricsPage
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .opacity(showLyrics ? 1 : 0)
+                    .allowsHitTesting(showLyrics)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // 封面插值动画：在两个占位锚点之间移动同一个 CoverImage
@@ -486,8 +490,12 @@ struct AppleMusicPlayerView: View {
 
             // 右侧：AMLL 歌词（如果开启了 AMLL）或普通歌词
             if settings.appleMusicUseAMLL {
-                // AMLL 歌词：继续使用 WellMusicSwiftUI 自身的 AMLLWebLyricsView
-                AMLLWebLyricsView(useAppleMusicSettings: true)
+                // AMLL 歌词：继续使用 WellMusicSwiftUI 自身的 AMLLWebLyricsView。
+                //
+                // ⚠️ 横屏这里只负责「右侧歌词」这一栏，背景交给 `playerBackground`
+                // 那一层统一渲染（`rendersBackground: false`）。同一个播放页里
+                // AMLL 只能挂一次背景，否则会同时跑两份全屏 GPU 着色器。
+                AMLLWebLyricsView(useAppleMusicSettings: true, rendersBackground: false)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
                     .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
@@ -566,10 +574,17 @@ struct AppleMusicPlayerView: View {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
 
-            // 模糊封面背景（AMLL 和非 AMLL 模式都有）
-            CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
-                .ignoresSafeArea()
+            // 模糊封面背景。
+            //
+            // ⚠️ 当 AMLL 背景自己会渲染流动层时（flowing / blurFlow），
+            // 这里必须让位：否则 SwiftUI 的模糊封面 + 页面里的模糊流动层
+            // 会叠成两层模糊，背景糊成一团，且白白多一次全屏高斯模糊的
+            // 合成开销。此时底层只留纯色，背景完全交给 AMLL。
+            if !amllOwnsBackground {
+                CoverBlurBackground(url: coverURL, scheme: colorScheme)
+                    .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
+                    .ignoresSafeArea()
+            }
 
             // AMLL 歌词只在展开歌词页时显示，大封面状态隐藏
             if settings.appleMusicUseAMLL && showLyrics {
@@ -579,6 +594,19 @@ struct AppleMusicPlayerView: View {
                     .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
                     .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
             }
+        }
+    }
+
+    /// AMLL 是否接管背景渲染。
+    ///
+    /// 只有在「AMLL 开启 + 歌词页展开 + 用户选了流动类背景」时成立。
+    /// 其余情况（关闭 AMLL、还没进歌词页、选了静态/关闭）都退回
+    /// SwiftUI 的模糊封面，保证大封面页始终有背景可看。
+    private var amllOwnsBackground: Bool {
+        guard settings.appleMusicUseAMLL, showLyrics else { return false }
+        switch settings.amllBackgroundMode {
+        case .flowing, .blurFlow: return true
+        case .still, .off: return false
         }
     }
 
@@ -689,6 +717,29 @@ struct AppleMusicPlayerView: View {
 
     // MARK: - 歌词页
 
+    /// 歌词页顶部横条的下滑关闭手势。
+    ///
+    /// 始终返回同一类型的 `some Gesture`（不能返回 `Optional<Gesture>`），
+    /// 是否启用交给 `.gesture(_:including:)` 决定。
+    private var headerDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard showLyrics else { return }
+                if value.translation.height > 0 {
+                    headerDragOffset = value.translation.height * 0.5
+                }
+            }
+            .onEnded { value in
+                guard showLyrics else { return }
+                if value.translation.height > 80 {
+                    onDismiss()
+                }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    headerDragOffset = 0
+                }
+            }
+    }
+
     private var lyricsPage: some View {
         VStack(spacing: 0) {
             // 顶部小横条区域：只有在这里下滑才能关闭播放器（透明不可见）
@@ -701,23 +752,11 @@ struct AppleMusicPlayerView: View {
             .frame(height: ScreenAdapter.h(30))
             .contentShape(Rectangle())
             .offset(y: showLyrics ? headerDragOffset : 0)
-            .gesture(
-                showLyrics ? DragGesture(minimumDistance: 10)
-                    .onChanged { value in
-                        if value.translation.height > 0 {
-                            headerDragOffset = value.translation.height * 0.5
-                        }
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 80 {
-                            onDismiss()
-                        }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            headerDragOffset = 0
-                        }
-                    }
-                : nil
-            )
+            // ⚠️ 不要写 `showLyrics ? DragGesture… : nil`：`nil` 无法参与
+            // `Gesture` 推断，`showLyrics == false` 时会在附件手势那一刻
+            // 解包失败直接崩溃。改为永远附加同一个手势，用 `including`
+            // 在未展开歌词页时把它禁掉。
+            .gesture(headerDismissGesture, including: showLyrics ? .allGesture : .subviews)
 
             lyricsHeader
                 .padding(.horizontal, ScreenAdapter.w(24))

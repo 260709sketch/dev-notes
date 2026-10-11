@@ -9,7 +9,13 @@ targets:
     type: application
     platform: iOS
     sources:
-      - WellMusicSwiftUI
+      # 整目录 glob：目录下任何非源码文件都会被打成资源。
+      # `Resources/AMLLLyrics.html` 是生成 `AMLLLyricsPage.html` 的**官方原始副本**
+      # （见 build_amll_page.py），运行时只会加载注入后的 Page 版本，
+      # 把它排除掉可以省下约 456 KB 的包体。
+      - path: WellMusicSwiftUI
+        excludes:
+          - "Resources/AMLLLyrics.html"
     info:
       path: WellMusicSwiftUI/Supporting/Info.plist
       properties:

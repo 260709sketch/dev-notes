@@ -31,37 +31,21 @@ final class OrientationManager {
     /// 当前是否允许横屏（仅播放页为 true）。
     private(set) var allowsLandscape = false
 
-    /// 切换横屏许可。会立即请求系统重算支持方向。
+    /// 切换横屏许可。
+    ///
+    /// **只改掩码，不主动催旋转**。原因：`fullScreenCover` 的 `onAppear` 触发时
+    /// 演示转场动画还在进行中，此刻调用 `requestGeometryUpdate` /
+    /// `setNeedsUpdateOfSupportedInterfaceOrientations` 会让 UIKit 在动画中途
+    /// 重算方向并重建层级，实测直接崩溃。
+    ///
+    /// 交给系统在转场结束后自己查询 `supportedInterfaceOrientationsFor` 即可：
+    /// 用户把手机转成横屏时，播放页就会按新掩码进入横屏布局。
     func allowLandscape(_ allowed: Bool) {
         guard allowsLandscape != allowed else { return }
         allowsLandscape = allowed
         OrientationSnapshot.mask = allowed
             ? [.portrait, .landscapeLeft, .landscapeRight]
             : .portrait
-        requestGeometryUpdate()
-    }
-
-    /// 通知系统重新查询支持方向。
-    ///
-    /// iOS 16 起用 `setNeedsUpdateOfSupportedInterfaceOrientations()`；同时用
-    /// `requestGeometryUpdate` 主动催一次，让旋转立刻发生，而不是要等用户
-    /// 再转一次手机才生效。
-    private func requestGeometryUpdate() {
-        guard let scene = Self.activeWindowScene else { return }
-        let prefs = UIWindowScene.GeometryPreferences.iOS(
-            interfaceOrientations: OrientationSnapshot.mask
-        )
-        scene.requestGeometryUpdate(prefs)
-
-        for window in scene.windows {
-            window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        }
-    }
-
-    private static var activeWindowScene: UIWindowScene? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
     }
 }
 
