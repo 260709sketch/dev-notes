@@ -707,3 +707,195 @@ final class DynamicCoverManager: ObservableObject {
         coverURL = nil
     }
 }
+
+// MARK: - 歌词偏移精细调节
+
+/// 歌词偏移弹窗（对应参考源码 `lyricOffset` 面板）。
+///
+/// 语义与播放器 `moreMenu` 里的「歌词时间微调」保持一致：
+/// - 正值 = 歌词高亮**提前**（歌声还没到，歌词已高亮）
+/// - 负值 = 歌词高亮**推迟**
+///
+/// 写入两个位置：
+/// - `appState.lyricOffset`：驱动非 AMLL 歌词页与 `LyricTiming` 的实时高亮
+/// - `settings.lyricOffset`：驱动 AMLL Web 歌词页（读 `wellmusic.lyricOffset`）
+///
+/// 范围 ±5 秒、步进 0.1 秒（滑块连续、按钮微调）。
+struct LyricOffsetSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var settings: SettingsManager
+
+    @Environment(\.dismiss) private var dismiss
+
+    /// 下限 / 上限 / 最小步进（秒）
+    private static let range: ClosedRange<Double> = -5.0...5.0
+    private static let step: Double = 0.1
+
+    /// 本地草稿值：拖动过程中不反复写 UserDefaults，松手才落盘
+    @State private var draft: Double = 0
+    @State private var didLoad = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                valueDisplay
+
+                slider
+
+                presetRow
+
+                fineTuneRow
+
+                Text("正值表示歌词提前，负值表示歌词推迟。\n用于校准蓝牙耳机等设备的输出延迟。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("歌词偏移")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        apply(draft)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            draft = clamped(appState.lyricOffset)
+        }
+    }
+
+    // MARK: - 子视图
+
+    /// 当前值：大字 + 方向说明
+    private var valueDisplay: some View {
+        VStack(spacing: 6) {
+            Text(formatted(draft))
+                .font(.system(size: 44, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+
+            Text(directionText(draft))
+                .font(.system(size: 14))
+                .foregroundStyle(draft == 0 ? Color.secondary : Color.accentColor)
+        }
+        .padding(.top, 8)
+    }
+
+    private var slider: some View {
+        VStack(spacing: 8) {
+            Slider(
+                value: Binding(
+                    get: { draft },
+                    set: { draft = clamped($0) }
+                ),
+                in: Self.range,
+                step: Self.step,
+                onEditingChanged: { editing in
+                    // 松手时落盘，拖动中只改草稿
+                    if !editing { apply(draft) }
+                }
+            )
+            .tint(.accentColor)
+            .padding(.horizontal, 24)
+
+            HStack {
+                Text("-5.0s")
+                Spacer()
+                Text("0")
+                Spacer()
+                Text("+5.0s")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 28)
+        }
+    }
+
+    /// 常用预设（与播放器菜单里的档位一致）
+    private var presetRow: some View {
+        HStack(spacing: 8) {
+            ForEach([-1.0, -0.5, 0, 0.5, 1.0], id: \.self) { value in
+                Button {
+                    draft = value
+                    apply(value)
+                } label: {
+                    Text(value == 0 ? "复位" : formatted(value))
+                        .font(.system(size: 13, weight: .medium))
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Swift.abs(draft - value) < 0.01
+                                      ? Color.accentColor.opacity(0.18)
+                                      : Color(uiColor: .secondarySystemGroupedBackground))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// 微调：-0.1 / +0.1
+    private var fineTuneRow: some View {
+        HStack(spacing: 16) {
+            fineButton(systemName: "minus", delta: -Self.step, label: "减少 0.1 秒")
+            fineButton(systemName: "plus", delta: Self.step, label: "增加 0.1 秒")
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func fineButton(systemName: String, delta: Double, label: String) -> some View {
+        Button {
+            let next = clamped(draft + delta)
+            draft = next
+            apply(next)
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: - 逻辑
+
+    /// 双写：AppState 驱动原生歌词页，SettingsManager 驱动 AMLL 网页歌词
+    private func apply(_ value: Double) {
+        let next = clamped(value)
+        appState.lyricOffset = next
+        settings.lyricOffset = next
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        // 对齐到 0.1 秒，避免浮点误差累积
+        let rounded = (value * 10).rounded() / 10
+        return min(max(rounded, Self.range.lowerBound), Self.range.upperBound)
+    }
+
+    private func formatted(_ value: Double) -> String {
+        String(format: "%+.1f s", value)
+    }
+
+    private func directionText(_ value: Double) -> String {
+        if value == 0 { return "无偏移" }
+        return value > 0 ? "歌词提前" : "歌词推迟"
+    }
+}
