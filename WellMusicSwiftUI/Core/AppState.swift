@@ -12,35 +12,22 @@ final class AppState: ObservableObject {
 
     // MARK: 设置项（持久化）
 
-    /// 歌词来源：auto/qq/netease/kugou/kuwo
-    @Published var lyricSource: MusicSource {
-        didSet { defaults.set(lyricSource.rawValue, forKey: "music.lyricSource") }
-    }
-
-    /// 是否启用逐字歌词（karaoke）
-    @Published var karaokeEnabled: Bool {
-        didSet { defaults.set(karaokeEnabled, forKey: "lyric.karaokeEnabled") }
-    }
-
     /// 歌词同步偏移（秒）：正值=高亮提前，负值=高亮延后
-    /// 用于校准歌词与歌声的残余偏差（耳机/扬声器输出延迟等）
+    /// 用于校准歌词与歌声的残余偏差（耳机/扬声器输出延迟等）。
+    /// 设置页已移除，改由播放器界面的「歌词偏移」菜单调节。
     @Published var lyricOffset: TimeInterval {
         didSet { defaults.set(lyricOffset, forKey: "lyric.offset") }
     }
 
     /// 播放模式：0 列表循环 / 1 单曲循环 / 2 随机
+    /// 设置页已移除，改由播放器界面的「播放模式」菜单调节。
     @Published var playMode: Int {
         didSet { defaults.set(playMode, forKey: "player.playMode") }
     }
 
-    /// 高音质优先（无损）
-    @Published var highQuality: Bool {
-        didSet { defaults.set(highQuality, forKey: "player.highQuality") }
-    }
-
-    /// 录音式逐字播放（原 lyric.karaoke 衍生选项）
-    @Published var crossfade: Bool {
-        didSet { defaults.set(crossfade, forKey: "player.crossfade") }
+    /// 音质档位（取代原「高音质优先（无损）」布尔开关）
+    @Published var audioQuality: WellAudioQuality {
+        didSet { defaults.set(audioQuality.rawValue, forKey: "player.audioQuality") }
     }
 
     // MARK: 运行态（可持久化的收藏/历史/歌单）
@@ -74,18 +61,19 @@ final class AppState: ObservableObject {
     @Published var currentWordLyric: [WordLyricLine] = []
 
     private init() {
-        let src = defaults.string(forKey: "music.lyricSource") ?? "auto"
-        lyricSource = MusicSource(rawValue: src) ?? .auto
-        karaokeEnabled = defaults.object(forKey: "lyric.karaokeEnabled") == nil
-            ? true : defaults.bool(forKey: "lyric.karaokeEnabled")
         lyricOffset = defaults.object(forKey: "lyric.offset") == nil
             ? 0 : defaults.double(forKey: "lyric.offset")
         playMode = defaults.object(forKey: "player.playMode") == nil
             ? 0 : defaults.integer(forKey: "player.playMode")
-        highQuality = defaults.object(forKey: "player.highQuality") == nil
-            ? true : defaults.bool(forKey: "player.highQuality")
-        crossfade = defaults.object(forKey: "player.crossfade") == nil
-            ? false : defaults.bool(forKey: "player.crossfade")
+        // 音质：新键优先；旧安装若开过高音质开关，迁移成「较高」档，否则标准档
+        if let raw = defaults.object(forKey: "player.audioQuality") as? Int,
+           let quality = WellAudioQuality(rawValue: raw) {
+            audioQuality = quality
+        } else if defaults.bool(forKey: "player.highQuality") {
+            audioQuality = .high
+        } else {
+            audioQuality = .standard
+        }
 
         favoriteTracks = loadJSON([MusicItem].self, key: "favorites.tracks") ?? []
         favoritePlaylists = loadJSON([RemotePlaylist].self, key: "favorites.playlists") ?? []
@@ -124,11 +112,5 @@ final class AppState: ObservableObject {
         playHistory.removeAll { MusicItem.isSame($0, track) }
         playHistory.insert(track, at: 0)
         if playHistory.count > 500 { playHistory = Array(playHistory.prefix(500)) }
-    }
-
-    // MARK: 歌词来源切换（原「下一首歌生效」语义统一由取词时读取本值）
-
-    func setLyricSource(_ source: MusicSource) {
-        lyricSource = source
     }
 }

@@ -151,13 +151,15 @@ final class KugouMusicAPI {
 
     // MARK: - 播放地址（play/getdata）
 
-    func resolvePlayURL(item: MusicItem, highQuality: Bool) async throws -> String {
+    func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let hash = item.kugouHash ?? item.platformId else {
             throw NetworkClient.NetworkError.noData
         }
         let ts = Int(Date().timeIntervalSince1970 * 1000)
+        // `quality` 让服务端返回对应码率的 play_url（128/320/flac/high）
         let url = "https://wwwapi.kugou.com/yy/index.php?" +
-            "r=play/getdata&hash=\(hash)&album_id=&mid=\(UUID().uuidString.lowercased())&platid=4&_=\(ts)"
+            "r=play/getdata&hash=\(hash)&album_id=&mid=\(UUID().uuidString.lowercased())&platid=4" +
+            "&quality=\(quality.kugouBitrate)&_=\(ts)"
         let resp = try await NetworkClient.shared.get(url, headers: headers)
         guard let json = NetworkClient.jsonObject(resp.data),
               let data = json["data"] as? [String: Any],

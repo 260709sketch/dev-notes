@@ -127,7 +127,7 @@ enum WellLXPlaybackHeaders {
 
 /// 自定义音源（LX 脚本）仓库：负责导入、持久化、激活、测试与取链日志。
 ///
-/// 与播放层的契约：`resolvePlayback(for:highQuality:)` 返回可直接播放的地址 + 请求头，
+/// 与播放层的契约：`resolvePlayback(for:quality:)` 返回可直接播放的地址 + 请求头，
 /// 调用方（`MusicURLResolver`）在解析失败时回退到官方平台通道，保证「听歌」不被阻断。
 @MainActor
 final class WellLXSourceStore: ObservableObject {
@@ -401,12 +401,12 @@ final class WellLXSourceStore: ObservableObject {
     // MARK: 播放解析
 
     /// 用自定义音源解析播放地址；全部音源失败时返回 nil，由调用方回退官方通道。
-    func resolvePlayback(for item: MusicItem, highQuality: Bool) async -> WellLXPlayback? {
+    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async -> WellLXPlayback? {
         guard hasActiveSource else { return nil }
         await waitUntilReady()
         guard let active = activeSource else { return nil }
 
-        let targetQuality = highQuality ? "flac" : "128k"
+        let targetQuality = quality.lxQuality
         var order: [WellLXSourceInfo] = [active]
         order.append(contentsOf: sources.filter { $0.id != active.id })
 

@@ -314,8 +314,8 @@ enum WellLXProtocol {
 
     // MARK: 音质映射
 
-    /// 应用内 highQuality 布尔 → lx 音质字符串
-    static func quality(highQuality: Bool) -> String {
-        highQuality ? "flac" : "128k"
+    /// 应用内音质档位 → lx 音质字符串
+    static func quality(_ quality: WellAudioQuality) -> String {
+        quality.lxQuality
     }
 }

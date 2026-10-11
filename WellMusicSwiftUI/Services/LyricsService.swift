@@ -19,25 +19,14 @@ final class LyricsService {
 
     // MARK: 对外入口
 
-    /// 为当前歌曲拉取歌词（按 AppState.lyricSource 优先）
-    /// - 若指定来源失败，回退到其余平台兜底
+    /// 为当前歌曲拉取歌词：固定按「网易云 → QQ → 酷狗 → 酷我」顺序取，命中即返回。
+    /// - 歌词来源已在设置页移除，统一用这条内置优先级链
     /// - 同 key 命中缓存时直接返回，避免听同一首时重复请求
     func lyrics(for item: MusicItem) async -> LyricResult? {
         let key = item.keyOf
         if let cached = cache[key] { return cached }
 
-        let preferred = AppState.shared.lyricSource
-        let fallbacks: [MusicSource] = {
-            switch preferred {
-            case .auto: return [.netease, .qq, .kugou, .kuwo]
-            default:
-                var list = [preferred]
-                for s in [MusicSource.qq, .netease, .kugou, .kuwo] where s != preferred {
-                    list.append(s)
-                }
-                return list
-            }
-        }()
+        let fallbacks: [MusicSource] = [.netease, .qq, .kugou, .kuwo]
 
         for source in fallbacks {
             if let result = await fetchFrom(source, item: item), !result.lrc.isEmpty {
@@ -87,8 +76,8 @@ final class LyricsService {
         let lrc = LyricParser.parseLRC(lrcText)
         if lrc.isEmpty { return nil }
         var word: [WordLyricLine]?
-        if AppState.shared.karaokeEnabled,
-           let yrcText = json["yrc"] as? String, !yrcText.isEmpty {
+        // 逐字歌词（卡拉OK）固定开启：有 YRC 就用，没有则退回逐行 LRC
+        if let yrcText = json["yrc"] as? String, !yrcText.isEmpty {
             word = LyricParser.parseYRC(yrcText)
         }
         return LyricResult(lrc: lrc, wordLyric: word, source: .qq)
@@ -109,8 +98,8 @@ final class LyricsService {
             LyricParser.mergeTranslation(&lrc, translation: tlyric)
         }
         var word: [WordLyricLine]?
-        if AppState.shared.karaokeEnabled,
-           let yrcText = (json["yrc"] as? [String: Any])?["lyric"] as? String,
+        // 逐字歌词（卡拉OK）固定开启：有 YRC 就用，没有则退回逐行 LRC
+        if let yrcText = (json["yrc"] as? [String: Any])?["lyric"] as? String,
            !yrcText.isEmpty {
             word = LyricParser.parseYRC(yrcText)
         }

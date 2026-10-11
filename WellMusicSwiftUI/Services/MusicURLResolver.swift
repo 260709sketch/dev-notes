@@ -17,7 +17,7 @@ final class MusicURLResolver {
     /// 解析播放信息（含请求头）。
     /// 顺序：本地文件 → 已缓存地址 → 自定义音源（激活时）→ 官方平台通道。
     /// 自定义音源取链失败会自动回退官方通道，保证仍能听歌。
-    func resolvePlayback(for item: MusicItem, highQuality: Bool) async throws -> ResolvedPlayback {
+    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
         if let local = item.localFilePath, !local.isEmpty {
             return ResolvedPlayback(url: URL(fileURLWithPath: local).absoluteString,
                                     headers: [:], fromCustomSource: nil, isFallbackSource: false)
@@ -34,19 +34,19 @@ final class MusicURLResolver {
         }
         let hasActiveLXSource = await WellLXSourceStore.shared.hasActiveSource
         if hasActiveLXSource,
-           let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, highQuality: highQuality) {
+           let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) {
             return ResolvedPlayback(url: lx.url,
                                     headers: lx.headers,
                                     fromCustomSource: lx.sourceName,
                                     isFallbackSource: lx.isFallback)
         }
-        let url = try await PlatformSongResolver.shared.resolve(item: item, highQuality: highQuality)
+        let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
         return ResolvedPlayback(url: url, headers: [:], fromCustomSource: nil, isFallbackSource: false)
     }
 
     /// 兼容旧签名：仅返回地址。
-    func resolvePlayURL(for item: MusicItem, highQuality: Bool) async throws -> String {
-        try await resolvePlayback(for: item, highQuality: highQuality).url
+    func resolvePlayURL(for item: MusicItem, quality: WellAudioQuality) async throws -> String {
+        try await resolvePlayback(for: item, quality: quality).url
     }
 }
 
@@ -54,21 +54,21 @@ final class MusicURLResolver {
 final class PlatformSongResolver {
     static let shared = PlatformSongResolver()
 
-    func resolve(item: MusicItem, highQuality: Bool) async throws -> String {
+    func resolve(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         var url = ""
         switch item.source {
         case .qq:
-            url = try await QQMusicAPI.shared.resolvePlayURL(item: item, highQuality: highQuality)
+            url = try await QQMusicAPI.shared.resolvePlayURL(item: item, quality: quality)
         case .netease:
-            url = try await NeteaseMusicAPI.shared.resolvePlayURL(item: item, highQuality: highQuality)
+            url = try await NeteaseMusicAPI.shared.resolvePlayURL(item: item, quality: quality)
         case .kugou:
-            url = try await KugouMusicAPI.shared.resolvePlayURL(item: item, highQuality: highQuality)
+            url = try await KugouMusicAPI.shared.resolvePlayURL(item: item, quality: quality)
         case .kuwo:
-            url = try await KuwoMusicAPI.shared.resolvePlayURL(item: item, highQuality: highQuality)
+            url = try await KuwoMusicAPI.shared.resolvePlayURL(item: item, quality: quality)
         case .lx:
             // 自定义音源条目：还原成底层平台条目后按平台解析
             let unwrapped = item.unwrappedFromCustomSource()
-            url = try await resolve(item: unwrapped, highQuality: highQuality)
+            url = try await resolve(item: unwrapped, quality: quality)
         case .auto:
             // 自动：按来源依次尝试（网易云优先，与歌词来源逻辑一致）
             var lastError: Error = MusicURLResolverError.notResolved(.auto)
@@ -76,7 +76,7 @@ final class PlatformSongResolver {
                 var candidate = item
                 candidate.source = src
                 do {
-                    url = try await resolve(item: candidate, highQuality: highQuality)
+                    url = try await resolve(item: candidate, quality: quality)
                     if !url.isEmpty { return url }
                 } catch {
                     lastError = error

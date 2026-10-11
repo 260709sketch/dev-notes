@@ -57,6 +57,8 @@ struct AppleMusicPlayerView: View {
 
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
+    /// 播放模式 / 歌词偏移等已迁到播放器菜单，需要观察 AppState 才能让勾选状态刷新
+    @ObservedObject private var appState = AppState.shared
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var account = AccountStore.shared
     @ObservedObject private var clock = PlayerService.shared.clock
@@ -64,11 +66,14 @@ struct AppleMusicPlayerView: View {
 
     @State private var showLyrics = false
     @State private var headerDragOffset: CGFloat = 0
+    /// 整页下滑关闭的跟手位移（负数=向上，不跟手；只跟正向位移）
+    @State private var dismissDragOffset: CGFloat = 0
+    /// 一次连续下拉手势里各子视图的累计位移，用来区分「下拉关闭」和「歌词上下滚动」
+    @State private var dismissGestureActive = false
     @State private var showQueue = false
     @State private var showComments = false
     @State private var showAddToPlaylist = false
     @State private var showLyricOffsetSheet = false
-    @State private var showPlayerModeSheet = false
     @State private var showVolumePopover = false
     @State private var layoutMode = false
     @State private var appleLayoutPart: AppleMusicLayoutPart = .cover
@@ -126,6 +131,8 @@ struct AppleMusicPlayerView: View {
                 // 竖屏布局：原有布局
                 portraitLayout(size: screenSize)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: dismissDragOffset)
+                    .ignoresSafeArea()
             }
         }
         .ignoresSafeArea()
@@ -173,9 +180,6 @@ struct AppleMusicPlayerView: View {
                 AddToPlaylistSheet(track: t)
             }
         }
-        .sheet(isPresented: $showPlayerModeSheet) {
-            PlayerModeSheet()
-        }
         .sheet(isPresented: $showLyricOffsetSheet) {
             LyricOffsetSheet()
         }
@@ -212,14 +216,28 @@ struct AppleMusicPlayerView: View {
 
             Divider()
 
-            // 播放器选择
-            Button {
-                showPlayerModeSheet = true
+            // 播放模式（自设置页迁移到播放器界面）
+            Menu {
+                Button {
+                    AppState.shared.playMode = 0
+                } label: {
+                    modeMenuLabel("列表循环", selected: AppState.shared.playMode == 0)
+                }
+                Button {
+                    AppState.shared.playMode = 1
+                } label: {
+                    modeMenuLabel("单曲循环", selected: AppState.shared.playMode == 1)
+                }
+                Button {
+                    AppState.shared.playMode = 2
+                } label: {
+                    modeMenuLabel("随机播放", selected: AppState.shared.playMode == 2)
+                }
             } label: {
-                Label("播放器样式", systemImage: "music.note.tv")
+                Label("播放模式", systemImage: "repeat")
             }
 
-            // 歌词偏移
+            // 歌词偏移（自设置页迁移到播放器界面）
             Button {
                 showLyricOffsetSheet = true
             } label: {
@@ -309,6 +327,16 @@ struct AppleMusicPlayerView: View {
         }
     }
 
+    /// 播放模式菜单项：选中项带勾
+    @ViewBuilder
+    private func modeMenuLabel(_ title: String, selected: Bool) -> some View {
+        if selected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
+        }
+    }
+
     private var playbackModeText: String {
         if player.shuffleEnabled { return "随机播放" }
         switch player.repeatMode {
@@ -316,6 +344,56 @@ struct AppleMusicPlayerView: View {
         case .all: return "列表循环"
         case .off: return "顺序播放"
         }
+    }
+
+    // MARK: - 整页下滑关闭
+
+    /// 下拉关闭手势。
+    ///
+    /// 之前只有歌词页顶部一个 30pt 高的透明条绑定了下滑手势，且要求 `showLyrics == true`，
+    /// 于是大封面页完全无法下滑关闭，用户只能卡在播放器里。这里改成整页跟手：
+    /// - 只接管「纵向 + 向下」的拉拽，位移超过 10pt 且纵向比横向明显时才启动，避免抢走
+    ///   歌词区的左右滑动 / 进度条拖动；
+    /// - 跟手位移带阻尼（0.45），松手时超过屏高 18% 即关闭，否则弹回；
+    /// - 关闭时先用 0.28s 把页面推下去再调 onDismiss，避免露出生硬的转场。
+    private func swipeToDismissGesture(screenHeight: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                let dy = value.translation.height
+                let dx = value.translation.width
+                // 与歌词滚动 / 进度条拖动的边界：只在明显纵向下拉时接管
+                if !dismissGestureActive {
+                    guard dy > 10, abs(dy) > abs(dx) * 1.2 else { return }
+                    dismissGestureActive = true
+                }
+                // 只跟正向位移，向上拉不跟手（阻尼 0.45）
+                let offset = max(0, dy) * 0.45
+                dismissDragOffset = offset
+                headerDragOffset = offset
+            }
+            .onEnded { value in
+                guard dismissGestureActive else { return }
+                dismissGestureActive = false
+                let shouldDismiss = value.translation.height > screenHeight * 0.18
+                    || value.predictedEndTranslation.height > screenHeight * 0.35
+                if shouldDismiss {
+                    withAnimation(.easeIn(duration: 0.28)) {
+                        dismissDragOffset = screenHeight
+                        headerDragOffset = screenHeight
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                        onDismiss()
+                        // 复位，供下次进入时使用（fullScreenCover 关闭后视图会销毁，这里兜底）
+                        dismissDragOffset = 0
+                        headerDragOffset = 0
+                    }
+                } else {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        dismissDragOffset = 0
+                        headerDragOffset = 0
+                    }
+                }
+            }
     }
 
     // MARK: - 竖屏布局
@@ -328,6 +406,9 @@ struct AppleMusicPlayerView: View {
                 coverPage(size: size)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .opacity(showLyrics ? 0 : 1)
+                    // 大封面页没有内部滚动视图，可以整页接管下滑关闭（网易云同款手感）
+                    .contentShape(Rectangle())
+                    .gesture(showLyrics ? nil : swipeToDismissGesture(screenHeight: size.height))
                 lyricsPage
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .opacity(showLyrics ? 1 : 0)
@@ -718,38 +799,25 @@ struct AppleMusicPlayerView: View {
 
     private var lyricsPage: some View {
         VStack(spacing: 0) {
-            // 顶部小横条区域：只有在这里下滑才能关闭播放器（透明不可见）
-            ZStack {
-                Color.clear
+            // 歌词页顶部下拉区：覆盖「横条 + 歌曲信息头」，下滑即关闭播放器。
+            // 之前这块只有 30pt 高，手指很难命中；现在把歌曲信息头一起并入热区，
+            // 但真正的歌词滚动区不受影响（手势只挂在这一段上）。
+            VStack(spacing: 0) {
+                // 顶部小横条（视觉上不可见，仅作抓取提示）
                 Capsule()
                     .fill(.clear)
                     .frame(width: 36, height: 5)
+                    .padding(.top, ScreenAdapter.h(10))
+                    .padding(.bottom, ScreenAdapter.h(8))
+
+                lyricsHeader
+                    .padding(.horizontal, ScreenAdapter.w(24))
+                    .padding(.top, ScreenAdapter.h(52))
+                    .padding(.bottom, ScreenAdapter.h(10))
             }
-            .frame(height: ScreenAdapter.h(30))
             .contentShape(Rectangle())
             .offset(y: showLyrics ? headerDragOffset : 0)
-            .gesture(
-                showLyrics ? DragGesture(minimumDistance: 10)
-                    .onChanged { value in
-                        if value.translation.height > 0 {
-                            headerDragOffset = value.translation.height * 0.5
-                        }
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 80 {
-                            onDismiss()
-                        }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            headerDragOffset = 0
-                        }
-                    }
-                : nil
-            )
-
-            lyricsHeader
-                .padding(.horizontal, ScreenAdapter.w(24))
-                .padding(.top, ScreenAdapter.h(85))
-                .padding(.bottom, ScreenAdapter.h(10))
+            .gesture(showLyrics ? swipeToDismissGesture(screenHeight: UIScreen.main.bounds.height) : nil)
 
             if settings.appleMusicUseAMLL {
                 // AMLL已在底层渲染歌词，这里只保留头部，剩余空间透明
@@ -1628,50 +1696,6 @@ private struct Triangle: Shape {
             path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
             path.closeSubpath()
         }
-    }
-}
-
-// MARK: - 播放器样式选择 Sheet
-
-struct PlayerModeSheet: View {
-    @EnvironmentObject private var settings: SettingsManager
-    @Environment(\.dismiss) private var dismiss
-
-    // 可用的播放器模式（已排除停用的经典模式）
-    private let availableModes: [NowPlayingMode] = [.appleMusic, .immersive, .immersiveV2, .vinyl, .minimal]
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(availableModes) { mode in
-                    Button {
-                        dismiss()
-                        // 延迟切换模式，确保 sheet 先关闭再重建播放器视图
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            settings.nowPlayingMode = mode
-                        }
-                    } label: {
-                        HStack {
-                            Text(mode.displayName)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if settings.nowPlayingMode == mode {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("播放器样式")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
-        }
-        .presentationDetentsSafe()
     }
 }
 

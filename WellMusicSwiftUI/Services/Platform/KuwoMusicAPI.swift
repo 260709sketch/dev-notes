@@ -83,12 +83,12 @@ final class KuwoMusicAPI {
 
     // MARK: 播放地址（playUrl 接口）
 
-    func resolvePlayURL(item: MusicItem, highQuality: Bool) async throws -> String {
+    func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let rid = item.kuwoRid ?? item.platformId else {
             throw NetworkClient.NetworkError.noData
         }
         let url = "https://www.kuwo.cn/api/v1/www/music/playUrl?" +
-            "mid=\(rid)&type=music&httpsStatus=1"
+            "mid=\(rid)&type=music&httpsStatus=1&br=\(quality.kuwoBr)"
         let resp = try await NetworkClient.shared.get(url, headers: await kuwoHeaders())
         guard let json = NetworkClient.jsonObject(resp.data),
               let data = json["data"] as? [String: Any],

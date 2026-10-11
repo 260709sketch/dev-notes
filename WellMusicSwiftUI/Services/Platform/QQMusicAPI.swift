@@ -241,15 +241,16 @@ final class QQMusicAPI {
     /// 返回的 vkey 为空 → 播放器拿不到地址）。改用官方仍在用的
     /// `vkey.GetVkeyServer / CgiGetVkey`，一次请求直接返回 `purl`（含 vkey 的完整路径）。
     ///
-    /// - Parameter highQuality: true 取 320K MP3（M800），false 取 128K MP3（M500）
-    func resolvePlayURL(item: MusicItem, highQuality: Bool) async throws -> String {
+    /// - Parameter quality: 音质档位 → filename 前缀（M500 128k / M800 320k / F000 无损 / RS01 Hi-Res）
+    func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let mid = item.qqSongMid ?? item.platformId else {
             throw NetworkClient.NetworkError.noData
         }
         // media_mid 优先（部分歌曲的音频文件名用 media_mid 而非 songmid）
         let mediaMid = (item.qqMediaMid?.isEmpty == false ? item.qqMediaMid : nil) ?? mid
-        let prefix = highQuality ? "M800" : "M500"
-        let filename = "\(prefix)\(mediaMid).mp3"
+        // 无损档位是 FLAC，扩展名必须跟着变，否则服务端按 mp3 容器找不到文件
+        let ext = quality.rawValue >= WellAudioQuality.lossless.rawValue ? "flac" : "mp3"
+        let filename = "\(quality.qqFilePrefix)\(mediaMid).\(ext)"
         let guid = "10000"
 
         // 该接口的 data 为 JSON 字符串，需先拼好再整体 URL 编码进 query。

@@ -270,16 +270,16 @@ final class NeteaseMusicAPI {
         return (resp.hotSongs ?? []).compactMap(Self.mapSong)
     }
 
-    // MARK: 播放地址（weapi 音质：exhigh 无损 / standard 标准）
+    // MARK: 播放地址（weapi 音质：standard/higher/exhigh/lossless/hires）
 
-    func resolvePlayURL(item: MusicItem, highQuality: Bool) async throws -> String {
+    func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let id = item.neteaseId ?? item.platformId else {
             throw NetworkClient.NetworkError.noData
         }
         let params: [String: Any] = [
             "ids": "[\(id)]",
-            "level": highQuality ? "exhigh" : "standard",
-            "encodeType": "mp3",
+            "level": quality.neteaseLevel,
+            "encodeType": "flac",
             "csrf_token": "",
         ]
         let resp: URLResponse = try await NeteaseCrypto.weapi(

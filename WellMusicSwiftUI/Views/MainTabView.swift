@@ -17,10 +17,10 @@ struct MainTabView: View {
 
     @ViewBuilder
     private var tabInterface: some View {
-        // iOS 26 + 默认底部栏 = 原生 TabView（系统自动液态玻璃，性能好）
-        // iOS 26 + 液态玻璃 = 自定义 WellGlassTabBar
-        // iOS 16-25 = 自定义底部栏（WellTabBar 或 WellGlassTabBar）
-        if #available(iOS 26.0, *), settings.tabBarStyle == .default {
+        // iOS 26 起一律用系统原生 TabView（系统渲染液态玻璃，性能与观感均为最佳），
+        // 不再提供「第三方液态玻璃」选项——自研 shader 效果不如系统原生。
+        // iOS 16-25 无原生液态玻璃，退回自绘毛玻璃胶囊栏 WellTabBar。
+        if #available(iOS 26.0, *) {
             iOS26TabInterface
         } else {
             customTabInterface
@@ -84,11 +84,8 @@ struct MainTabView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                if settings.tabBarStyle == .liquidGlass {
-                    WellGlassTabBar(items: Self.liquidTabItems, selection: $selectedTab) { _ in }
-                } else {
-                    WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
-                }
+                // iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏
+                WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
             }
             .padding(.bottom, 6)
             .id("well.bottomDock")
@@ -109,13 +106,6 @@ struct MainTabView: View {
 
 extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
-        .init(tab: .radio, title: "发现", icon: "house"),
-        .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
-        .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
-        .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
-    ]
-
-    static let liquidTabItems: [WellGlassTabBar.Item] = [
         .init(tab: .radio, title: "发现", icon: "house"),
         .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
@@ -147,22 +137,17 @@ struct WellToastView: View {
     }
 }
 
-/// 播放页路由：根据设置中的 nowPlayingMode 选择 Apple Music 播放器或原版播放页
+/// 播放页路由：当前只保留 Apple Music 播放器（其余播放器样式已下线）
 struct NowPlayingRouterView: View {
-    @EnvironmentObject private var settings: SettingsManager
     let onDismiss: () -> Void
 
     var body: some View {
-        if settings.nowPlayingMode == .appleMusic {
-            AppleMusicPlayerView(
-                onOpenDestination: { _ in
-                    // 目标页（歌手/专辑）在后续迭代接入
-                },
-                onDismiss: onDismiss
-            )
-        } else {
-            NowPlayingView()
-        }
+        AppleMusicPlayerView(
+            onOpenDestination: { _ in
+                // 目标页（歌手/专辑）在后续迭代接入
+            },
+            onDismiss: onDismiss
+        )
     }
 }
 
@@ -252,12 +237,8 @@ struct MiniPlayerView: View {
         }
         .frame(height: capsuleHeight)
         .background {
-            // 与底栏一致：iOS 26 原生液态玻璃 / 旧版毛玻璃
-            if settings.tabBarStyle == .liquidGlass {
-                WellGlassBackground(config: settings.liquidGlassConfig, contentScaleFactor: 0.3, isPaused: false)
-            } else {
-                Capsule().fill(.regularMaterial)
-            }
+            // 与底栏一致：旧版无系统液态玻璃，用毛玻璃胶囊
+            Capsule().fill(.regularMaterial)
         }
         .clipShape(Capsule())
         .overlay {

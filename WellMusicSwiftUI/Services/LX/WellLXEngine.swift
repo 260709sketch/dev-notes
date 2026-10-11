@@ -253,9 +253,9 @@ final class WellLXEngine {
         }
     }
 
-    /// 应用内 highQuality 布尔 → lx 音质字符串
-    func lxQuality(from highQuality: Bool) -> String {
-        highQuality ? "flac" : "128k"
+    /// 应用内音质档位 → lx 音质字符串
+    func lxQuality(from quality: WellAudioQuality) -> String {
+        quality.lxQuality
     }
 
     /// MusicItem → lx 音源脚本期望的 musicInfo 标准格式（参照 kumone `toOldMusicInfo`）。

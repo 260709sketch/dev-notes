@@ -95,7 +95,7 @@ final class PlayerCore: NSObject, ObservableObject {
         Task {
             do {
                 let resolved = try await MusicURLResolver.shared.resolvePlayback(
-                    for: item, highQuality: AppState.shared.highQuality)
+                    for: item, quality: AppState.shared.audioQuality)
                 guard let url = URL(string: resolved.url) else {
                     isLoading = false
                     return
