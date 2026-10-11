@@ -80,6 +80,9 @@ final class SettingsManager: ObservableObject {
 
     // MARK: - Apple Music 专属
 
+    /// 是否使用 AMLL 逐字歌词渲染（Apple Music 播放器）
+    @AppStorage("wellmusic.appleMusic.useAMLL") var appleMusicUseAMLL: Bool = true
+
     @AppStorage("wellmusic.appleMusic.controlsHeight") var appleMusicControlsHeight: Double = 1.0
 
     /// AMLL 字体大小（Apple Music 模式下）
