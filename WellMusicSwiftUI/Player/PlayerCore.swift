@@ -51,6 +51,17 @@ final class PlayerCore: NSObject, ObservableObject {
         isScrubbing ? scrubTime : currentTime
     }
 
+    /// 播放器的**即时**真实位置，直接向 AVPlayer 查询（不经 `currentTime` 的轮询缓存）。
+    ///
+    /// 用途：歌词时钟的硬校准锚点（见 `PlayerService.precisePlaybackTime`）。
+    /// `currentTime` 由周期回调更新，在无损 / Hi-Res 大文件上回调间隔会明显拉长，
+    /// 松手瞬间可能滞后上百毫秒；而 `AVPlayer.currentTime()` 是同步即时值。
+    /// 未加载曲目时回落到 0，避免 NaN 传进歌词页。
+    var playerPosition: TimeInterval {
+        let seconds = player.currentTime().seconds
+        return seconds.isFinite ? max(0, seconds) : 0
+    }
+
     /// 逐字歌词高亮最重视刷新率，波形/卡拉OK 用分数秒驱动
     private var preferredTimescale: CMTimeScale { 600 }
 

@@ -157,6 +157,20 @@ final class PlayerService: ObservableObject {
         PlayerCore.shared.displayTime
     }
 
+    /// 歌词时钟专用的**精确**锚点。
+    ///
+    /// 与 `livePlaybackTime`（= `displayTime`）的关键区别：
+    /// `displayTime` 在拖动结束后会**乐观地**立刻返回 `currentTime`，而 `currentTime` 是
+    /// 「上一次 AVPlayer 周期回调报告的位置」——无损 / Hi-Res 文件上该回调间隔明显拉长，
+    /// 于是松手瞬间 `displayTime` 可能比播放器真实位置**滞后上百毫秒**。
+    ///
+    /// 拖动时滞后无关紧要（时间由 `scrubTime` 提供）；但松手后的硬校准锚点必须精确，
+    /// 否则 AMLL 会以这个滞后值为起点重新外推，一路偏移下去。
+    /// 所以这里直接读 `player.currentTime()`（同步、即时、不经过 0.1s 轮询缓存）。
+    var precisePlaybackTime: TimeInterval {
+        PlayerCore.shared.playerPosition
+    }
+
     private var cancellables = Set<AnyCancellable>()
     private var coreCancellable: AnyCancellable?
     private var lastTrackKeyOf: String?
