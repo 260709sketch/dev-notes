@@ -213,7 +213,7 @@ final class AMLLClockCalibrationTests: XCTestCase {
     /// 同值去重阈值必须**远小于**推送周期（100ms），否则正常的播放推进会被误吞。
     func testDedupeThresholdIsWellBelowPushInterval() {
         let pushIntervalMs = 100.0
-        XCTAssertLessThan(AMLLClockPolicy.dedupeThresholdMs, pushIntervalMs / 4,
+        XCTAssertLessThan(Double(AMLLClockPolicy.dedupeThresholdMs), pushIntervalMs / 4,
                           "去重阈值过大就会把正常的播放推进也吞掉，歌词变卡")
         XCTAssertGreaterThan(AMLLClockPolicy.dedupeThresholdMs, 0,
                              "阈值为 0 等于不去重，白白唤醒 WebKit")
@@ -223,7 +223,7 @@ final class AMLLClockCalibrationTests: XCTestCase {
     /// 页面收到 running=false 就停住（这正是缺口 B）。
     func testMovementThresholdIsSmallerThanPushInterval() {
         let pushIntervalMs = 100.0
-        XCTAssertLessThan(AMLLClockPolicy.movementThresholdMs, pushIntervalMs,
+        XCTAssertLessThan(Double(AMLLClockPolicy.movementThresholdMs), pushIntervalMs,
                           "移动阈值大于推送周期会让页面被误判为暂停")
         XCTAssertGreaterThanOrEqual(AMLLClockPolicy.movementThresholdMs,
                                     AMLLClockPolicy.dedupeThresholdMs,
@@ -239,7 +239,7 @@ final class AMLLClockCalibrationTests: XCTestCase {
     /// 校准阈值必须**远小于** sync 的 600ms 门槛：校准的目的就是在 sync 管不到的
     /// 亚秒区间里把误差清零，若阈值定到接近 600ms 就失去意义。
     func testCalibrationThresholdCoversTheGapSyncLeaves() {
-        XCTAssertLessThan(AMLLClockPolicy.calibrationThresholdMs, 600,
+        XCTAssertLessThan(Double(AMLLClockPolicy.calibrationThresholdMs), 600.0,
                           "校准阈值必须落在 sync 的门槛之内，否则补的正是它管不到的那一段")
         // 也必须真正能覆盖无损拖动后的典型残差量级（数十毫秒）。
         XCTAssertLessThanOrEqual(AMLLClockPolicy.calibrationThresholdMs, 100)
