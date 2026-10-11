@@ -87,9 +87,11 @@ struct AppleMusicPlayerView: View {
             backgroundLayer
 
             content(screenSize: screenSize)
-                // 顶部让出安全区 + `styles.artworkWrapper.marginTop: 40`，与 enterCompactMode 的
-                // `coverInitY = top + 16 + 40 + artworkSize / 2` 保持一致。
-                .padding(.top, Self.safeAreaTopInset + AppleMusicV2.Compact.coverInitTopBase)
+                // 顶部只让出安全区 + `content { paddingTop: top + 16 }`。
+                // ⚠️ `artworkWrapper.marginTop: 40` **不能**并进这里：参考源码里它是
+                // upperArea 内部的间距，并进来的话 upperArea 的原点会上移 40pt，
+                // compact 歌曲信息行的绝对定位会整体错位（见 artworkAndInfo 内的实现）。
+                .padding(.top, Self.safeAreaTopInset + AppleMusicV2.Compact.contentTopInset)
                 .offset(y: dismissDragOffset)
                 .overlay(alignment: .top) {
                     Capsule(style: .continuous)
@@ -158,14 +160,17 @@ struct AppleMusicPlayerView: View {
             }
         }
         // compact 歌曲信息行：与小封面垂直居中、绝对定位在封面右侧（对应 RN `position: 'absolute'`）
+        //
+        // 参考源码：
+        //   top: miniArtworkSize / 2 - 18        ← 相对 upperArea
+        //   upperArea 顶部屏幕 Y = top + 16      ← content 的 paddingTop（不含 40，40 在 upperArea 内）
+        // 本 overlay 挂在加过水平/底部 padding 的 VStack 上、且外层已 `.padding(.top, top + 16)`，
+        // 坐标原点即屏幕 Y = top + 16，因此这里的 padding 就是 RN 的 `top` 值本身。
         .overlay(alignment: .topLeading) {
             if compactSongInfo {
                 songInfoRow(miniArtworkSize: AppleMusicV2.Compact.artworkSize)
                     .padding(.horizontal, AppleMusicV2.contentPadding)
-                    .padding(.top, Self.safeAreaTopInset
-                             + AppleMusicV2.Compact.topOffset
-                             + AppleMusicV2.Compact.artworkSize / 2
-                             - AppleMusicV2.Title.compactTopAnchor)
+                    .padding(.top, AppleMusicV2.Compact.artworkSize / 2 - AppleMusicV2.Title.compactTopAnchor)
             }
         }
     }
@@ -275,6 +280,10 @@ struct AppleMusicPlayerView: View {
             }
             .frame(height: artworkSize)
             .frame(maxWidth: .infinity)
+            // `styles.artworkWrapper { marginTop: 40 }`：在 upperArea **内部**让出 40pt。
+            // 封面中心 Y = top + 16（content paddingTop）+ 40 + artworkSize/2，
+            // 与 enterCompactMode 的 coverInitY 一致。
+            .padding(.top, AppleMusicV2.Compact.artworkWrapperMarginTop)
 
             // `songInfoRowSpacer { flex: 1 }` ×2：让信息行在大封面与进度条之间垂直居中
             Spacer(minLength: 0)
@@ -317,9 +326,16 @@ struct AppleMusicPlayerView: View {
     /// - compact 态：由调用方放进 `.overlay(alignment: .topLeading)` 做绝对定位，
     ///   左侧让出 `miniArtworkSize + 8`，整行水平铺满、两端对齐。
     private func songInfoRow(miniArtworkSize: CGFloat) -> some View {
-        HStack(spacing: 0) {
+        // `songInfoLeft.maxWidth`：compact 68% / 歌词页 58% / 主播放页 72%（按屏宽，不是写死 pt）
+        let leftRatio: CGFloat = compactSongInfo
+            ? AppleMusicV2.Title.LeftWidthRatio.compact
+            : (showLyrics ? AppleMusicV2.Title.LeftWidthRatio.lyrics
+                          : AppleMusicV2.Title.LeftWidthRatio.normal)
+        let leftMaxWidth = UIScreen.main.bounds.width * leftRatio
+
+        return HStack(spacing: 0) {
             songInfoLeft
-                .frame(maxWidth: showLyrics ? 205 : 260, alignment: .leading)
+                .frame(maxWidth: leftMaxWidth, alignment: .leading)
                 .padding(.trailing, AppleMusicV2.Title.leftPaddingRight)
 
             Spacer(minLength: 0)

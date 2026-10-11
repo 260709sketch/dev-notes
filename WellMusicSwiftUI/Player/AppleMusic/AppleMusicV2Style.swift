@@ -65,6 +65,14 @@ enum AppleMusicV2 {
         static let artworkSize: CGFloat = 80
         /// 封面初始中心 Y = top + 16 + 40 + W*0.43（见 enterCompactMode 注释）
         static let coverInitTopBase: CGFloat = 16 + 40
+        /// 内容区顶部的纯安全区留白：`content { paddingTop: top + 16 }`。
+        ///
+        /// ⚠️ 参考源码里 `artworkWrapper.marginTop: 40` 是 **upperArea 内部** 的间距，
+        /// 不属于 content 的 paddingTop。SwiftUI 侧必须保持同样的层级关系，
+        /// 否则 `upperArea` 的坐标原点会上移 40pt，令 compact 歌曲信息行的绝对定位整体偏移。
+        static let contentTopInset: CGFloat = 16
+        /// 封面容器上边距：`styles.artworkWrapper { marginTop: 40 }`（upperArea 内部）
+        static let artworkWrapperMarginTop: CGFloat = 40
     }
 
     /// `styles.topHomeIndicator`
@@ -99,6 +107,19 @@ enum AppleMusicV2 {
         static let headerIconPadding: CGFloat = 4
         static let headerIconMargin: CGFloat = 2
         static let headerIconSize: CGFloat = 24
+
+        /// `songInfoLeft.maxWidth` 三种状态的屏宽占比（严格照搬参考源码）：
+        /// - compact（歌词/队列/评论页）：`'68%'`
+        /// - 歌词页大封面态：`'58%'`
+        /// - 主播放页：`'72%'`
+        ///
+        /// 之前 Swift 写死成 205 / 260pt，在小屏（SE）上会溢出、在大屏（Pro Max）上会留白，
+        /// 必须按屏宽百分比换算。
+        enum LeftWidthRatio {
+            static let compact: CGFloat = 0.68
+            static let lyrics: CGFloat = 0.58
+            static let normal: CGFloat = 0.72
+        }
     }
 
     // MARK: 底部控制

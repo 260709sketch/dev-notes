@@ -35,6 +35,85 @@ final class AppleMusicV2StyleTests: XCTestCase {
         XCTAssertEqual(AppleMusicV2.miniArtworkCornerRadius, 12)
     }
 
+    // MARK: - 内容区层级（upperArea 起点必须与参考源码一致）
+
+    /// `content { paddingTop: top + 16 }` + `artworkWrapper { marginTop: 40 }`（后者在 upperArea 内）。
+    ///
+    /// 这两者**不能**合并进同一个 padding：参考源码里 40pt 属 upperArea 内部间距，
+    /// 合并会让 upperArea 的原点上移 40pt，compact 歌曲信息行的绝对定位整体错位。
+    func testContentTopInsetIsSeparateFromArtworkWrapperMargin() {
+        XCTAssertEqual(AppleMusicV2.Compact.contentTopInset, 16)
+        XCTAssertEqual(AppleMusicV2.Compact.artworkWrapperMarginTop, 40)
+        // 两者之和仍等于 coverInitTopBase —— 封面初始中心的算法不受影响
+        XCTAssertEqual(AppleMusicV2.Compact.contentTopInset + AppleMusicV2.Compact.artworkWrapperMarginTop,
+                       AppleMusicV2.Compact.coverInitTopBase)
+    }
+
+    /// 封面初始中心 Y：不论 40pt 挂在 content 还是 upperArea，结果都必须一致
+    /// （对应参考源码 `coverInitY = top + 16 + 40 + W*0.43`）。
+    func testArtworkInitialCenterIsInvariantToInsetLayering() {
+        let top: CGFloat = 59
+        let screenW: CGFloat = 393
+        let artworkSize = screenW * AppleMusicV2.artworkWidthRatio
+
+        // 参考源码：content paddingTop = top + 16，upperArea 内再让 40
+        let reference = top + AppleMusicV2.Compact.contentTopInset
+            + AppleMusicV2.Compact.artworkWrapperMarginTop
+            + artworkSize / 2
+
+        // Swift 侧 enterCompactMode 的写法
+        let swift = top + AppleMusicV2.Compact.coverInitTopBase + artworkSize / 2
+
+        XCTAssertEqual(reference, swift, accuracy: 0.0001)
+    }
+
+    /// compact 歌曲信息行的屏幕绝对 top。
+    ///
+    /// 参考源码（相对 upperArea）：`top = miniArtworkSize / 2 - 18`；
+    /// upperArea 顶部屏幕 Y = `top + 16`。
+    /// Swift 的 overlay 原点即 `top + 16`，所以 padding 就等于 `miniArtworkSize / 2 - 18`。
+    func testCompactSongInfoTopIsRelativeToUpperArea() {
+        let miniArtworkSize = AppleMusicV2.Compact.artworkSize      // 80
+        let anchor = AppleMusicV2.Title.compactTopAnchor            // 18
+
+        // Swift overlay 里应使用的 padding 值
+        let swiftPadding = miniArtworkSize / 2 - anchor
+        XCTAssertEqual(swiftPadding, 22)
+
+        // 屏幕绝对 top = (top + 16) + swiftPadding
+        let top: CGFloat = 59
+        let absoluteTop = top + AppleMusicV2.Compact.contentTopInset + swiftPadding
+        XCTAssertEqual(absoluteTop, 97)
+
+        // 反例护栏：若误把 40pt 也并进 content 的 paddingTop，
+        // 绝对 top 会变成 137（多出 40pt），正是本次修复的 bug。
+        let buggyTop = top + AppleMusicV2.Compact.coverInitTopBase + swiftPadding
+        XCTAssertEqual(buggyTop, 137)
+        XCTAssertNotEqual(buggyTop, absoluteTop)
+    }
+
+    /// `songInfoLeft.maxWidth` 三档屏宽占比（严格照搬参考源码的 68% / 58% / 72%）。
+    func testSongInfoLeftWidthRatiosMatchReference() {
+        XCTAssertEqual(AppleMusicV2.Title.LeftWidthRatio.compact, 0.68, accuracy: 0.0001)
+        XCTAssertEqual(AppleMusicV2.Title.LeftWidthRatio.lyrics, 0.58, accuracy: 0.0001)
+        XCTAssertEqual(AppleMusicV2.Title.LeftWidthRatio.normal, 0.72, accuracy: 0.0001)
+    }
+
+    /// 占比必须按屏宽换算，不能写死 pt —— 校验各机型都不会溢出可用宽度。
+    func testSongInfoLeftWidthFitsAcrossDeviceWidths() {
+        // 左让位 = miniArtworkSize + 8（compact 态），右侧再留 2
+        let leadingReserved = AppleMusicV2.Compact.artworkSize + AppleMusicV2.Title.compactLeftGap
+        let trailingReserved = AppleMusicV2.Title.compactRight
+
+        // iPhone SE(3rd) 375 / 14 Pro 393 / 16 Pro Max 440
+        for screenWidth in [CGFloat(375), 393, 440] {
+            let leftMax = screenWidth * AppleMusicV2.Title.LeftWidthRatio.compact
+            let available = screenWidth - leadingReserved - trailingReserved
+            XCTAssertLessThanOrEqual(leftMax, available,
+                                     "\(screenWidth)pt 屏：maxWidth \(leftMax) 超出可用宽度 \(available)")
+        }
+    }
+
     // MARK: - 封面动态圆角（对应 RN `albumArtRoundStyle`）
 
     /// 大封面：`sc = 1` → 视觉圆角 24，形状圆角也 24（不折算）。
