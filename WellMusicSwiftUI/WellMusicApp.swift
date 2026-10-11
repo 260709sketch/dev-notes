@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct WellMusicApp: App {
+    /// 接管屏幕方向：默认竖屏，仅全屏播放页允许横屏。
+    @UIApplicationDelegateAdaptor(WellMusicAppDelegate.self) private var appDelegate
+
     @StateObject private var appState = AppState.shared
     @StateObject private var playerCore = PlayerCore.shared
     @StateObject private var playerService = PlayerService.shared

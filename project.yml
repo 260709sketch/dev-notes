@@ -20,6 +20,8 @@ targets:
           NSAllowsArbitraryLoads: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIApplicationSupportsIndirectInputEvents: true
     settings:
       base:

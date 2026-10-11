@@ -148,6 +148,10 @@ struct NowPlayingRouterView: View {
             },
             onDismiss: onDismiss
         )
+        // 播放页是全屏 cover：出现时放开横屏（触发左右分栏布局），
+        // 消失时收回，保证主界面始终竖屏。
+        .onAppear { OrientationManager.shared.allowLandscape(true) }
+        .onDisappear { OrientationManager.shared.allowLandscape(false) }
     }
 }
 
