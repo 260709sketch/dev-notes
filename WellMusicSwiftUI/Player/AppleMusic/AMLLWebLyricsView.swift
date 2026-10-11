@@ -105,13 +105,14 @@ struct AMLLWebLyricsView: View {
         // 拖动**结束**时立刻硬校准。
         // `isScrubbing` 由 true → false 只发生在拖动收尾（或兜底超时），
         // 正是 RN 版 `emitSeek` 唯一的触发点；拖动过程中不触发，避免高频重置外推纪元。
-        .onChange(of: player.core.isScrubbing) { isScrubbing in
+        .onReceive(PlayerCore.shared.$isScrubbing.removeDuplicates()) { isScrubbing in
             guard !isScrubbing else { return }
             requestCalibration()
         }
         // 歌词行被点击时（页面 `line-click` → `PlayerService.seek`）同样需要硬校准。
-        .onChange(of: player.core.currentTime) { _ in
-            guard !player.core.isScrubbing else { return }
+        // 这里监听 `PlayerCore.currentTime`（`PlayerService` 上并没有暴露 `core`）。
+        .onReceive(PlayerCore.shared.$currentTime) { _ in
+            guard !PlayerCore.shared.isScrubbing else { return }
             requestCalibration()
         }
     }
