@@ -41,7 +41,7 @@ struct RadioView: View {
                 }
             }
         }
-        .navigationTitle("电台")
+        .navigationTitle("发现")
     }
 }
 

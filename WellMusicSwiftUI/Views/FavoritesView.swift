@@ -36,7 +36,7 @@ struct FavoritesView: View {
             }
             .listStyle(.plain)
         }
-        .navigationTitle("收藏")
+        .navigationTitle("音乐库")
     }
 
     @ViewBuilder
