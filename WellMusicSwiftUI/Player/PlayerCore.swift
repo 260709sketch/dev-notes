@@ -94,9 +94,10 @@ final class PlayerCore: NSObject, ObservableObject {
     /// seek 落地（音频真的从新位置开始推进）时广播。歌词页收到后做硬校准。
     static let seekDidLandNotification = Notification.Name("PlayerCore.seekDidLand")
 
-    /// 落地监测的兜底时长（秒）：正常落地只要 0.1~1s（缓冲空窗）；
-    /// 超过这个值视为信号丢失，放弃监测恢复常规时间源。
-    nonisolated static let seekLandingTimeoutSeconds: Double = 2.5
+    /// 落地监测的兜底时长（秒）：长距离 seek（重建解码器 + 大跨度重拉）缓冲空窗
+    /// 可能超过 2 秒，兜底要给足余量。正常情况下 `isRenderingAudio` 判据会在音频
+    /// 一开始渲染就放行，这个超时只是「周期观察者彻底失效」时的最后安全网。
+    nonisolated static let seekLandingTimeoutSeconds: Double = 8.0
 
     /// 逐字歌词高亮最重视刷新率，波形/卡拉OK 用分数秒驱动
     private var preferredTimescale: CMTimeScale { 600 }
@@ -354,6 +355,10 @@ final class PlayerCore: NSObject, ObservableObject {
         // 收尾这一次 seek 由下面统一发，先清掉连续 seek 的待补发目标
         // （否则它会和收尾 seek 抢，白跑一次）
         pendingSeekTarget = nil
+        // ★ 同时作废**正在飞**的那次连续 seek：长距离拖动沿途会发多个 seek，
+        //   松手瞬间很可能还有一个在飞，若不清掉，它会和收尾 seek 并发、
+        //   两个 seek 互相覆盖导致 AVPlayer 状态混乱（长拖特别容易踩到）。
+        seekInFlight = false
 
         // 1) 乐观更新：UI 立即对准目标位置
         currentTime = target
@@ -380,11 +385,11 @@ final class PlayerCore: NSObject, ObservableObject {
                 guard let self else { return }
                 self.scrubTimeoutItem?.cancel()
                 self.scrubTimeoutItem = nil
-                // 3) 校正：以播放器真实位置为准
-                if finished {
-                    self.currentTime = self.player.currentTime().seconds
-                }
                 self.isScrubbing = false
+                // ⚠️ 这里**不**再写 `currentTime = player.currentTime().seconds`：
+                // 长距离 seek 时回调返回的瞬间 `currentTime()` 可能已经跳到目标位置
+                // 的乐观值（音频还在缓冲），拿它当进度基准会污染歌词时钟。
+                // 真实位置由落地监测（周期观察者 + isRenderingAudio）统一裁决。
                 // 注意：这里**不**清 `seekLandingTarget` —— seek 回调返回只说明
                 // 「定位操作完成」，第一帧音频可能还没渲染出来。落地由周期观察者判定。
             }
@@ -404,7 +409,7 @@ final class PlayerCore: NSObject, ObservableObject {
                     toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.currentTime = self.player.currentTime().seconds
+                // 真实位置由落地监测统一裁决，不在这里用可能滞后的 currentTime() 覆盖
             }
         }
         currentTime = target
@@ -509,18 +514,35 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 周期观察者里调用：判定本次 seek 是否已落地。
     ///
-    /// ⚠️ 窗口必须**宽**（目标 −0.5s ~ +2.5s）：远端无损上 AVPlayer 不保证精确落在
-    /// 手指位置（容差满足不了时会就近落点），窗口太窄会导致「永远等不到落地」，
-    /// 页面时钟被冻结到 2.5s 超时 —— 实测表现就是「拖完歌词慢 1~2 秒」。
+    /// ## 为什么不用「固定时长窗口」判定（前两版的坑）
+    ///
+    /// 短距离 seek（几秒）缓冲空窗极短，几乎立刻落地 → 看起来「一直同步」。
+    /// 长距离 seek（例如从 1s 拖到 60s）AVPlayer 要**重建解码器 + 大跨度重拉字节范围**，
+    /// 空窗可以远超 2.5s —— 前两版用「目标 ±N 秒」的窗口 + 固定超时去判落地，
+    /// 长距离 seek 时要么窗口够不着、要么超时提前放开，歌词就会慢上一大截。
+    ///
+    /// 现在的判据**不依赖任何固定时长**，只看两条硬信号：
+    /// 1. `isRenderingAudio == false`（`timeControlStatus != .playing`）→ 音频还没在放，
+    ///    **继续冻结**，无论等了多久；
+    /// 2. 只有观察到「时间轴在目标附近真正推进」——这才是音频从新位置渲染出来的
+    ///    铁证 —— 才宣告落地。
     private func updateSeekLanding(observerTime: TimeInterval) {
         guard let target = seekLandingTarget else { return }
-        guard observerTime >= target - 0.5, observerTime <= target + 2.5 else {
-            // 观察到的还是旧位置（或离目标太远）：继续等
+        // 音频还没真正渲染（仍在 seek 后的缓冲等待期）：无条件继续等。
+        // 这是长距离 seek 的关键 —— 不能因为"等久了"就放行。
+        if !isRenderingAudio {
+            landingProbe = nil
+            return
+        }
+        // 时间轴已在目标附近推进（允许 seek 容差造成的就近落点 ±1.5s）：
+        // 这才是「音频真的从新位置放出来了」。
+        guard observerTime >= target - 1.5, observerTime <= target + 2.5 else {
+            // 还在旧位置（向后拖会先观察到旧位置）：继续等
             return
         }
         if let probe = landingProbe {
             if observerTime > probe {
-                // 连续两次在目标附近推进 → 音频真的在新位置放了，用**渲染时间**硬锚
+                // 连续两次在目标附近推进 → 落地，用渲染时间硬锚
                 abandonSeekLandingMonitor()
                 NotificationCenter.default.post(
                     name: Self.seekDidLandNotification, object: nil,
