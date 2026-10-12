@@ -17,7 +17,11 @@ final class MusicURLResolver {
     /// 解析播放信息（含请求头）。
     /// 顺序：本地文件 → 已缓存地址 → 自定义音源（激活时）→ 官方平台通道。
     /// 自定义音源取链失败会自动回退官方通道，保证仍能听歌。
-    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
+    ///
+    /// - Parameter preferOfficial: 跳过自定义音源、强制走官方平台通道。
+    ///   用于「试听片段检测」：自定义源返回 15~30s 试听链接时重播完整版。
+    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality,
+                         preferOfficial: Bool = false) async throws -> ResolvedPlayback {
         if let local = item.localFilePath, !local.isEmpty {
             return ResolvedPlayback(url: URL(fileURLWithPath: local).absoluteString,
                                     headers: [:], fromCustomSource: nil, isFallbackSource: false)
@@ -33,7 +37,7 @@ final class MusicURLResolver {
                                     isFallbackSource: false)
         }
         let hasActiveLXSource = await WellLXSourceStore.shared.hasActiveSource
-        if hasActiveLXSource,
+        if hasActiveLXSource, !preferOfficial,
            let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) {
             return ResolvedPlayback(url: lx.url,
                                     headers: lx.headers,

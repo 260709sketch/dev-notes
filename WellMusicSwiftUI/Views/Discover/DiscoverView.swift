@@ -279,30 +279,17 @@ struct DiscoverView: View {
 
     /// 顶部横滑功能卡：每日推荐 / 私人漫游 / 心动模式。
     ///
-    /// 「每日推荐」改用与推荐歌单货架**同款**的 `WellCoverCard`（方形封面 + 底部标题），
-    /// 点击行为不变（直接播日推队列）—— 用户要求它看起来像一张歌单卡。
+    /// 「每日推荐」进入**歌单式列表页**（`DailyRecommendListView`），不直接播放；
+    /// 私人漫游 / 心动模式保持整卡即播放。
     private var featureRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
                 Color.clear.frame(width: contentInset - 12, height: 1)
                 ForEach(WellDiscoverViewModel.Feature.allCases) { feature in
-                    Button {
-                        start(feature)
-                    } label: {
-                        if feature == .daily {
-                            // 与「推荐歌单」同款歌单卡样式
-                            WellCoverCard(
-                                coverURL: cover(for: feature),
-                                title: "每日推荐",
-                                subtitle: feature.tagline,
-                                size: DiscoverLayout.featureSize
-                            )
-                            .overlay {
-                                if model.busyFeature == feature {
-                                    ProgressView().tint(.white)
-                                }
-                            }
-                        } else {
+                    if feature == .daily {
+                        NavigationLink {
+                            DailyRecommendListView()
+                        } label: {
                             WellFeatureCard(
                                 feature: feature,
                                 coverURL: cover(for: feature),
@@ -310,8 +297,20 @@ struct DiscoverView: View {
                                 busy: model.busyFeature == feature
                             )
                         }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            start(feature)
+                        } label: {
+                            WellFeatureCard(
+                                feature: feature,
+                                coverURL: cover(for: feature),
+                                subtitle: subtitle(for: feature),
+                                busy: model.busyFeature == feature
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
                 Color.clear.frame(width: contentInset - 12, height: 1)
             }

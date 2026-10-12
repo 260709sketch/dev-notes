@@ -161,7 +161,7 @@ final class PlayerCore: NSObject, ObservableObject {
         }
     }
 
-    func playCurrentItem(seekTo time: TimeInterval, autoPlay: Bool = true) {
+    func playCurrentItem(seekTo time: TimeInterval, autoPlay: Bool = true, preferOfficial: Bool = false) {
         guard let item = currentItem else { return }
         isLoading = true
         currentTime = time
@@ -169,7 +169,7 @@ final class PlayerCore: NSObject, ObservableObject {
         Task {
             do {
                 let resolved = try await MusicURLResolver.shared.resolvePlayback(
-                    for: item, quality: AppState.shared.audioQuality)
+                    for: item, quality: AppState.shared.audioQuality, preferOfficial: preferOfficial)
                 guard let url = URL(string: resolved.url) else {
                     isLoading = false
                     return
@@ -386,18 +386,29 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 并用 5 秒冷却防止网络持续恶化时的无限重载循环。
     private func handleTrackEnded(_ reason: MPVEngine.TrackEndReason) {
         // 换曲触发旧文件的 END_FILE(STOP) 已在引擎层过滤
-        let nearEnd = duration > 0 && currentTime >= duration - 5
 
+        // ① 试听片段检测（最优先）：自定义音源对 VIP/无版权歌曲常返回 15~30s 的
+        //    试听链接，播完是**真 EOF**（位置接近实际时长），但远短于歌曲元数据
+        //    时长 —— 表现就是「放十几秒就自动切歌」。跳过自定义音源，走官方
+        //    通道从头播放完整版。
+        if let item = currentItem, item.duration > 30,
+           duration > 0, item.duration - duration > 20 {
+            PlayerDiag.log("试听片段检测 dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 官方通道重播完整版")
+            ToastCenter.shared.show("已切换为完整版播放")
+            playCurrentItem(seekTo: 0, autoPlay: true, preferOfficial: true)
+            return
+        }
+
+        // ② 真·自然播完（EOF 且位置接近实际时长）
+        let nearEnd = duration > 0 && currentTime >= duration - 5
         if reason == .eof, nearEnd {
-            // 真·自然播完
             next()
             return
         }
 
-        // ⚠️ duration 读不到（<=0）时**一律按断流处理**：早先这里直接切歌，
-        // 但断流瞬间 duration 属性可能已不可用，会把断流误判成播完——
-        // 正是「放十几秒就切歌」在修复后仍残留的边界。断流误重载的代价
-        // （多解析一次地址）远小于误切歌（听歌被打断）。
+        // ③ 断流 / 播放错误：重载续播。
+        // ⚠️ duration 读不到（<=0）时一律按断流处理：断流瞬间 duration 属性
+        // 可能已不可用，把它误判成播完就是「放十几秒就切歌」的残留路径。
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastAutoReloadAt >= 5 else {
             PlayerDiag.log("断流恢复冷却中（\(String(format: "%.1f", now - lastAutoReloadAt))s），忽略本次")
