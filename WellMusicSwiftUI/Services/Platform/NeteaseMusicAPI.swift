@@ -520,6 +520,30 @@ final class NeteaseMusicAPI {
         return (resp.hotSongs ?? []).compactMap(Self.mapSong)
     }
 
+    // MARK: 听歌排行
+
+    private struct PlayRecordResponse: Decodable {
+        var code: Int?
+        var list: [Item]?
+        struct Item: Decodable {
+            var playCount: Int?
+            var score: Int?
+            var song: Song?
+        }
+    }
+
+    /// 听歌排行（网易云「我听过的歌」）。
+    /// type: 0 = 所有时间，1 = 最近一周。需要登录 Cookie（apiRequest 自动携带）。
+    func playRecord(uid: Int, type: Int) async throws -> [PlayRecordItem] {
+        let resp: PlayRecordResponse = try await Self.apiRequest(
+            "api/user/playrecord", params: ["uid": uid, "type": type, "csrf_token": ""],
+            type: PlayRecordResponse.self)
+        return (resp.list ?? []).compactMap { item in
+            guard let song = item.song, let mapped = Self.mapSong(song) else { return nil }
+            return PlayRecordItem(song: mapped, playCount: item.playCount ?? 0)
+        }
+    }
+
     // MARK: 发现页（推荐歌单 / 排行榜 / 新碟上架 / 热门歌手）
     //
     // 这几个接口都**不需要登录**，所以发现页在未登录状态下也能有内容 ——

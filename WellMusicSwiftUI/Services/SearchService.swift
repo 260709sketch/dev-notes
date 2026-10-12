@@ -20,7 +20,10 @@ final class SearchService {
 
         switch type {
         case .all: return await searchAll(key, platform: platform)
-        case .songs: return await songs(key, platform: platform, limit: 50)
+        case .songs:
+            // 对齐 kumone：网易云单曲 tab 拉 100 条（其他平台 50）
+            let limit = platform == .netease ? 100 : 50
+            return await songs(key, platform: platform, limit: limit)
         case .artists: return await artists(key, platform: platform, limit: 50)
         case .albums: return await albums(key, platform: platform, limit: 50)
         case .playlists: return await playlists(key, platform: platform, limit: 50)

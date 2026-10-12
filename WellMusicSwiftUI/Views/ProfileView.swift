@@ -26,8 +26,17 @@ struct ProfileView: View {
                 NavigationLink { Text("收藏专辑（开发中）").frame(maxWidth: .infinity, alignment: .leading) } label: {
                     Label("收藏专辑", systemImage: "square.stack")
                 }
-                NavigationLink { Text("网易云已赞歌曲（开发中）") .frame(maxWidth: .infinity, alignment: .leading) } label: {
-                    Label("网易云我喜欢", systemImage: "heart.text.square")
+            }
+
+            Section("网易云") {
+                NavigationLink { NeteaseLikedSongsView() } label: {
+                    Label("我喜欢", systemImage: "heart.text.square")
+                }
+                NavigationLink { NeteasePlayRecordView() } label: {
+                    Label("听歌排行", systemImage: "chart.bar.fill")
+                }
+                NavigationLink { RecentPlaysView() } label: {
+                    Label("最近播放", systemImage: "clock.arrow.circlepath")
                 }
             }
 
@@ -136,5 +145,207 @@ struct PlaylistDetailView: View {
                 }
         }
         .navigationTitle(playlist.name)
+    }
+}
+
+// MARK: - 我喜欢（网易云「我喜欢的音乐」歌单）
+//
+// 网易云的老规矩：每个用户的「我喜欢的音乐」歌单 id == 用户 uid，
+// 所以直接复用歌单详情接口拉全部已赞歌曲，不需要单独的 like 列表接口。
+
+struct NeteaseLikedSongsView: View {
+    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
+    private var player: PlayerCore { PlayerCore.shared }
+
+    @State private var tracks: [MusicItem] = []
+    @State private var isLoading = true
+    @State private var notLoggedIn = false
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if notLoggedIn {
+                tipView("还没有登录网易云", "登录后这里显示你红心收藏的所有歌曲")
+            } else if failed {
+                tipView("暂时拿不到", "网络开小差了，退出页面再进试试")
+            } else if tracks.isEmpty {
+                tipView("还没有喜欢的歌曲", "在网易云里给歌曲点红心后会出现在这里")
+            } else {
+                List(tracks) { item in
+                    TrackRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
+                        }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("我喜欢")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func tipView(_ title: String, _ note: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "heart.text.square")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text(title).font(.headline).foregroundStyle(.secondary)
+            Text(note).font(.caption).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func load() async {
+        guard let uid = NeteaseSession.shared.account?.userId else {
+            notLoggedIn = true
+            isLoading = false
+            return
+        }
+        do {
+            let imported = try await NeteaseMusicAPI.shared.playlistForImport(id: "\(uid)")
+            tracks = imported.tracks
+        } catch {
+            failed = true
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - 听歌排行（网易云「我听过的歌」）
+
+struct NeteasePlayRecordView: View {
+    private var player: PlayerCore { PlayerCore.shared }
+
+    private enum Period: Int, CaseIterable, Identifiable {
+        case week = 1   // 网易云约定：1 = 最近一周
+        case all = 0    // 0 = 所有时间
+        var id: Int { rawValue }
+        var title: String { self == .week ? "最近一周" : "所有时间" }
+    }
+
+    /// 一条排行记录（歌曲 + 播放次数）
+    struct RecordItem: Identifiable {
+        let id = UUID()
+        let song: MusicItem
+        let playCount: Int
+    }
+
+    @State private var period: Period = .week
+    @State private var items: [RecordItem] = []
+    @State private var isLoading = true
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if failed {
+                VStack(spacing: 10) {
+                    Text("暂时拿不到听歌排行").foregroundStyle(.secondary)
+                    Button("重试") { Task { await load() } }
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "chart.bar")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("这段日子里还没有听歌记录").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(items) { record in
+                    HStack(spacing: 12) {
+                        TrackRow(item: record.song)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                player.play(queue: items.map(\.song),
+                                            startIndex: items.firstIndex { $0.id == record.id } ?? 0)
+                            }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(record.playCount)")
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
+                            Text("次")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .foregroundStyle(AppTheme.accent)
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("听歌排行")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .top) {
+            Picker("统计范围", selection: $period) {
+                ForEach(Period.allCases) { p in
+                    Text(p.title).tag(p)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(AppTheme.background)
+        }
+        .task(id: period) { await load() }
+    }
+
+    private func load() async {
+        guard let uid = NeteaseSession.shared.account?.userId else {
+            failed = true
+            isLoading = false
+            return
+        }
+        isLoading = true
+        failed = false
+        do {
+            let records = try await NeteaseMusicAPI.shared.playRecord(uid: uid, type: period.rawValue)
+            items = records.map { RecordItem(song: $0.song, playCount: $0.playCount) }
+        } catch {
+            failed = true
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - 最近播放（本地播放历史）
+
+struct RecentPlaysView: View {
+    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
+    private var player: PlayerCore { PlayerCore.shared }
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Group {
+            if appState.playHistory.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("还没有播放记录").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(appState.playHistory) { item in
+                    TrackRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            player.play(queue: appState.playHistory,
+                                        startIndex: appState.playHistory.firstIndex(of: item) ?? 0)
+                        }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("最近播放")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

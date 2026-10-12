@@ -64,131 +64,197 @@ enum NeteaseAPI {
 }
 
 // MARK: - CommentsView
-/// 歌曲评论页（多平台：网易云/酷狗/QQ，按本曲平台优先自动回退）。
+/// 歌曲评论页 —— **布局与观感照搬 kumone 的 CommentsView**（用户自己的设计）：
+/// 白底半屏 sheet、居中标题 +「完成」、热门/最新分段控制、行内「用户名 + 日期 + 赞数」、
+/// 行间细分割线、最新页签底部「加载更多」。
+/// 数据层仍是本项目的 `CommentsAPI`（多平台回退链）。
 struct CommentsView: View {
     let track: Track
 
-    @State private var hot: [SongComment] = []
-    @State private var latest: [SongComment] = []
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var hotComments: [SongComment] = []
+    @State private var latestComments: [SongComment] = []
     @State private var total = 0
     @State private var hasMore = false
     @State private var page = 1
-    @State private var loading = false
-    @State private var failed = false
+    @State private var loading = true
+    @State private var errorMessage: String?
+    @State private var selectedSegment = 0 // 0=热门, 1=最新
+
+    private let limit = 30
 
     private var songId: String { track.platformSongId ?? "" }
     private var platform: String { track.sourcePlatform ?? "" }
 
     var body: some View {
-        Group {
-            if loading && latest.isEmpty {
-                VStack(spacing: 10) {
+        VStack(spacing: 0) {
+            // 标题栏：居中「评论」+ 右上「完成」
+            HStack {
+                Spacer()
+                Text("评论")
+                    .font(.system(size: 17, weight: .semibold))
+                Spacer()
+            }
+            .overlay(alignment: .trailing) {
+                Button("完成") { dismiss() }
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(.blue)
+                    .padding(.trailing, 16)
+            }
+            .padding(.top, 12)
+            .padding(.bottom, 12)
+
+            // 分段控制
+            Picker("", selection: $selectedSegment) {
+                Text("热门评论").tag(0)
+                Text("最新评论").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+
+            // 评论列表
+            Group {
+                if loading {
                     ProgressView()
-                    Text("正在加载评论…").font(.footnote).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if failed && latest.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "text.bubble").font(.system(size: 40)).foregroundStyle(.secondary)
-                    Text("暂时拿不到评论").font(.headline).foregroundStyle(.secondary)
-                    Button("重试") { Task { await load(refresh: true) } }
-                        .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    if total > 0 {
-                        Text("共 \(total) 条评论")
-                            .font(.footnote)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage {
+                    VStack(spacing: 12) {
+                        Text(errorMessage)
                             .foregroundStyle(.secondary)
-                            .listRowSeparator(.hidden)
+                        Button("重试") { Task { await load() } }
+                            .buttonStyle(.bordered)
                     }
-                    if !hot.isEmpty {
-                        Section("热门评论") {
-                            ForEach(hot) { CommentRow(comment: $0) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    let list = selectedSegment == 0 ? hotComments : latestComments
+                    if list.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "bubble.left")
+                                .font(.system(size: 40))
+                                .foregroundStyle(.secondary)
+                            Text("暂无评论")
+                                .foregroundStyle(.secondary)
                         }
-                    }
-                    Section("最新评论(\(total))") {
-                        ForEach(latest) { CommentRow(comment: $0) }
-                        if hasMore {
-                            Button {
-                                Task { await load(refresh: false) }
-                            } label: {
-                                if loading {
-                                    ProgressView()
-                                } else {
-                                    Text("加载更多").frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(list) { comment in
+                                    CommentRow(comment: comment)
+                                    Divider()
+                                        .padding(.leading, 16)
+                                }
+                                if selectedSegment == 1 && hasMore {
+                                    Button {
+                                        Task { await loadMoreLatest() }
+                                    } label: {
+                                        if loading {
+                                            ProgressView()
+                                        } else {
+                                            Text("加载更多")
+                                                .font(.system(size: 14, weight: .medium))
+                                                .foregroundStyle(.blue)
+                                        }
+                                    }
+                                    .padding(.vertical, 16)
                                 }
                             }
-                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .refreshable { await load(refresh: true) }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(AppTheme.background.ignoresSafeArea())
-        .navigationTitle("评论")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { if latest.isEmpty && !loading { await load(refresh: true) } }
+        .background(Color.white)
+        .preferredColorScheme(.light)
+        .task { await load() }
     }
 
-    private func load(refresh: Bool) async {
-        if refresh {
-            loading = true
-            failed = false
-            page = 1
+    private func load() async {
+        loading = true
+        errorMessage = nil
+        page = 1
+        defer { loading = false }
+        guard let result = await CommentsAPI.fetch(platform: platform, songId: songId, page: 1) else {
+            errorMessage = "暂时拿不到评论"
+            return
         }
-        let target = refresh ? 1 : page + 1
+        hotComments = result.hot
+        latestComments = result.latest
+        total = result.total
+        hasMore = result.hasMore
+    }
+
+    private func loadMoreLatest() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        let target = page + 1
         if let result = await CommentsAPI.fetch(platform: platform, songId: songId, page: target) {
-            hot = result.hot
-            if refresh { latest = result.latest } else { latest += result.latest }
+            latestComments.append(contentsOf: result.latest)
             total = result.total
             hasMore = result.hasMore
             page = target
-        } else if refresh {
-            failed = true
         }
-        loading = false
     }
 }
 
+/// 评论行（kumone Beans 风格）：头像 + 同一行「用户名 · 日期 · N 赞」+ 内容。
 private struct CommentRow: View {
     let comment: SongComment
 
+    private var likedText: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        let text = formatter.string(from: NSNumber(value: comment.likedCount)) ?? "\(comment.likedCount)"
+        return "\(text) 赞"
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            if let avatar = comment.avatarURL, !avatar.isEmpty {
-                WellRemoteImage(url: avatar, displaySize: 36)
+            // 头像
+            if let avatarURL = comment.avatarURL, !avatarURL.isEmpty {
+                WellRemoteImage(url: avatarURL, displaySize: 36)
                     .frame(width: 36, height: 36)
                     .clipShape(Circle())
             } else {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.secondary)
+                Circle()
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.gray)
+                    }
             }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
                     Text(comment.nickname)
-                        .font(.footnote.weight(.medium))
-                    Spacer()
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .lineLimit(1)
                     Text(comment.timeText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.gray)
+                    Spacer()
+                    if comment.likedCount > 0 {
+                        Text(likedText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.gray)
+                    }
                 }
                 Text(comment.content)
-                    .font(.subheadline)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.black)
                     .fixedSize(horizontal: false, vertical: true)
-                if comment.likedCount > 0 {
-                    Label("\(comment.likedCount)", systemImage: "hand.thumbsup")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
             }
         }
-        .padding(.vertical, 3)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 
