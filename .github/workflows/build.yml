@@ -31,6 +31,20 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
+      # 0) SPM 预解析（带重试）：MPVKit 的 binary targets 从 GitHub Releases 下载
+      #    （Libmpv/Libavcodec/Libssl 等数百 MB），偶发 504/超时会让整个 run 挂掉。
+      #    先单独解析并重试 —— SPM 的下载缓存跨 DerivedData 共享，后续构建直接复用。
+      - name: Resolve SPM packages (with retry)
+        run: |
+          set -uo pipefail
+          for i in 1 2 3 4 5; do
+            echo "== resolve 尝试 $i =="
+            xcodebuild -project WellMusicSwiftUI.xcodeproj -scheme WellMusicSwiftUI \
+              -resolvePackageDependencies && { echo "== resolve 成功 =="; break; }
+            if [ "$i" = "5" ]; then echo "== 5 次均失败 =="; exit 1; fi
+            sleep 20
+          done
+
       # 1) 单元测试：验证播放器移植的常量/几何/派生逻辑（各平台映射含音质档位）
       #    注意：macos-26 runner 上模拟器机型随 Xcode 版本变化（当前无 iPhone 16，只有 16e/17 系），
       #    因此不硬编码机型名，改为自动挑第一个可用的 iPhone 模拟器（优先 16 系）。
