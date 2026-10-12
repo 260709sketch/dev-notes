@@ -101,8 +101,15 @@ struct AppleMusicPlayerView: View {
         .onChange(of: showLyrics) { _ in
             // 切换回大封面时重置底部控制区域隐藏状态
             hideBottomControls = false
+            PlayerDiag.tick("歌词页切换：showLyrics=\(showLyrics)")
         }
-        .onAppear { if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
+        .onAppear {
+            // 这一行是整个播放页启动的观测锚点。若控制台里**只有这一行**、
+            // 之后什么都没有，说明卡在了 body 求值 / 首次布局里（通常是
+            // WebGL 初始化或某处死循环），而不是后面的交互逻辑。
+            PlayerDiag.tick("播放页 onAppear（竖屏=\(!isLandscape)，AMLL=\(settings.appleMusicUseAMLL)）")
+            if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) }
+        }
         .onChange(of: track?.id) { _ in if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
         .onChange(of: settings.dynamicCoverEnabled) { enabled in
             if enabled {
@@ -502,16 +509,9 @@ struct AppleMusicPlayerView: View {
 
             // 右侧：AMLL 歌词（如果开启了 AMLL）或普通歌词
             if settings.appleMusicUseAMLL {
-                // 横屏：AMLL 只在这一栏里渲染，背景与歌词都在这一层内。
-                //
-                // ⚠️ 不要在这里传 `rendersBackground: false`、再让 `playerBackground`
-                // 挂第二份 AMLL 去渲染背景 —— 那样页面里会**常驻两个 WKWebView**，
-                // 每个都加载 474 KB 的歌词页并跑一份 WebGL 流动背景，
-                // 内存与 GPU 都是双份开销。
-                //
-                // 正确做法：整个播放页**只挂一个** AMLL。竖屏时它铺满全屏
-                // （由 `playerBackground` 承载），横屏时它占据右侧这一栏。
-                // `playerBackground` 会在横屏时让位（见 `amllOwnsBackground`）。
+                // 横屏：AMLL 歌词页占据右侧这一栏。
+                // 轻量页（403KB、无 WebGL 背景）本身不渲染背景层，
+                // 背景由 `playerBackground` 的模糊封面承担。
                 AMLLWebLyricsView(useAppleMusicSettings: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
@@ -591,64 +591,32 @@ struct AppleMusicPlayerView: View {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
 
-            // 模糊封面背景。
+            // 模糊封面背景（AMLL 和非 AMLL 模式都有）。
             //
-            // ⚠️ 当 AMLL 背景自己会渲染流动层时（flowing / blurFlow），
-            // 这里必须让位：否则 SwiftUI 的模糊封面 + 页面里的模糊流动层
-            // 会叠成两层模糊，背景糊成一团，且白白多一次全屏高斯模糊的
-            // 合成开销。此时底层只留纯色，背景完全交给 AMLL。
-            if !amllOwnsBackground {
-                CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                    .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
-                    .ignoresSafeArea()
-            }
+            // ⚠️ 这里的 AMLL 是**轻量歌词页**（403KB，无 WebGL 流动背景渲染器），
+            // 它自己不渲染背景层，所以模糊封面常驻、不需要「让位」。
+            // 流动背景曾经由官方完整页的 WebGL 渲染器（`Fu`）承担，但那一版
+            // 在打开播放器时就初始化 WebGL + 跑 GPU 着色器，直接卡死 ——
+            // 已回退（见 git `55732ad8` 之后的历史）。
+            CoverBlurBackground(url: coverURL, scheme: colorScheme)
+                .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
+                .ignoresSafeArea()
 
-            // AMLL 层：**常驻**，不要用 `showLyrics` 控制它的创建。
+            // AMLL 歌词只在**展开歌词页时**才创建。
             //
-            // ⚠️ 这里原本写成 `if settings.appleMusicUseAMLL && showLyrics { … }`，
-            // 意味着每次点开/收起歌词页都会**销毁再新建一个 WKWebView**，并重新
-            // 加载 474 KB 的歌词页、重新初始化 WebGL 与着色器。这一整套都在主线程上，
-            // 代价极高 —— 点一下歌词按钮就卡住几秒，在旧机型上直接表现为卡死。
-            //
-            // `AMLLWebLyricsView` 自身的设计就是常驻（见其 `Coordinator` 注释
-            // 「The web view itself is never torn down between songs」），
-            // 可见性交给 `opacity` / `allowsHitTesting`，与封面页/歌词页的切换方式一致。
-            //
-            // 竖屏时由这一层承载 AMLL（铺满全屏 = 背景 + 歌词）；
-            // 横屏时改由 `landscapeLayout` 的右侧栏承载，这里**不再挂第二份**，
-            // 否则页面里会常驻两个 WKWebView。
-            if settings.appleMusicUseAMLL && !isLandscapeScreen {
+            // ⚠️ 这里曾经改成「常驻 + opacity 控制」，理由是「避免每次点开歌词
+            // 都重建 WKWebView」。但那次的页面是 478KB 的官方完整页 + WebGL 背景，
+            // 常驻意味着**打开播放器**就要加载整页并初始化 WebGL，正是卡死的
+            // 直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复到
+            // 「点开歌词才创建」的旧行为：打开播放器时根本不存在 WebView，
+            // 从根上杜绝打开即卡死。
+            if settings.appleMusicUseAMLL && showLyrics {
                 AMLLWebLyricsView(useAppleMusicSettings: true)
                     .ignoresSafeArea()
                     .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
                     .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
                     .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
-                    .opacity(showLyrics ? 1 : 0)
-                    // 收起歌词页时不仅不可见，也不能吃掉封面页的点击
-                    .allowsHitTesting(showLyrics)
             }
-        }
-    }
-
-    /// 当前是否处于横屏。
-    ///
-    /// 与 `body` 里 `isLandscape` 用同一套判据（屏幕宽 > 高），确保两处永远一致 ——
-    /// 否则「哪一层负责挂载 AMLL」会在两个方向间摇摆，出现零份或两份的错配。
-    private var isLandscapeScreen: Bool {
-        let size = UIScreen.main.bounds.size
-        return size.width > size.height
-    }
-
-    /// AMLL 是否接管背景渲染。
-    ///
-    /// 只有在「AMLL 开启 + 歌词页展开 + 用户选了流动类背景」时成立。
-    /// 其余情况（关闭 AMLL、还没进歌词页、选了静态/关闭）都退回
-    /// SwiftUI 的模糊封面，保证大封面页始终有背景可看。
-    private var amllOwnsBackground: Bool {
-        guard settings.appleMusicUseAMLL, showLyrics else { return false }
-        switch settings.amllBackgroundMode {
-        case .flowing, .blurFlow: return true
-        case .still, .off: return false
         }
     }
 

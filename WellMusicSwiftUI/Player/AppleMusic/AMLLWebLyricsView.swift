@@ -1,40 +1,6 @@
 #if os(iOS)
 import SwiftUI
 import WebKit
-import Combine
-
-/// 歌词页时钟的下发策略常量。
-///
-/// 独立成 `enum` 而非散落在 `Coordinator` 里的字面量，一是让三条阈值各有名字、
-/// 二是可以在单元测试里锁死契约（这些数值直接决定「拖动后歌词是否偏移」）。
-enum AMLLClockPolicy {
-    /// 「位置是否真的在走」的判定阈值（毫秒）。
-    ///
-    /// 低于它就认为播放器停在原地（加载 / 缓冲 / 卡顿），此时不再告诉页面「继续走」——
-    /// 否则页面会从上一个样本一路外推，等真实位置追上来时就会跳一下，
-    /// 也就是切歌时的抖动。
-    static let movementThresholdMs = 30
-
-    /// 同值去重阈值（毫秒）。
-    ///
-    /// 与已发送值相差不足这个数就不下发，省掉一次 JS 调用 + 一次跨进程消息。
-    /// 取 5ms 远小于 100ms 的推送周期与 30ms 的移动判定：正常播放每拍变化都在 100ms 上下，
-    /// 一定会被发出；能被拦掉的只有「重复读到同一位置」这类真正的冗余。
-    static let dedupeThresholdMs = 5
-
-    /// 硬校准的触发阈值（毫秒）。
-    ///
-    /// 目标位置与页面当前所在位置相差不足这个数时跳过校准，避免无谓地重置外推纪元。
-    /// 比去重阈值宽一些：校准本身带一次 `setCurrentTime`，代价高于普通 `sync`，
-    /// 为几毫秒去重置一次不划算。
-    static let calibrationThresholdMs = 30
-
-    /// 拖动收尾补校准的延迟（秒）。
-    ///
-    /// `seek(to:toleranceBefore:toleranceAfter:)` 的完成回调与 `@Published isScrubbing`
-    /// 的派发顺序没有保证，让出一个 runloop 再读位置更稳；对用户完全不可感知。
-    static let settleDelay: TimeInterval = 0.06
-}
 
 /// The original Apple Music-like Lyrics player (https://github.com/amll-dev/applemusic-like-lyrics, AGPL-3.0), running in a
 /// web view. The lyric lines and clock samples are pushed in; the page animates with AMLL's own spring layout, blur and
@@ -46,24 +12,6 @@ struct AMLLWebLyricsView: View {
 
     /// 是否使用 Apple Music 独立的 AMLL 设置（和沉浸模式v2分开）
     var useAppleMusicSettings: Bool = false
-
-    /// 是否允许这一层渲染 AMLL 背景（流动光斑 / 模糊底）。
-    ///
-    /// 同一个播放页里 AMLL 只会挂一次背景：竖屏时由 `playerBackground`
-    /// 里那一层负责，横屏时由右侧分栏那一层负责。另一处必须传 `false`，
-    /// 否则会渲染两份全屏 GPU 背景，既互相打架又浪费性能。
-    var rendersBackground: Bool = true
-
-    /// 硬校准触发器：每 +1 表示「播放位置被外力改写了（拖动结束 / 跳转），请立刻校准歌词页时钟」。
-    ///
-    /// 参考 RN 版的 `seekCommand = { seq, time }`：用**自增序号 + 目标时间**表达一次离散事件。
-    /// 为什么不能只看 `player.clock.progress`：那个值在拖动结束的乐观更新里被写成目标值，
-    /// 但正常情况下它每 50ms 都在变，`onChange` 无法区分「自然推进」与「被 seek 改写」；
-    /// 而且它来自 `displayTime`，无损音质下松手瞬间可能滞后。这里传的是**精确**目标时间
-    /// （`PlayerService.precisePlaybackTime`），并只在真正发生 seek 时递增。
-    /// - 0 表示「尚未有事件」，避免首次 `onChange` 把页面误校准到 0。
-    @State private var calibrationSeq = 0
-    @State private var calibrationTime: TimeInterval = 0
 
     /// The lyrics of the song that is playing (empty while they load). The web view itself is never torn down between
     /// songs: rebuilding it reloads the whole page, which is what made the lyrics flash on every song change.
@@ -83,16 +31,6 @@ struct AMLLWebLyricsView: View {
         useAppleMusicSettings ? settings.appleMusicAmllFontWeight : settings.amllFontWeight
     }
 
-    /// 当前专辑的标识，喂给 AMLL 流动背景做取色。
-    ///
-    /// 官方 `setAlbum(id)` 期望的是 **AMLL 专辑 id**，它会用这个 id 去
-    /// 它自己的接口取专辑封面再取色。我们这里拿不到那个 id，于是改为
-    /// 交给页面直接用封面图 URL（见 `AMLLBridge.setAlbumImage`）。
-    /// 这里返回的是封面图地址，作为图片源传给页面。
-    private var currentAlbumID: String? {
-        player.currentTrack?.album.picUrl
-    }
-
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
@@ -101,12 +39,7 @@ struct AMLLWebLyricsView: View {
                 showsTranslation: settings.showLyricsTranslation,
                 showsRomaji: settings.lyricsAnnotation == .romaji,
                 fontSize: currentFontSize,
-                fontWeight: currentFontWeight,
-                calibrationSeq: calibrationSeq,
-                calibrationTime: calibrationTime,
-                backgroundMode: rendersBackground ? settings.amllBackgroundMode : .off,
-                backgroundQuality: settings.amllBackgroundQuality,
-                albumID: currentAlbumID
+                fontWeight: currentFontWeight
             )
             .frame(width: width, height: geometry.size.height)
             .mask(
@@ -122,40 +55,6 @@ struct AMLLWebLyricsView: View {
             )
         }
         .overlay { stateOverlay }
-        // 拖动**结束**时立刻硬校准。
-        // `isScrubbing` 由 true → false 只发生在拖动收尾（或兜底超时），
-        // 正是 RN 版 `emitSeek` 唯一的触发点；拖动过程中不触发，避免高频重置外推纪元。
-        //
-        // ⚠️ 这是**低频**事件（一次拖动只变两次），可以安全地监听。
-        .onReceive(PlayerCore.shared.$isScrubbing.removeDuplicates()) { isScrubbing in
-            guard !isScrubbing else { return }
-            requestCalibration()
-        }
-        // ⚠️ 这里**曾经**监听了 `PlayerCore.shared.$currentTime`，现已删除。
-        //
-        // `currentTime` 是播放期间**高频变化**的属性（音频进度回调，约 10Hz 以上）。
-        // 在它上面挂 `onReceive` 会带来两个后果：
-        //   1. 每 10Hz 触发一次 `requestCalibration()` → 改 `@State calibrationSeq`
-        //      → **整个 `AppleMusicPlayerView` 的 body 全量重算**（该视图是本 View 的
-        //      祖先，`@State` 变化会把整棵树一起重算，包含 `UIScreen.main.bounds`、
-        //      window scene 遍历、以及 WKWebView 的 representable diff）；
-        //   2. 本视图自己也会重算，其 `GeometryReader` 重新测量 → `updateUIView`
-        //      → 一次跨进程 `evaluateJavaScript`。
-        // 叠加 WKWebView + WebGL 流动背景的高成本，主线程会被彻底打满，
-        // 表现就是「打开播放器什么都点不动、像卡死」。
-        //
-        // 这个订阅本来就是多余的：页面内点击歌词行跳转走的是 `seek` 消息分支，
-        // 那里已经直接 `hardCalibrate(to: target)` 了；而常态推进由 `Coordinator`
-        // 自己的 100ms `Timer`（`pushClock`）负责，不需要 SwiftUI 再插一手。
-    }
-
-    /// 记下一次硬校准请求。读取的是**精确**位置，而不是 `displayTime`——
-    /// 后者在松手瞬间可能还停留在轮询缓存里的旧值上。
-    private func requestCalibration() {
-        let precise = player.precisePlaybackTime
-        guard precise.isFinite, precise >= 0 else { return }
-        calibrationTime = precise
-        calibrationSeq &+= 1
     }
 
     @ViewBuilder
@@ -190,15 +89,6 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     let showsRomaji: Bool
     let fontSize: CGFloat
     let fontWeight: Int
-    /// 硬校准事件的自增序号与目标时间，见 `AMLLWebLyricsView.calibrationSeq`。
-    let calibrationSeq: Int
-    let calibrationTime: TimeInterval
-    /// AMLL 背景渲染方式（流动 / 模糊流动 / 静态 / 关闭）。
-    let backgroundMode: AMLLBackgroundMode
-    /// 背景渲染质量档位（帧率 + 分辨率倍率）。
-    let backgroundQuality: AMLLBackgroundQuality
-    /// 封面图 URL，供页面用它取色生成流动背景。
-    let albumID: String?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -211,24 +101,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         Task { @MainActor in
             print("[AMLL] 歌词帧率设置 - 60帧限制已解除：\(switched)，屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz")
         }
-        // ⚠️⚠️ 必须**同时**注册 `amllEvent`，这是「播放器卡死」的根因修复之一。
-        //
-        // 官方 `AMLLLyrics.html` 只往 `messageHandlers.amllEvent` 发消息：
-        //   * `{name:'ready'}`  页面就绪（load 后 100ms）
-        //   * `{name:'seek'}`   点击歌词行
-        // 历史上这里只注册了 `amll`，名字对不上 → `ready` 永远收不到 →
-        // `Coordinator.ready` 恒为 false → 歌词永远不加载、`pending` 永不清空、
-        // 每次 SwiftUI update 都往一个"未就绪"的 WebView 反复下发 JS。
-        // 叠加 474KB 页面 + WebGL 背景，主线程被打满，表现就是「一打开就卡死」。
-        //
-        // 现在双保险：
-        //   1. 这里注册 `amllEvent`（原生通道，最可靠）；
-        //   2. 注入层还做了 JS 侧转发 shim（见 build_amll_page.py 的 bridgeAmllEvent），
-        //      即使哪天有人改了注入配置，消息也能到 `amll`。
-        // 两个 handler 都指向同一个 Coordinator，重复到达由 `ready` 幂等逻辑兜住。
-        let handler = WeakScriptHandler(context.coordinator)
-        configuration.userContentController.add(handler, name: "amll")
-        configuration.userContentController.add(handler, name: "amllEvent")
+        configuration.userContentController.add(WeakScriptHandler(context.coordinator), name: "amll")
         let web = WKWebView(frame: .zero, configuration: configuration)
         web.isOpaque = false
         web.alpha = 0
@@ -239,10 +112,6 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         web.scrollView.bounces = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
         context.coordinator.attach(web)
-        // 注意：这里加载的是 `AMLLLyricsPage.html`——由官方 `AMLLLyrics.html`
-        // 注入兼容层生成（见 build_amll_page.py）。它与官方同源，因此保留了
-        // 流动背景渲染器（`Fu`），同时把 `window.amll` 包装成本项目在用的
-        // `window.AMLLBridge`（含硬校准硬通道）。
         if let url = Bundle.main.url(forResource: "AMLLLyricsPage", withExtension: "html") {
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
@@ -270,10 +139,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
 
     func updateUIView(_ web: WKWebView, context: Context) {
         context.coordinator.update(lyrics: lyrics, showsTranslation: showsTranslation, showsRomaji: showsRomaji,
-                                   fontSize: fontSize, fontWeight: fontWeight,
-                                   calibrationSeq: calibrationSeq, calibrationTime: calibrationTime,
-                                   backgroundMode: backgroundMode, backgroundQuality: backgroundQuality,
-                                   albumID: albumID)
+                                   fontSize: fontSize, fontWeight: fontWeight)
     }
 
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
@@ -289,102 +155,22 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var fontSize: CGFloat = 30
         private var fontWeight: Int = 600
         private var timer: Timer?
-        /// 上一次**真正下发**给歌词页的毫秒数。
-        ///
-        /// 用它做两件事：
-        /// 1. `pushClock` 的同值去重（阈值见 `AMLLClockPolicy`）；
-        /// 2. 判断是否需要硬校准——seek 之后若目标值与已发送值几乎相同，
-        ///    说明页面时钟刚好在那里，硬校准是多余的。
-        ///
-        /// ⚠️ 必须是 `Int?` 而不是 `Int.min`。用 `Int.min` 当哨兵值时，
-        /// `abs(ms - Int.min)` 会在 Swift 里**整数溢出直接 trap 崩溃**
-        /// （`Int.min` 没有对应的正数）。首次 `sendClock` / `hardCalibrate`
-        /// 就必崩，且崩在音频回调线程派发过来的路径上，表现就是「一打开就闪退」。
-        private var lastSentMs: Int?
-        /// 已处理过的硬校准事件序号（见 `AMLLWebLyricsView.calibrationSeq`）。
-        private var lastCalibrationSeq = 0
-        /// 拖动的收尾校准：`isScrubbing` 转 false 的那次回调必然发生在 seek **回调之前**，
-        /// 所以这里等回调落地后再补一次，把「乐观值 vs 精确值」的残差抹平。
-        private var scrubbingWasActive = false
-        private var settleCalibrationWork: DispatchWorkItem?
-        /// 订阅 `PlayerCore.isScrubbing`，用于拖动收尾的补校准。
-        private var scrubObserver: AnyCancellable?
 
         func attach(_ web: WKWebView) {
             self.web = web
             // The page extrapolates the clock between samples, so ten a second keep it exact without a call per frame.
-            //
-            // ⚠️ 这里**不能**用 `MainActor.assumeIsolated`：它在「当前不在主 actor」
-            // 时会直接 trap 崩溃（不是安全降级）。`Timer.scheduledTimer` 挂在主
-            // RunLoop 上，正常情况确实在主线程，但一旦有人把这个 Timer 挪到别的
-            // RunLoop、或系统在极端情况下从别的线程唤醒它，就会当场闪退。
-            // 改用显式的 `Task { @MainActor in ... }`：跨 actor 时安全排队，
-            // 已在主 actor 时同步执行，行为完全一致但没有崩溃风险。
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.pushClock() }
+                MainActor.assumeIsolated { self?.pushClock() }
             }
-            // 拖动收尾的补校准：seek 回调里 `isScrubbing` 才真正落回 false，
-            // 而那之后 `PlayerCore.currentTime` 变成了播放器回报的精确值。
-            scrubObserver = PlayerCore.shared.$isScrubbing
-                .removeDuplicates()
-                .sink { [weak self] isScrubbing in
-                    Task { @MainActor in self?.handleScrubbingChange(isScrubbing) }
-                }
         }
 
         func detach() {
             timer?.invalidate()
             timer = nil
-            scrubObserver?.cancel()
-            scrubObserver = nil
-            settleCalibrationWork?.cancel()
-            settleCalibrationWork = nil
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
-            web?.configuration.userContentController.removeScriptMessageHandler(forName: "amllEvent")
         }
 
-        /// `isScrubbing` 落回 false = 一次精确 seek 刚刚完成。
-        /// 此时再校准一次（读的是 seek 回调写入的精确位置），确保页面时钟与真实位置完全对齐。
-        /// 用极小延迟而不是立刻下发：回调与 `@Published` 的派发顺序保证不了「写入已可见」，
-        /// 让出一个 runloop 更稳；对用户完全不可感知。
-        private func handleScrubbingChange(_ isScrubbing: Bool) {
-            if isScrubbing {
-                scrubbingWasActive = true
-                settleCalibrationWork?.cancel()
-                settleCalibrationWork = nil
-                return
-            }
-            guard scrubbingWasActive else { return }
-            scrubbingWasActive = false
-            settleCalibrationWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.ready else { return }
-                    self.settleCalibrationWork = nil
-                    self.hardCalibrate(to: PlayerService.shared.precisePlaybackTime)
-                }
-            }
-            settleCalibrationWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + AMLLClockPolicy.settleDelay, execute: work)
-        }
-
-        func update(lyrics: ParsedLyrics, showsTranslation: Bool, showsRomaji: Bool, fontSize: CGFloat, fontWeight: Int,
-                    calibrationSeq: Int, calibrationTime: TimeInterval,
-                    backgroundMode: AMLLBackgroundMode, backgroundQuality: AMLLBackgroundQuality,
-                    albumID: String?) {
-            // 背景设置优先处理：它和歌词签名无关，且切换背景时应当**立刻**生效，
-            // 不必等下一次歌词刷新。
-            applyBackground(mode: backgroundMode, quality: backgroundQuality, albumID: albumID)
-
-            // 硬校准事件优先于歌词加载处理：它与歌词签名无关，且必须在本次 SwiftUI 更新里
-            // 立刻下发，否则要等下一次 update 才生效（期间歌词已经跑偏）。
-            if lastCalibrationSeq != calibrationSeq {
-                // 首次进入（seq 从 0 变成 1）时页面可能还没 ready，
-                // `hardCalibrate` 会自行挡掉；随后 `flushPending` 里会带上正确时间重新载入。
-                lastCalibrationSeq = calibrationSeq
-                hardCalibrate(to: calibrationTime)
-            }
-
+        func update(lyrics: ParsedLyrics, showsTranslation: Bool, showsRomaji: Bool, fontSize: CGFloat, fontWeight: Int) {
             // updateUIView runs on every SwiftUI update, which are many while a song loads: hashing every word of the
             // lyrics each time is wasteful, so the signature uses the line count, the ends and the middle of the lyrics.
             var hasher = Hasher()
@@ -429,74 +215,6 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         private var flushWork: DispatchWorkItem?
-
-        // MARK: - 背景渲染
-
-        /// 上一次真正下发过的背景配置。
-        ///
-        /// `updateUIView` 在一次歌曲加载里会跑很多遍，背景配置绝大多数时候不变；
-        /// 不做去重的话会反复下发 JS、反复重建 CSS 自定义属性，白白触发合成层重绘。
-        private var appliedBackground: (mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality)?
-        private var appliedAlbumImage: String?
-
-        /// 「最新意图」——即使页面还没就绪也先记下来，等 `ready` 后重放。
-        private var desiredBackground: (mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality)?
-        private var desiredAlbumImage: String?
-
-        /// 按用户选择的模式驱动页面背景。
-        private func applyBackground(mode: AMLLBackgroundMode, quality: AMLLBackgroundQuality, albumID: String?) {
-            // 无论页面是否就绪都先记录意图，`ready` 回调里会重放。
-            desiredBackground = (mode, quality)
-            desiredAlbumImage = albumID
-
-            guard ready else { return }
-
-            let qualityChanged = appliedBackground?.quality != quality
-            let modeChanged = appliedBackground?.mode != mode
-            let albumChanged = appliedAlbumImage != albumID
-
-            // 三者都没变：什么都不做（这是绝大多数 update 的情况）。
-            guard qualityChanged || modeChanged || albumChanged else { return }
-            appliedBackground = (mode, quality)
-            appliedAlbumImage = albumID
-
-            var commands: [String] = []
-
-            if modeChanged {
-                // 模式切换：页面侧负责隐藏/显示 #bg、设置模糊与不透明度。
-                commands.append("AMLLBridge.setBackgroundMode('\(mode.bridgeValue)')")
-            } else if qualityChanged {
-                // 只调了画质：模糊半径跟着模式走，需要重申一次。
-                commands.append("AMLLBridge.setBackgroundMode('\(mode.bridgeValue)')")
-            }
-
-            if qualityChanged {
-                // 画质档位：帧率与渲染分辨率。
-                //
-                // ⚠️ 官方页没有把渲染器的 `setFPS` / `setRenderScale` 挂到
-                // `window.amll` 上，因此在页面里被桥接为「尽力而为」：
-                // 真正生效的是我们注入层里的 `setBackgroundFPS/RenderScale`，
-                // 它们记录数值并在可用的通道上应用。低档位确实能省电，
-                // 因为背景层在模糊模式下本身就以低分辨率合成。
-                commands.append("AMLLBridge.setBackgroundFPS(\(quality.fps))")
-                commands.append("AMLLBridge.setBackgroundRenderScale(\(quality.renderScale))")
-            }
-
-            if albumChanged, let albumID, !albumID.isEmpty {
-                // 用封面直链取色。官方 setAlbum(id) 需要 AMLL 自己的专辑 id，
-                // 我们拿不到，所以走图片通道。
-                commands.append("AMLLBridge.setAlbumImage('\(escaped(albumID))')")
-            }
-
-            guard !commands.isEmpty else { return }
-            run(commands.joined(separator: "; "))
-        }
-
-        /// 单引号字符串转义，避免 URL 里的引号截断 JS。
-        private func escaped(_ value: String) -> String {
-            value.replacingOccurrences(of: "\\", with: "\\\\")
-                 .replacingOccurrences(of: "'", with: "\\'")
-        }
         /// Whether the lines on the page are real lyrics (not the empty placeholder between two songs).
         private var loadedHasContent = false
 
@@ -557,70 +275,20 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             return PlayerService.shared.livePlaybackTime + offset
         }
 
-        /// 上一次推给页面的时间样本（毫秒），用于「位置是否真的在走」的判定。
         private var lastSampleMs = 0
 
-        /// 把当前播放位置推给歌词页。
-        ///
-        /// 关键修复（**无损 / Hi-Res 拖动进度条后歌词持续偏移**）：
-        /// 歌词页的时钟是 `co + (now - _l) * rate` 的**自由外推**——一旦种下误差就会自己越走越远。
-        /// 而这里的采样受两重限制：
-        /// 1. `livePlaybackTime` 走的是 `displayTime` → `currentTime`，在无损大文件上
-        ///    周期回调间隔被拉长，松手瞬间可能滞后上百毫秒；
-        /// 2. 下面「位置没动就不上报」的判定，会让误差在启动 / 缓冲 / 卡顿期间**长期冻结**。
-        /// 两者叠加，页面上的人声与歌词就「各跑各的」了。
-        ///
-        /// 修法与 RN 版一致：**硬校准**（见 `hardCalibrate`）负责把误差清零，
-        /// 这里只负责维持正常推进，并做同值去重以免白白唤醒 WebKit。
+        /// While a song is loading the player already reports "playing" but the position stands still. The page would
+        /// keep counting forward from the last sample and then find the next one far behind (a "jump"), over and over:
+        /// that is the stutter on every song change. So the page is only told "playing" when the position is really
+        /// moving; otherwise it holds still.
         private func pushClock() {
             guard ready else { return }
             let player = PlayerService.shared
             let ms = Int(currentSeconds() * 1000)
-            let moving = abs(ms - lastSampleMs) >= AMLLClockPolicy.movementThresholdMs
+            let moving = abs(ms - lastSampleMs) >= 30
             lastSampleMs = ms
             let running = player.isPlaying && !player.isBuffering && moving
-            sendClock(ms: ms, running: running)
-        }
-
-        /// 同值去重后再下发，并记录已发送值。
-        ///
-        /// 页面收到 `sync(ms, running, rate)` 时会无条件重置外推纪元
-        /// （`_l = now; co = ms`），代价是一次 JS 调用 + 一次跨进程消息。
-        /// 位置几乎没变时这次重置毫无收益，纯属浪费——按 5ms 阈值跳过。
-        private func sendClock(ms: Int, running: Bool) {
-            // 首次（`lastSentMs == nil`）一定要发；此后才做同值去重。
-            if let last = lastSentMs, abs(ms - last) < AMLLClockPolicy.dedupeThresholdMs { return }
-            lastSentMs = ms
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
-        }
-
-        /// 把歌词页时钟**硬校准**到指定位置，并以该位置为新纪元重新开始外推。
-        ///
-        /// 对应 RN 版的 `emitSeek` / kumone 的 `seekCommand`：拖动结束与跳转时下发一次，
-        /// 让 AMLL 立刻落到准确时间，而不是等下一次 100ms 采样慢慢追——那个追赶过程
-        /// 在无损音质下可能持续很久，听感上就是「歌词和歌声错开」。
-        ///
-        /// 拖动过程中**不**下发：高频注入会不断重置外推纪元、挤掉最终那次校准，
-        /// 反而导致松手后彻底脱节（RN 源码里明确记录过这个坑）。
-        /// 拖动中的跟手由 `displayTime` → `scrubTime` 经 `pushClock` 自然驱动。
-        private func hardCalibrate(to seconds: TimeInterval) {
-            guard ready, seconds.isFinite else { return }
-            let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-            // 页面工作在「歌词时间 = 播放位置 + 偏移」的坐标系里。
-            let ms = Int(((max(0, seconds) + offset) * 1000).rounded())
-            // 目标与页面当前所在位置几乎一致时无需硬校准，避免无谓的纪元重置。
-            if let last = lastSentMs, abs(ms - last) < AMLLClockPolicy.calibrationThresholdMs { return }
-            lastSentMs = ms
-            lastSampleMs = ms
-            let player = PlayerService.shared
-            let running = player.isPlaying && !player.isBuffering
-            // 两步都用「无条件落位」的路径：
-            // 1. `sync` 会顺手同步播放/暂停状态（页面在切歌瞬间可能还停在旧的暂停态）；
-            // 2. `hardCalibrate` 不做「偏差是否超过 600ms」的判断，无论多小都强制落位。
-            //    单靠 `sync` 不够：它在偏差小于 600ms 时只改基准值而不调 `setCurrentTime`，
-            //    而那正是无损音质下拖动后残留几十到几百毫秒误差的典型区间。
-            run("AMLLBridge.sync(\(ms), \(running), 1.0)")
-            run("AMLLBridge.hardCalibrate(\(ms))")
         }
 
         private func run(_ script: String) {
@@ -643,70 +311,24 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any] else { return }
-            // 官方页用 `{name: "ready", data: {...}}`；注入层沿用同一约定。
-            // 旧版页面用的是 `{type: ...}`，两种都接住，避免切换页面时静默失联。
-            let type = (body["name"] as? String) ?? (body["type"] as? String)
-            guard let type else { return }
-            // 官方把负载放在 `data` 里；旧版是平铺在顶层。统一取出来。
-            let payload = (body["data"] as? [String: Any]) ?? body
-
+            guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             switch type {
             case "ready":
-                // 这条日志是整条链路的「心脏起搏」信号。如果用户反馈「播放器卡死 /
-                // 歌词不出来」，第一件事就是看有没有这行：
-                //   * **没有** → 页面的 `ready` 没到 Swift。历史上真凶是官方页往
-                //     `messageHandlers.amllEvent` 发消息，而 Swift 注册的是 `amll`，
-                //     名字不匹配（由注入层的转发 shim 修复）。若再次出现，先查
-                //     `AMLLLyricsPage.html` 里的 `bridgeAmllEvent` 是否还在。
-                //   * **有但反复** → 页面被销毁重建了（`AMLLWebLyricsView` 不该
-                //     随 `showLyrics` 创建/销毁）。
-                print("[AMLL] 页面就绪（ready）：开始下发歌词与背景配置")
                 ready = true
                 flushWork?.cancel()
                 applyFontWeight(fontWeight)
-                // 页面刚就绪：把背景配置重放一次。
-                // `updateUIView` 里那次下发会因为 `ready == false` 被挡掉，
-                // 不去重放的话，用户改过的背景设置要等下一次 update 才生效。
-                appliedBackground = nil
-                appliedAlbumImage = nil
-                replayBackground()
                 flushPending()
             case "fps":
-                let fps = (payload["fps"] as? NSNumber)?.intValue ?? 0
+                let fps = (body["fps"] as? NSNumber)?.intValue ?? 0
                 print("[AMLL] 歌词页实测帧率: \(fps) fps（屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz）")
-            case "bgTuning":
-                // 注入层在页面就绪后回报：是否成功截获到官方流动背景渲染器，
-                // 以及当前生效的帧率 / 分辨率档位。
-                //
-                // 这一条很有用：官方页把渲染器藏在模块作用域里，我们只能靠
-                // `Function.prototype.bind` 的 hook 去截获。若某天官方改版让
-                // hook 失灵，这里会打印 gotRenderer=false，性能档位就退化为
-                // 无效——有这行日志能立刻定位，而不是等用户反馈「设置没反应」。
-                let got = (payload["gotRenderer"] as? Bool) ?? ((payload["gotRenderer"] as? NSNumber)?.boolValue ?? false)
-                let fps = (payload["fps"] as? NSNumber)?.intValue ?? 0
-                let scale = (payload["scale"] as? NSNumber)?.doubleValue ?? 0
-                print("[AMLL] 背景渲染器接入: \(got ? "成功" : "失败")，\(fps) fps · \(scale)x 渲染分辨率")
             case "seek":
-                guard let milliseconds = (payload["time"] as? NSNumber)?.doubleValue else { return }
+                guard let milliseconds = (body["time"] as? NSNumber)?.doubleValue else { return }
                 // The page works in lyric time (clock + offset): undo the offset to get the playback position.
                 let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-                let target = max(0, milliseconds / 1000 - offset)
-                PlayerService.shared.seek(to: target)
-                // 页面内点歌词行跳转：不走 SwiftUI 的 `currentTime` 变化（那次跳转是异步落地的），
-                // 这里直接硬校准，语义与 RN 版 `line-click` → `emitSeek` 完全一致。
-                hardCalibrate(to: target)
+                PlayerService.shared.seek(to: max(0, milliseconds / 1000 - offset))
             default:
                 break
             }
-        }
-
-        /// 页面就绪后重放背景配置。
-        ///
-        /// 需要保存一份「最新意图」，因为 `ready` 回调只能拿到当时的值。
-        private func replayBackground() {
-            guard let pending = desiredBackground else { return }
-            applyBackground(mode: pending.mode, quality: pending.quality, albumID: desiredAlbumImage)
         }
 
         /// The lyric lines in AMLL's `LyricLine` shape, as a JavaScript string literal holding the JSON.
