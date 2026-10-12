@@ -161,13 +161,16 @@ final class PlayerCore: NSObject, ObservableObject {
         }
     }
 
-    func playCurrentItem(seekTo time: TimeInterval, autoPlay: Bool = true, preferOfficial: Bool = false) {
+    func playCurrentItem(seekTo time: TimeInterval, autoPlay: Bool = true, preferOfficial: Bool = false, isReload: Bool = false) {
         guard let item = currentItem else { return }
         isLoading = true
         currentTime = time
         if item.duration > 0 { duration = item.duration }
-        // 换曲目 / 重新解析：清除「官方通道已重试」标记，新歌可再次检测试听
-        if !preferOfficial {
+        // 换曲目 / 重新解析：清除「官方通道已重试」标记，新歌可再次检测试听。
+        // ⚠️ 断流重载（isReload）**不清**：重载是同一首歌的续播，清掉会让
+        //    LX 重新给出试听链接时再次触发「试听拦截 → 官方重播 seekTo 0」，
+        //    表现即「拖动进度条后歌曲跳回开头」。
+        if !preferOfficial, !isReload {
             officialRetriedTrackKey = nil
         }
         Task {
@@ -195,6 +198,12 @@ final class PlayerCore: NSObject, ObservableObject {
                 }
             } catch {
                 isLoading = false
+                // 解析失败（LX 源偶发限流 / 官方接口抖动）：明确提示。
+                // ⚠️ 绝不在此处自动 next() —— 换歌必须由用户或「自然播完」触发。
+                PlayerDiag.log("解析播放地址失败：\(error.localizedDescription)")
+                await MainActor.run {
+                    ToastCenter.shared.show("播放地址解析失败，请稍后重试")
+                }
             }
         }
     }
@@ -271,6 +280,7 @@ final class PlayerCore: NSObject, ObservableObject {
         scrubTime = target
         currentTime = target
         isScrubbing = false
+        markUserSeek()
         engine.seek(to: target)
     }
 
@@ -282,7 +292,23 @@ final class PlayerCore: NSObject, ObservableObject {
         }
         let target = max(0, time)
         currentTime = target
+        markUserSeek()
         engine.seek(to: target)
+    }
+
+    /// 最近一次**用户主动 seek**（拖进度条 / 点歌词 / 锁屏拖动）的时间戳。
+    ///
+    /// ★ 拖动后 CDN 必然要按新位置重发 Range 请求，第三方/官方 CDN 都可能
+    ///   掐断连接 —— mpv 把「流被掐断」报告成 END_FILE(EOF)。这段窗口期内
+    ///   的 EOF 是**预期内的噪音**，绝不能被解读成「播完 / 试听」触发
+    ///   next() 或官方重播（「一拖动就自动切歌」的根源）。8 秒后恢复正常判定。
+    private var lastUserSeekAt: CFAbsoluteTime = 0
+    private let seekNoiseWindow: CFAbsoluteTime = 8
+    private var isWithinSeekNoiseWindow: Bool {
+        CFAbsoluteTimeGetCurrent() - lastUserSeekAt < seekNoiseWindow
+    }
+    private func markUserSeek() {
+        lastUserSeekAt = CFAbsoluteTimeGetCurrent()
     }
 
     /// 音量（0~1），来自 PlayerService 的桥接
@@ -377,6 +403,23 @@ final class PlayerCore: NSObject, ObservableObject {
     private func handleTrackEnded(_ reason: MPVEngine.TrackEndReason) {
         // 换曲触发旧文件的 END_FILE(STOP) 已在引擎层过滤
 
+        // ★★★ 拖动 seek 噪音窗口：用户 seek 后 8s 内的 END_FILE（EOF/error）
+        //    全部视为「CDN 掐断」的预期噪音 —— **一律重载续播**，跳过所有
+        //    nearEnd 判定 / 试听检测 / next() / 官方重播。
+        //    这是「一拖动就自动切歌」的总开关：seek 后任何自动切歌机制都不允许生效。
+        //    （重载保留 5s 冷却，避免 CDN 持续掐断时的重载风暴。）
+        if reason != .stop, isWithinSeekNoiseWindow {
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - lastAutoReloadAt >= 5 else {
+                PlayerDiag.log("seek 噪音窗口 + 重载冷却中，忽略本次 END_FILE")
+                return
+            }
+            lastAutoReloadAt = now
+            PlayerDiag.log("seek 后流被掐断（\(String(format: "%.1f", CFAbsoluteTimeGetCurrent() - lastUserSeekAt))s 内）→ 静默重载续播 pos=\(String(format: "%.1f", currentTime))")
+            playCurrentItem(seekTo: currentTime, autoPlay: true, isReload: true)
+            return
+        }
+
         // ① 试听片段检测：**只在「疑似自然播完」时触发**（EOF 且位置接近
         //    实际播放的 duration），且**每首歌只尝试一次**。自定义音源对
         //    VIP/无版权歌曲常返回 15~30s 试听链接，播完是真 EOF、位置接近
@@ -447,7 +490,7 @@ final class PlayerCore: NSObject, ObservableObject {
         lastAutoReloadAt = now
         PlayerDiag.log("播放中断 reason=\(reason) pos=\(String(format: "%.1f", currentTime))/\(String(format: "%.1f", duration)) → 重载续播")
         ToastCenter.shared.show("网络波动，已自动恢复播放")
-        playCurrentItem(seekTo: currentTime, autoPlay: true)
+        playCurrentItem(seekTo: currentTime, autoPlay: true, isReload: true)
     }
 
     private func setupTick() {
@@ -471,7 +514,9 @@ final class PlayerCore: NSObject, ObservableObject {
         //   播放开始 1~2 秒内 mpv 就能报告真实 duration。一旦发现真实时长远短于
         //   歌曲元数据（短 20s+ 且未尝试过官方通道），立即换官方通道重播，
         //   而不是等播完试听才发现（用户几乎无感）。
-        if !isScrubbing,
+        //   ⚠️ seek 噪音窗口内不触发：拖动后的重载文件 duration 报告尚不稳定，
+        //   且重载场景下用户已在目标位置听，绝不允许被拽回 0。
+        if !isScrubbing, !isWithinSeekNoiseWindow,
            let item = currentItem,
            item.duration > 30,
            duration > 0, duration < item.duration - 20,
