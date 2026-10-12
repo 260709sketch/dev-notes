@@ -159,8 +159,9 @@ final class PlayerService: ObservableObject {
     @Published var volume: Float {
         didSet {
             AVAudioSession.activateIfNeeded()
-            // 桥接：通过 MPVolumeView 间接控制系统音量（此处简化为 UserDefaults 记录）
             UserDefaults.standard.set(volume, forKey: "player.volume")
+            // MPV 内核：直接下发到引擎的 volume 属性（0~100）
+            PlayerCore.shared.applyVolume(volume)
         }
     }
     @Published var isMuted: Bool = false
