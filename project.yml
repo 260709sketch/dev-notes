@@ -40,10 +40,12 @@ targets:
         # ★ 顶部/底部白条的唯一根因：缺 UILaunchScreen 时 iOS 会把 App 当成
         #   旧式应用「兼容模式」运行 —— 窗口不铺满整屏，状态栏与 Home 指示条
         #   两条区域用启动屏底色（白）填充，SwiftUI 里加多少 ignoresSafeArea
-        #   都够不到窗口外面。声明 UILaunchScreen（即使为空）即恢复全屏窗口。
-        #   UIColorName 指向 Assets 里的 LaunchBackground，让启动瞬间也跟随深浅色。
-        UILaunchScreen:
-          UIColorName: LaunchBackground
+        #   都够不到窗口外面。
+        #   必须是**空字典**（与 kumone 完全一致）：kumone 的 plist 注释明确写了
+        #   「empty UILaunchScreen opts the app into native full-screen rendering」。
+        #   ⚠️ 不要加 UIColorName 指向色集 —— 用户实测 78fa838f（UIColorName 版）
+        #   白条依旧；kumone 的空字典方案是经过验证的唯一可靠写法。
+        UILaunchScreen: {}
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:

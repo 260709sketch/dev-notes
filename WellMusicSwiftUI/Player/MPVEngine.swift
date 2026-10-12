@@ -50,10 +50,12 @@ final class MPVEngine: @unchecked Sendable {
         // 纯音频：关视频输出与视频解码，省 CPU/内存
         mpv_set_option_string(h, "vo", "null")
         mpv_set_option_string(h, "vid", "no")
-        // ⚠️ 网络流缓存：预读要**足够大**。readahead 太小（15s）会让缓冲周期性
-        // 耗尽 → paused-for-cache 翻转 → 播放页 running 翻转 → AMLL 间奏点
-        // 反复重置（「一闪一闪」）甚至断流。给足 60s 预读让网络波动被缓冲吸收。
-        mpv_set_option_string(h, "cache", "no")
+        // ⚠️ 网络流缓存：必须**开**。曾经误设 `cache=no` —— 那会让下面两个
+        // demuxer 缓存参数**全部失效**，网络流零缓冲：任何 seek 都要扔掉全部
+        // 已缓冲数据、重新发 Range 请求，LX 第三方 CDN 对频繁 Range 很敏感，
+        // 一掐断就是 END_FILE(EOF)，表现即「点一下进度条就切歌 / 听一会就断」。
+        // cache=yes + 60s 预读让网络波动被缓冲吸收，seek 优先命中缓存不回源。
+        mpv_set_option_string(h, "cache", "yes")
         mpv_set_option_string(h, "demuxer-max-bytes", "96MiB")
         mpv_set_option_string(h, "demuxer-readahead-secs", "60")
         // 网络读超时：避免挂死（断流会以 END_FILE 报告，由上层恢复）
@@ -154,13 +156,20 @@ final class MPVEngine: @unchecked Sendable {
         if let ua = userAgent {
             mpv_set_option_string(h, "user-agent", ua)
         }
-        if let ref = referer, !ref.isEmpty {
-            // mpv 内置 referrer 选项：可靠的来源头下发
-            mpv_set_option_string(h, "referrer", ref)
-        }
+        // ⚠️ referrer 是**全局残留**选项：上一首 LX 源设的 Referer 会一直留着，
+        // 切到网易云官方 CDN（或反过来）时带着错误的 Referer 就是 403/掐流。
+        // 所以「本曲没有 Referer」时必须显式清空，不能只是不设置。
+        mpv_set_option_string(h, "referrer", referer ?? "")
 
+        // 起播位置走 `start` 选项：它在文件加载时生效。
+        // ❌ 不能「loadfile 之后立刻 seek」—— 文件还没加载完，seek 会被丢弃，
+        // 断流重载就永远从头播（表现即「点进度条 → 歌跳回开头/换歌」）。
+        if startAt > 0 {
+            mpv_set_option_string(h, "start", String(format: "%.3f", max(0, startAt)))
+        } else {
+            mpv_set_option_string(h, "start", "0")
+        }
         command("loadfile", [url, "replace"])
-        if startAt > 0 { seek(to: startAt) }
         setPaused(!autoPlay)
     }
 

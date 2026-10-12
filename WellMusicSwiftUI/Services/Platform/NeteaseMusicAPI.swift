@@ -522,6 +522,12 @@ final class NeteaseMusicAPI {
 
     // MARK: 听歌排行
 
+    /// 听歌排行单条记录
+    struct PlayRecordItem {
+        let song: MusicItem
+        let playCount: Int
+    }
+
     private struct PlayRecordResponse: Decodable {
         var code: Int?
         var list: [Item]?

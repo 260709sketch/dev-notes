@@ -402,6 +402,7 @@ final class PlayerCore: NSObject, ObservableObject {
         // ② 真·自然播完（EOF 且位置接近实际时长）
         let nearEnd = duration > 0 && currentTime >= duration - 5
         if reason == .eof, nearEnd {
+            PlayerDiag.log("自然播完 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) → 下一首")
             next()
             return
         }

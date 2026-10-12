@@ -25,10 +25,7 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
-	<dict>
-		<key>UIColorName</key>
-		<string>LaunchBackground</string>
-	</dict>
+	<dict/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
