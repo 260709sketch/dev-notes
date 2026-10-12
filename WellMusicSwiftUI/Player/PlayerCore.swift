@@ -112,10 +112,28 @@ final class PlayerCore: NSObject, ObservableObject {
         engine.onEndOfFile = { [weak self] in
             Task { @MainActor in self?.next() }
         }
-        // 恢复上次的音量（PlayerService 桥接的 UserDefaults）
-        applyVolume(UserDefaults.standard.object(forKey: "player.volume") as? Float ?? 0.7)
+        // 音量：读持久化值（含旧默认迁移，见 restoredVolume）
+        applyVolume(Self.restoredVolume())
         setupTick()
         setupRemoteCommands()
+    }
+
+    /// 读取持久化音量。
+    ///
+    /// ⚠️ 迁移逻辑：AVPlayer 时代音量条**从未实际生效**（AVPlayer 无软件音量，
+    /// 旧 didSet 只写 UserDefaults），UserDefaults 里的 0.7 只是默认值被写回，
+    /// 并不是用户意图。MPV 的 `volume` 是**软件音量** —— 会真实衰减 PCM 信号，
+    /// 默认 70% 等于让响度凭空小 30%、还多做一次浮点乘法。所以把旧默认迁移为
+    /// 100%，响度完全交给系统音量键（硬件/系统混音）。
+    static func restoredVolume() -> Float {
+        let d = UserDefaults.standard
+        guard d.object(forKey: "player.volume") != nil else { return 1.0 }
+        let v = d.float(forKey: "player.volume")
+        if abs(v - 0.7) < 0.001 {
+            d.set(Float(1.0), forKey: "player.volume")
+            return 1.0
+        }
+        return v
     }
 
     deinit {

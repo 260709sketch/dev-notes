@@ -51,6 +51,15 @@ final class MPVEngine: @unchecked Sendable {
         mpv_set_option_string(h, "demuxer-readahead-secs", "20")
         // 播完自然结束（触发 END_FILE/EOF），不保留最后一帧
         mpv_set_option_string(h, "keep-open", "no")
+
+        // ── 音质保障（显式声明，防止构建默认值意外）──
+        // replaygain 必须关：否则带 ReplayGain 标签的文件会被自动衰减
+        mpv_set_option_string(h, "replaygain", "no")
+        // 不对声道做任何下混/归一化
+        mpv_set_option_string(h, "audio-normalize-downmix", "no")
+        // 采样率保持源文件原样（44.1k 就以 44.1k 交给系统混音器，
+        // 与 AVPlayer/CoreAudio 的路径一致，不做播放器层的强制重采样）
+        mpv_set_option_string(h, "audio-samplerate", "")
         // 静音检测的音画同步阈值放宽对纯音频无意义，保持默认
 
         guard mpv_initialize(h) >= 0 else {

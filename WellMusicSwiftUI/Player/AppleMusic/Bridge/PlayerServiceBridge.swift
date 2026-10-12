@@ -238,7 +238,9 @@ final class PlayerService: ObservableObject {
     private var syncTimer: Timer?
 
     private init() {
-        self.volume = UserDefaults.standard.object(forKey: "player.volume") as? Float ?? 0.7
+        // ⚠️ 用 PlayerCore.restoredVolume()（含旧默认 0.7 → 1.0 的迁移）：
+        // MPV 内核下 volume 是真软件音量，旧默认值会凭空把响度拉低 30%
+        self.volume = PlayerCore.restoredVolume()
         // ⚠️ 不启动 `clock`：它是 Kumone 带来的第二个 20Hz 时钟，与
         // `PlayerCore.currentTime` 数据完全重复，且活代码里已无人观察。
         // 详见 `PlayerClock` 的说明。这里保留调用以标注意图。
