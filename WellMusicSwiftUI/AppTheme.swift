@@ -5,7 +5,15 @@ enum AppTheme {
     /// 主题红
     static let accent = Color(red: 0.93, green: 0.25, blue: 0.24)
 
-    static let background = Color(uiColor: .systemBackground)
+    /// 全页兜底背景色（覆盖 MainTabView 根、各 Tab 页面、Settings 等所有 page 兜底）。
+    ///
+    /// 必须是 **systemGroupedBackground**，不能用 systemBackground：
+    ///   * systemBackground（light = #FFFFFF）会让 nav bar / tab bar 与 List 行块
+    ///     之间的"白条"明显可见（详见 `WellMusicApp.bootstrapNavBarAppearance`）；
+    ///   * systemGroupedBackground（light = #F2F2F7）与 List(.insetGrouped) 行块的
+    ///     secondarySystemGroupedBackground（白）天然分层，又不会跟 nav bar / tab bar
+    ///     形成色差 —— iOS 26 液态玻璃 tab bar 模糊下层后显同浅灰，整体一致。
+    static let background = Color(uiColor: .systemGroupedBackground)
     static let secondaryBackground = Color(uiColor: .secondarySystemBackground)
     static let tertiaryBackground = Color(uiColor: .tertiarySystemBackground)
     static let separator = Color(uiColor: .separator)
