@@ -165,9 +165,23 @@ final class PlayerService: ObservableObject {
     }
     @Published var isMuted: Bool = false
 
-    /// AMLL WebView 需要的实时播放时间（毫秒级精度，以秒为单位的 Double）
+    /// AMLL 歌词页的时间源（秒），**同步即时**。
+    ///
+    /// 拖动中用 `scrubTime`（跟手），其余直接读 `AVPlayer.currentTime()`
+    /// （即 `PlayerCore.playerPosition`，不经任何轮询缓存）。
+    ///
+    /// ⚠️ 这里**不能**沿用 `PlayerCore.displayTime`（= `currentTime`）。
+    ///
+    /// `currentTime` 由 `addPeriodicTimeObserver` 维护，而传入的 0.05s 只是
+    /// 「**至少**这么频繁」—— **无损 / Hi-Res 大文件上实际回调会被明显拉长**。
+    /// 更要命的是 AMLL 页面的 `sync` 是**无条件** `co = ms`：每推送一次就把
+    /// 外推基准重置成这个滞后值。于是歌词被持续钉在滞后位置上，
+    /// **无论重锚多少次都追不上** —— 这正是「拖完进度条歌词慢半拍」的根因。
+    /// 换成同步值后，每一次推送本身就是准确基准，滞后当场消失。
     var livePlaybackTime: TimeInterval {
-        PlayerCore.shared.displayTime
+        let core = PlayerCore.shared
+        if core.isScrubbing { return core.scrubTime }
+        return core.playerPosition
     }
 
     /// 歌词时钟专用的**精确**锚点。

@@ -762,6 +762,8 @@ struct LyricOffsetSheet: View {
     /// 下限 / 上限 / 最小步进（秒）
     private static let range: ClosedRange<Double> = -5.0...5.0
     private static let step: Double = 0.1
+    /// 精调步进（秒）：10ms。用于把蓝牙 / 无损输出的残余偏差压到几乎听不出。
+    private static let fineStep: Double = 0.01
 
     /// 本地草稿值：拖动过程中不反复写 UserDefaults，松手才落盘
     @State private var draft: Double = 0
@@ -879,13 +881,27 @@ struct LyricOffsetSheet: View {
         .padding(.horizontal, 20)
     }
 
-    /// 微调：-0.1 / +0.1
+    /// 微调：先粗后细。
+    ///
+    /// 只有 0.1s 一档对「只差一点点」太粗 —— 蓝牙耳机 / 无损输出的残余延迟
+    /// 常常只有几十毫秒，用 0.1s 去凑只会一直过冲。所以再给一档 10ms。
     private var fineTuneRow: some View {
-        HStack(spacing: 16) {
-            fineButton(systemName: "minus", delta: -Self.step, label: "减少 0.1 秒")
-            fineButton(systemName: "plus", delta: Self.step, label: "增加 0.1 秒")
+        VStack(spacing: 10) {
+            fineTuneLine(title: "粗调 0.1s", delta: Self.step)
+            fineTuneLine(title: "精调 0.01s", delta: Self.fineStep)
         }
         .padding(.horizontal, 20)
+    }
+
+    private func fineTuneLine(title: String, delta: Double) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .leading)
+            fineButton(systemName: "minus", delta: -delta, label: "\(title) 减少")
+            fineButton(systemName: "plus", delta: delta, label: "\(title) 增加")
+        }
     }
 
     private func fineButton(systemName: String, delta: Double, label: String) -> some View {
@@ -923,7 +939,8 @@ struct LyricOffsetSheet: View {
     }
 
     private func formatted(_ value: Double) -> String {
-        String(format: "%+.1f s", value)
+        // 两位小数：精调步进是 10ms，一位小数看不出变化
+        String(format: "%+.2f s", value)
     }
 
     private func directionText(_ value: Double) -> String {

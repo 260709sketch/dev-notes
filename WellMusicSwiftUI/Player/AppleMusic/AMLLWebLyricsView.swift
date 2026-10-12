@@ -301,18 +301,41 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
 
         private var lastSampleMs = 0
+        /// 最近一次「位置确实在推进」的时刻（秒，`timeIntervalSinceReferenceDate`）。
+        /// 用于以滑动窗口判定是否在走，见 `pushClock()`。
+        private var lastMovementAt: TimeInterval = 0
 
-        /// While a song is loading the player already reports "playing" but the position stands still. The page would
-        /// keep counting forward from the last sample and then find the next one far behind (a "jump"), over and over:
-        /// that is the stutter on every song change. So the page is only told "playing" when the position is really
-        /// moving; otherwise it holds still.
+        /// 把当前播放位置推给歌词页。
+        ///
+        /// ## 关于 `running`（页面时钟的播放/暂停）
+        ///
+        /// 页面收到 `running = false` 会**暂停自己的时钟**（`Nt.pause()`），
+        /// 此时歌词只能靠下一次推送硬跳。所以这个标志一旦被误判成 false，
+        /// 听感就是「歌词比歌声慢一点、而且发顿」。
+        ///
+        /// ⚠️ 早先的实现用**相邻两次采样**判断是否在走（`abs(ms - last) >= 30`）。
+        /// 但时间源在无损 / Hi-Res 文件上本身就有抖动，单次采样不前进很常见，
+        /// 于是一秒钟里会被误判好几次。现在改成**滑动窗口**：
+        /// 只要最近 0.5 秒内位置推进过，就认为在走。真正的缓冲卡顿
+        /// （位置连续 0.5 秒纹丝不动）依然会被正确识别。
+        ///
+        /// 同时这里**不再**叠加 `isBuffering`：那个标志一旦因为别的原因卡住，
+        /// 会让页面时钟永久暂停，比偶尔多外推几十毫秒严重得多 ——
+        /// 而真正的卡顿已经被上面的窗口判定覆盖了。
         private func pushClock() {
             guard ready else { return }
             let player = PlayerService.shared
             let ms = Int(currentSeconds() * 1000)
-            let moving = abs(ms - lastSampleMs) >= 30
+
+            let now = Date().timeIntervalSinceReferenceDate
+            if lastMovementAt == 0 { lastMovementAt = now }
+            if abs(ms - lastSampleMs) >= 30 {
+                lastMovementAt = now
+            }
             lastSampleMs = ms
-            let running = player.isPlaying && !player.isBuffering && moving
+
+            let moving = (now - lastMovementAt) < 0.5
+            let running = player.isPlaying && moving
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
@@ -347,8 +370,9 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             guard precise.isFinite else { return }
             let ms = Int(((max(0, precise) + offset) * 1000).rounded())
             lastSampleMs = ms
+            lastMovementAt = Date().timeIntervalSinceReferenceDate
             let player = PlayerService.shared
-            let running = player.isPlaying && !player.isBuffering
+            let running = player.isPlaying
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 

@@ -57,7 +57,7 @@ struct MainTabView: View {
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
                 // 原生 TabView 不提供导航容器，这里同样由我们补上
                 // （页面自身已不带 NavigationStack，见 `page(_:_:)`）。
-                NavigationStack(path: $radioPath) { RadioView() }
+                NavigationStack(path: $radioPath) { DiscoverView() }
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
                 NavigationStack(path: $favoritesPath) { FavoritesView() }
@@ -84,7 +84,7 @@ struct MainTabView: View {
             ZStack {
                 page(.favorites) { FavoritesView() }
                 page(.profile) { ProfileView() }
-                page(.radio) { RadioView() }
+                page(.radio) { DiscoverView() }
                 page(.search) { SearchView() }
             }
             // 内层 ZStack 撑满可用空间，把每个页面约束到同一尺寸，

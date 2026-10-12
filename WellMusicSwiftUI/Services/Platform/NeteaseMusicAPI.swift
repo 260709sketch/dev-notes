@@ -92,6 +92,36 @@ final class NeteaseMusicAPI {
         }
     }
 
+    // MARK: 发现页的响应结构
+
+    private struct PersonalizedPlaylistResponse: Decodable {
+        var code: Int?
+        var result: [PlaylistItem]?
+    }
+
+    private struct ToplistItem: Decodable {
+        var id: Int?
+        var name: String?
+        var coverImgUrl: String?
+        var updateFrequency: String?
+    }
+
+    private struct ToplistResponse: Decodable {
+        var code: Int?
+        var list: [ToplistItem]?
+    }
+
+    private struct NewAlbumsResponse: Decodable {
+        var code: Int?
+        var albums: [AlbumItem]?
+    }
+
+    private struct TopArtistsResponse: Decodable {
+        var code: Int?
+        var list: Body?
+        struct Body: Decodable { var artists: [ArtistItem]? }
+    }
+
     // MARK: 搜索（cloudsearch，按类型）
 
     /// 网易云搜索类型：1 单曲 / 10 专辑 / 100 歌手 / 1000 歌单
@@ -270,6 +300,52 @@ final class NeteaseMusicAPI {
         return (resp.hotSongs ?? []).compactMap(Self.mapSong)
     }
 
+    // MARK: 发现页（推荐歌单 / 排行榜 / 新碟上架 / 热门歌手）
+    //
+    // 这几个接口都**不需要登录**，所以发现页在未登录状态下也能有内容 ——
+    // 这是它与「每日推荐」那类登录专属模块的关键区别。
+
+    /// 推荐歌单（个性化推荐）
+    func personalizedPlaylists(limit: Int = 30) async throws -> [WellPlaylistSummary] {
+        let params: [String: Any] = ["limit": limit, "total": true, "n": 1000, "csrf_token": ""]
+        let resp: PersonalizedPlaylistResponse = try await NeteaseCrypto.weapi(
+            "weapi/personalized/playlist", params: params, type: PersonalizedPlaylistResponse.self)
+        return (resp.result ?? []).compactMap(Self.mapPlaylist)
+    }
+
+    /// 排行榜列表（带更新频率）
+    func toplists() async throws -> [WellToplistSummary] {
+        let resp: ToplistResponse = try await NeteaseCrypto.weapi(
+            "weapi/toplist", params: ["csrf_token": ""], type: ToplistResponse.self)
+        return (resp.list ?? []).compactMap { item in
+            guard let id = item.id else { return nil }
+            return WellToplistSummary(
+                id: String(id),
+                name: item.name ?? "排行榜",
+                coverURL: item.coverImgUrl,
+                updateFrequency: item.updateFrequency
+            )
+        }
+    }
+
+    /// 新碟上架
+    func newAlbums(area: String = "ALL", limit: Int = 20) async throws -> [WellAlbumSummary] {
+        let params: [String: Any] = [
+            "area": area, "limit": limit, "offset": 0, "total": true, "csrf_token": "",
+        ]
+        let resp: NewAlbumsResponse = try await NeteaseCrypto.weapi(
+            "weapi/album/new", params: params, type: NewAlbumsResponse.self)
+        return (resp.albums ?? []).compactMap(Self.mapAlbum)
+    }
+
+    /// 热门歌手
+    func topArtists(limit: Int = 30) async throws -> [WellArtistSummary] {
+        let params: [String: Any] = ["type": 1, "limit": limit, "offset": 0, "total": true, "csrf_token": ""]
+        let resp: TopArtistsResponse = try await NeteaseCrypto.weapi(
+            "weapi/toplist/artist", params: params, type: TopArtistsResponse.self)
+        return (resp.list?.artists ?? []).compactMap(Self.mapArtist)
+    }
+
     // MARK: 播放地址（weapi 音质：standard/higher/exhigh/lossless/hires）
 
     func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
@@ -316,5 +392,43 @@ final class NeteaseMusicAPI {
         guard let musicSize, musicSize > 0 else { return nil }
         if let albumSize, albumSize > 0 { return "\(musicSize) 首单曲 · \(albumSize) 张专辑" }
         return "\(musicSize) 首单曲"
+    }
+
+    // MARK: 映射助手（发现页）
+
+    private static func mapPlaylist(_ item: PlaylistItem) -> WellPlaylistSummary? {
+        guard let id = item.id else { return nil }
+        return WellPlaylistSummary(
+            id: String(id),
+            name: item.name ?? "歌单",
+            coverURL: item.coverImgUrl,
+            playCount: item.playCount ?? 0,
+            trackCount: item.trackCount ?? 0,
+            creatorName: item.creator?.nickname
+        )
+    }
+
+    private static func mapAlbum(_ item: AlbumItem) -> WellAlbumSummary? {
+        guard let id = item.id else { return nil }
+        return WellAlbumSummary(
+            id: String(id),
+            name: item.name ?? "专辑",
+            picURL: item.picUrl,
+            artistName: item.artist?.name ?? "未知歌手",
+            platform: .netease,
+            albumMid: nil
+        )
+    }
+
+    private static func mapArtist(_ item: ArtistItem) -> WellArtistSummary? {
+        guard let id = item.id else { return nil }
+        return WellArtistSummary(
+            id: String(id),
+            name: item.name ?? "歌手",
+            picURL: item.picUrl,
+            platform: .netease,
+            mid: nil,
+            subtitle: artistSubtitle(musicSize: item.musicSize, albumSize: item.albumSize)
+        )
     }
 }

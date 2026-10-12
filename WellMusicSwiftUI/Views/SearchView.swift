@@ -44,7 +44,6 @@ struct SearchView: View {
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
     @State private var committedQuery = ""
-    @FocusState private var focused: Bool
 
     private var hasQuery: Bool {
         !committedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -57,8 +56,6 @@ struct SearchView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                searchBar
-
                 if hasQuery {
                     platformPicker
                     typePicker
@@ -81,46 +78,25 @@ struct SearchView: View {
             .padding(.top, 8)
         }
         .background(AppTheme.background)
-        .navigationTitle("搜索")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: taskID) {
-            model.clear()
-            await model.load(keyword: committedQuery)
+        // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
+        // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
+        // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
+        .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
+        .onSubmit(of: .search) {
+            committedQuery = searchText
         }
-    }
-
-    // MARK: 搜索框
-
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("搜索歌曲、歌手、专辑、歌单", text: $searchText)
-                .focused($focused)
-                .submitLabel(.search)
-                .autocorrectionDisabled()
-                .onSubmit { committedQuery = searchText }
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    committedQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(AppTheme.secondaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .padding(.horizontal, WellSearchMetrics.contentInset)
         .onChange(of: searchText) { newValue in
+            // 400ms 防抖：输入过程中不逐字打接口
             Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 if searchText == newValue { committedQuery = newValue }
             }
+        }
+        .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: taskID) {
+            model.clear()
+            await model.load(keyword: committedQuery)
         }
     }
 
