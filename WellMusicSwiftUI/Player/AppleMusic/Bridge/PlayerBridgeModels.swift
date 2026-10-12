@@ -181,6 +181,27 @@ enum Destination: Hashable {
     case albumWithMid(Int, String, AlbumSummary)
 }
 
+// MARK: - NowPlayingMode
+enum NowPlayingMode: String, CaseIterable, Identifiable {
+    case appleMusic
+    case immersive
+    case immersiveV2
+    case vinyl
+    case minimal
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .appleMusic: return "Apple Music"
+        case .immersive: return "沉浸"
+        case .immersiveV2: return "沉浸 V2"
+        case .vinyl: return "黑胶"
+        case .minimal: return "极简"
+        }
+    }
+}
+
 // MARK: - RepeatMode (scoped for PlayerService)
 enum RepeatMode: String, Codable {
     case off
