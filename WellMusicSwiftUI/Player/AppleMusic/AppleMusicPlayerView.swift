@@ -258,6 +258,49 @@ struct AppleMusicPlayerView: View {
                 Label("歌词偏移", systemImage: "timer")
             }
 
+            // 歌词大小（Apple Music 播放器的 AMLL 歌词）
+            Menu {
+                ForEach([20, 22, 24, 26, 28, 30, 34, 38], id: \.self) { size in
+                    Button {
+                        settings.appleMusicAmllFontSize = Double(size)
+                    } label: {
+                        if abs(settings.appleMusicAmllFontSize - Double(size)) < 0.5 {
+                            Label("\(size) pt", systemImage: "checkmark")
+                        } else {
+                            Text("\(size) pt")
+                        }
+                    }
+                }
+            } label: {
+                Label("歌词大小", systemImage: "textformat.size")
+            }
+
+            // 歌词字重
+            Menu {
+                ForEach([500, 600, 700, 800, 900], id: \.self) { weight in
+                    Button {
+                        settings.appleMusicAmllFontWeight = weight
+                    } label: {
+                        let name: String = {
+                            switch weight {
+                            case 500: return "中等"
+                            case 600: return "半粗"
+                            case 700: return "粗体"
+                            case 800: return "特粗"
+                            default: return "极粗"
+                            }
+                        }()
+                        if settings.appleMusicAmllFontWeight == weight {
+                            Label(name, systemImage: "checkmark")
+                        } else {
+                            Text(name)
+                        }
+                    }
+                }
+            } label: {
+                Label("歌词字重", systemImage: "textformat.weight")
+            }
+
             // 播放器调整：背景明暗/暗度 + AMLL 歌词位置，集中在一个页面里
             Button {
                 showPlayerAdjustSheet = true

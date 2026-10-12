@@ -73,7 +73,7 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
-            Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
+            Tab("主页", systemImage: "house.fill", value: WellTab.radio) {
                 // 原生 TabView 不提供导航容器，这里同样由我们补上
                 // （页面自身已不带 NavigationStack，见 `page(_:_:)`）。
                 NavigationStack(path: $radioPath) { DiscoverView() }
@@ -167,7 +167,7 @@ struct MainTabView: View {
 
 extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
-        .init(tab: .radio, title: "发现", icon: "house"),
+        .init(tab: .radio, title: "主页", icon: "house"),
         .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),

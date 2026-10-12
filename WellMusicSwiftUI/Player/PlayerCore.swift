@@ -388,13 +388,16 @@ final class PlayerCore: NSObject, ObservableObject {
         // 换曲触发旧文件的 END_FILE(STOP) 已在引擎层过滤
         let nearEnd = duration > 0 && currentTime >= duration - 5
 
-        if reason == .eof, (duration <= 0 || nearEnd) {
+        if reason == .eof, nearEnd {
             // 真·自然播完
             next()
             return
         }
 
-        // 断流 / 播放错误：重载续播
+        // ⚠️ duration 读不到（<=0）时**一律按断流处理**：早先这里直接切歌，
+        // 但断流瞬间 duration 属性可能已不可用，会把断流误判成播完——
+        // 正是「放十几秒就切歌」在修复后仍残留的边界。断流误重载的代价
+        // （多解析一次地址）远小于误切歌（听歌被打断）。
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastAutoReloadAt >= 5 else {
             PlayerDiag.log("断流恢复冷却中（\(String(format: "%.1f", now - lastAutoReloadAt))s），忽略本次")

@@ -18,7 +18,7 @@ enum WellTab: String, CaseIterable, Identifiable {
         switch self {
         case .favorites: return "音乐库"
         case .profile: return "我的"
-        case .radio: return "发现"
+        case .radio: return "主页"
         case .search: return "搜索"
         }
     }

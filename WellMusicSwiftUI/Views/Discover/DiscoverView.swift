@@ -201,8 +201,8 @@ final class WellDiscoverViewModel: ObservableObject {
 /// 抽出来的理由：卡片尺寸是这一页的「节奏来源」—— 四个货架交替大小，
 /// 竖着滑下来才不会像一堵同样规格的墙。集中在这里便于整体调。
 enum DiscoverLayout {
-    /// 功能卡（横滑三张）
-    static let featureSize: CGFloat = 148
+    /// 功能卡（横滑三张）。加大一档：私人漫游 / 心动模式的压图文字才放得下。
+    static let featureSize: CGFloat = 176
     /// 推荐歌单
     static let cardLarge: CGFloat = 156
     /// 新碟上架（比推荐歌单小一档）
@@ -266,12 +266,11 @@ struct DiscoverView: View {
         }
         // ignoresSafeArea：否则屏幕最上/最下的安全区会露出下层底色。
         .background(AppTheme.background.ignoresSafeArea())
-        .navigationTitle("发现")
-        // 消除上/下白边：导航栏与 Tab 栏不再自带一块白底 —— 滚动时内容直接
-        // 从标题下穿过，页面背景（同一色）连续铺满整个屏幕，不再出现
-        // 「标题上/Tab 栏下多出一截白」的断层。
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarBackground(.hidden, for: .tabBar)
+        .navigationTitle("主页")
+        // 导航栏显示（与其他页面一致），但底色与页面同色 —— 既保留标题栏，
+        // 又不会在滚动时露出一截白色断层。
+        .toolbarBackground(AppTheme.background, for: .navigationBar)
+        .toolbarBackground(AppTheme.background, for: .tabBar)
         .task { await model.loadIfNeeded() }
         .refreshable { await model.reload() }
     }
@@ -279,6 +278,9 @@ struct DiscoverView: View {
     // MARK: 功能卡片
 
     /// 顶部横滑功能卡：每日推荐 / 私人漫游 / 心动模式。
+    ///
+    /// 「每日推荐」改用与推荐歌单货架**同款**的 `WellCoverCard`（方形封面 + 底部标题），
+    /// 点击行为不变（直接播日推队列）—— 用户要求它看起来像一张歌单卡。
     private var featureRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
@@ -287,12 +289,27 @@ struct DiscoverView: View {
                     Button {
                         start(feature)
                     } label: {
-                        WellFeatureCard(
-                            feature: feature,
-                            coverURL: cover(for: feature),
-                            subtitle: subtitle(for: feature),
-                            busy: model.busyFeature == feature
-                        )
+                        if feature == .daily {
+                            // 与「推荐歌单」同款歌单卡样式
+                            WellCoverCard(
+                                coverURL: cover(for: feature),
+                                title: "每日推荐",
+                                subtitle: feature.tagline,
+                                size: DiscoverLayout.featureSize
+                            )
+                            .overlay {
+                                if model.busyFeature == feature {
+                                    ProgressView().tint(.white)
+                                }
+                            }
+                        } else {
+                            WellFeatureCard(
+                                feature: feature,
+                                coverURL: cover(for: feature),
+                                subtitle: subtitle(for: feature),
+                                busy: model.busyFeature == feature
+                            )
+                        }
                     }
                     .buttonStyle(.plain)
                 }
@@ -342,7 +359,7 @@ struct DiscoverView: View {
     @ViewBuilder
     private var loadedBody: some View {
         if !model.playlists.isEmpty {
-            WellShelf(title: "推荐歌单", subtitle: "根据你的口味", action: nil) {
+            WellShelf(title: "推荐歌单", subtitle: nil, action: nil) {
                 ForEach(model.playlists.prefix(12)) { playlist in
                     NavigationLink {
                         WellSearchDetailView(
@@ -364,7 +381,7 @@ struct DiscoverView: View {
         }
 
         if !model.toplists.isEmpty {
-            WellShelf(title: "排行榜", subtitle: "实时更新") {
+            WellShelf(title: "排行榜", subtitle: nil) {
                 ForEach(model.toplists) { toplist in
                     NavigationLink {
                         WellSearchDetailView(
@@ -380,7 +397,7 @@ struct DiscoverView: View {
         }
 
         if !model.albums.isEmpty {
-            WellShelf(title: "新碟上架", subtitle: "本周新发行") {
+            WellShelf(title: "新碟上架", subtitle: nil) {
                 ForEach(model.albums) { album in
                     NavigationLink {
                         WellSearchDetailView(
@@ -404,7 +421,7 @@ struct DiscoverView: View {
         }
 
         if !model.artists.isEmpty {
-            WellShelf(title: "热门歌手", subtitle: "大家都在听") {
+            WellShelf(title: "热门歌手", subtitle: nil) {
                 ForEach(model.artists) { artist in
                     NavigationLink {
                         WellSearchDetailView(
