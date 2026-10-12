@@ -587,19 +587,18 @@ struct AppleMusicPlayerView: View {
             // 模糊封面背景（AMLL 和非 AMLL 模式都有）。
             //
             // 当前 AMLL 页面是**轻量歌词页**（403KB、无 WebGL 流动背景渲染器），
-            // 它自己不渲染背景层，所以模糊封面常驻，不需要「让位」。
+            // 它自己不渲染背景层，所以模糊封面常驻、不需要「让位」。
             CoverBlurBackground(url: coverURL, scheme: colorScheme)
                 .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
                 .ignoresSafeArea()
 
             // AMLL 歌词只在**展开歌词页时**才创建。
             //
-            // ⚠️ 关键：这里**不能**写成「常驻 + opacity 控制」。历史上常驻
-            // 配合官方 WebGL 完整页（478KB，带流动背景渲染器 Fu）意味着
-            // **打开播放器**就要加载整页并初始化 WebGL + 跑 GPU 着色器，
-            // 正是「打开播放器就卡死」的直接元凶。现在页面已回退为轻量页
-            // （403KB、无 WebGL），恢复到「点开歌词才创建」，打开播放器时
-            // 根本不存在 WebView，从根上杜绝打开即卡死。
+            // ⚠️ 关键：这里**不能**写成「常驻 + opacity 控制」。历史上常驻配合
+            // 官方 WebGL 完整页（478KB，带流动背景渲染器）意味着**打开播放器**
+            // 就要加载整页并初始化 WebGL + 跑 GPU 着色器，正是「打开播放器就卡死」
+            // 的直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复「点开
+            // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
             if settings.appleMusicUseAMLL && showLyrics {
                 AMLLWebLyricsView(useAppleMusicSettings: true)
                     .ignoresSafeArea()
@@ -608,14 +607,6 @@ struct AppleMusicPlayerView: View {
                     .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
             }
         }
-    }
-
-    /// AMLL 是否接管背景渲染。
-    ///
-    /// 当前轻量页（403KB）**不渲染背景**，所以恒为 false，模糊封面常驻。
-    /// 保留这个方法是为了和横屏布局的注释对齐，避免以后误以为「AMLL 会渲染背景」。
-    private var amllOwnsBackground: Bool {
-        false
     }
 
     // MARK: - 封面页
