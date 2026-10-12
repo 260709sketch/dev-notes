@@ -63,11 +63,12 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 松手瞬间可能滞后上百毫秒；而 `AVPlayer.currentTime()` 是同步即时值。
     /// 未加载曲目时回落到 0，避免 NaN 传进歌词页。
     ///
-    /// ⚠️ **seek 落地前钉在目标位置**（见 `seekLandingTarget`）：seek 发出到音频
-    /// 真正从新位置渲染出来之间有一个「缓冲空窗」，这期间任何时间源都**不允许外推**，
-    /// 否则歌词会带着空窗时长一路跑在人声前面 —— 这正是「拖一次进度条就永久脱节」的根。
+    /// ⚠️ **不再"钉死"到 seek 目标**：早先用 `seekLandingTarget` 把这里钉在目标、
+    /// 落地后才解除，本意是防外推，但"钉死一个假位置"会在落地瞬间制造一次
+    /// 「假静止段 + 突然跳变」，跳变又触发 AMLL 自己的 seek 检测器 → 歌词"快进好几段"。
+    /// 现在这里**永远诚实返回 AVPlayer 真实位置**；歌词时钟的冻结只靠 `running=false`
+    /// （页面暂停外推，但保留诚实位置），落地后由 `seekDidLandNotification` 硬跳校准。
     var playerPosition: TimeInterval {
-        if let target = seekLandingTarget { return target }
         let seconds = player.currentTime().seconds
         return seconds.isFinite ? max(0, seconds) : 0
     }

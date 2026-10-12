@@ -399,10 +399,13 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             // ⚠️ 拖动中一律 `running = false`：这时位置由**手指**决定，页面必须停在推给它的
             // 那个值上。若还说「在播放」，页面会从该值继续向前外推 —— 歌词就跑到手指前面去了
             // （表现是「拖着歌词，歌词自己往前溜」）。
-            // seek 落地前（`PlayerCore.seekLandingTarget` 持有目标）同理：位置钉在目标，
-            // 音频还没从新位置渲染，页面必须冻结等落地。
-            let rendering = PlayerCore.shared.isRenderingAudio && !PlayerCore.shared.isAwaitingSeekLanding
-            let running = !scrubbing && rendering && moving
+            //
+            // seek 缓冲空窗期同理：`isRenderingAudio`（timeControlStatus != .playing）本身
+            // 就已经是「音频没在渲染」的权威信号，缓冲空窗它必然为 false → running=false，
+            // 页面时钟冻结。**不再额外叠加 `!isAwaitingSeekLanding`**：那个标志是落地
+            // 监测的内部状态，和「音频在不在渲染」不同步，叠加只会造成落地信号发出后、
+            // isRenderingAudio 尚未翻转的瞬间多冻结一拍，引入新的滞后。
+            let running = !scrubbing && PlayerCore.shared.isRenderingAudio && moving
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
@@ -439,8 +442,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             let ms = Int(((precise + lyricTimeShift) * 1000).rounded())
             lastSampleMs = ms
             lastMovementAt = Date().timeIntervalSinceReferenceDate
-            // 落地信号来的时候音频确实在渲染；但保守起见仍以权威信号为准。
-            let running = PlayerCore.shared.isRenderingAudio && !PlayerCore.shared.isAwaitingSeekLanding
+            // 落地信号来的时候音频确实在渲染；以权威信号为准，不再叠加落地标志。
+            let running = PlayerCore.shared.isRenderingAudio
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
