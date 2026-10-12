@@ -50,10 +50,14 @@ final class MPVEngine: @unchecked Sendable {
         // 纯音频：关视频输出与视频解码，省 CPU/内存
         mpv_set_option_string(h, "vo", "null")
         mpv_set_option_string(h, "vid", "no")
-        // 网络流：开缓存，保证远端 FLAC 拖动后有足够数据立即续播
+        // 网络流：开缓存，保证远端 FLAC 拖动后有足够数据立即续播。
+        // ⚠️ 预读不要调太大：网易云 CDN 对同一 URL 的大范围 Range 拉取会限流/掐连接
+        // （表现为播放十几秒就 END_FILE(EOF)），16MiB + 10s 够拖动续播且不触发风控。
         mpv_set_option_string(h, "cache", "yes")
-        mpv_set_option_string(h, "demuxer-max-bytes", "64MiB")
-        mpv_set_option_string(h, "demuxer-readahead-secs", "20")
+        mpv_set_option_string(h, "demuxer-max-bytes", "16MiB")
+        mpv_set_option_string(h, "demuxer-readahead-secs", "10")
+        // 网络读超时：避免挂死（断流会以 END_FILE 报告，由上层恢复）
+        mpv_set_option_string(h, "network-timeout", "15")
         // 播完自然结束（触发 END_FILE/EOF），不保留最后一帧
         mpv_set_option_string(h, "keep-open", "no")
 
@@ -65,6 +69,13 @@ final class MPVEngine: @unchecked Sendable {
         // 采样率保持源文件原样（44.1k 就以 44.1k 交给系统混音器，
         // 与 AVPlayer/CoreAudio 的路径一致，不做播放器层的强制重采样）
         mpv_set_option_string(h, "audio-samplerate", "")
+
+        // ⚠️ 默认 User-Agent：mpv 自报 "libmpv 0.x"，网易云 CDN 会识别并掐断连接
+        // （表现为播放十几秒就断流切歌；QQ 的 CDN 无此策略）。伪装成浏览器。
+        // 官方平台 URL 的 headers 为空（ResolvePlayback 仅自定义音源带头），
+        // 所以这个默认值对网易云是**必需**的；loadfile 时可被 headers 覆盖。
+        mpv_set_option_string(h, "user-agent",
+                              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15")
         // 静音检测的音画同步阈值放宽对纯音频无意义，保持默认
 
         guard mpv_initialize(h) >= 0 else {
