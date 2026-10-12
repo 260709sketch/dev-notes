@@ -224,6 +224,46 @@ final class QQMusicAPI {
             platform: .qq, albumMid: mid.isEmpty ? nil : mid)
     }
 
+    // MARK: - 歌单导入（Qzone 老接口，无需签名）
+    //
+    // `fcg_ucc_getcdinfo_byids_cp.fcg` 返回的 songlist 是 PC 老字段风格
+    // （songname / songmid / singer[] / albumname / albummid / interval），
+    // `parseMobileSong` 对这些字段名都有兜底，直接复用。
+
+    /// 拉取 QQ 音乐歌单详情，返回（歌单名，歌曲列表，封面）。
+    func playlistDetail(dissTid: String) async throws -> (name: String, tracks: [MusicItem], coverURL: String?) {
+        var comps = URLComponents(string: "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg")!
+        comps.queryItems = [
+            URLQueryItem(name: "type", value: "1"),
+            URLQueryItem(name: "json", value: "1"),
+            URLQueryItem(name: "utf8", value: "1"),
+            URLQueryItem(name: "onlysong", value: "0"),
+            URLQueryItem(name: "disstid", value: dissTid),
+            URLQueryItem(name: "format", value: "json"),
+        ]
+        guard let url = comps.url else {
+            throw NetworkClient.NetworkError.noData
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                         forHTTPHeaderField: "User-Agent")
+        request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cdlist = json["cdlist"] as? [[String: Any]],
+              let cd = cdlist.first else {
+            throw NetworkClient.NetworkError.noData
+        }
+
+        let name = (cd["dissname"] as? String) ?? "导入的QQ音乐歌单"
+        let cover = (cd["logo"] as? String) ?? (cd["headurl"] as? String)
+        let songlist = (cd["songlist"] as? [[String: Any]]) ?? []
+        let tracks = songlist.prefix(500).compactMap { parseMobileSong($0) }
+        return (name, tracks, cover.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
     // MARK: - 封面
 
     /// QQ 专辑封面。正确的图床域名是 `y.gtimg.cn`（此前误用 `y.qq.com` 会 404）。

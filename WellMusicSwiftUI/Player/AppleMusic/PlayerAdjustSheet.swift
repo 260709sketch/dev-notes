@@ -34,6 +34,8 @@ struct PlayerAdjustSheet: View {
 
     private var backgroundSection: some View {
         Section {
+            Toggle("流体渐变背景", isOn: fluidBackgroundBinding)
+
             Picker("背景模式", selection: backgroundModeBinding) {
                 ForEach(AppleMusicBackgroundMode.allCases) { mode in
                     Text(mode.displayName).tag(mode)
@@ -41,8 +43,8 @@ struct PlayerAdjustSheet: View {
             }
             .pickerStyle(.segmented)
 
-            // 背景暗度：调的是盖在封面模糊层之上的那块遮罩。
-            // 暗色模式下 0 = 不压暗（封面最亮），1 = 几乎全黑；
+            // 背景暗度：调的是盖在背景层之上的那块遮罩。
+            // 暗色模式下 0 = 不压暗（背景最亮），1 = 几乎全黑；
             // 浅色模式下则是提亮遮罩的强度。
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -57,7 +59,7 @@ struct PlayerAdjustSheet: View {
         } header: {
             Text("背景")
         } footer: {
-            Text("暗色模式配白色歌词最清晰；觉得背景太亮就把暗度调高。")
+            Text("流体渐变按 AMLL 最新版的效果实现：封面取色 + 四色流体，极低分辨率渲染、省电；关闭则退回封面模糊。觉得背景太亮就把暗度调高。")
         }
     }
 
@@ -152,6 +154,13 @@ struct PlayerAdjustSheet: View {
         Binding(
             get: { settings.appleMusicBackgroundMode },
             set: { settings.appleMusicBackgroundMode = $0 }
+        )
+    }
+
+    private var fluidBackgroundBinding: Binding<Bool> {
+        Binding(
+            get: { settings.appleMusicFluidBackground },
+            set: { settings.appleMusicFluidBackground = $0 }
         )
     }
 

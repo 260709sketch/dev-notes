@@ -328,6 +328,10 @@ final class SettingsManager: ObservableObject {
     /// 是否启用动态封面
     @AppStorage("wellmusic.appleMusic.dynamicCoverEnabled") var dynamicCoverEnabled: Bool = true
 
+    /// 播放页背景是否使用 AMLL 同款「四色流体渐变」（原生低分辨率渲染）。
+    /// 关闭则退回旧的封面模糊背景。默认开启。
+    @AppStorage("wellmusic.appleMusic.fluidBackground") var appleMusicFluidBackground: Bool = true
+
     /// 控件是否使用封面颜色
     @AppStorage("wellmusic.player.controlsUseCoverColor") var controlsUseCoverColor: Bool = true
 

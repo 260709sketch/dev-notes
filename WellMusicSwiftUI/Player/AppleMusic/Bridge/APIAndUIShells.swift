@@ -64,27 +64,131 @@ enum NeteaseAPI {
 }
 
 // MARK: - CommentsView
-/// 评论页占位（简化实现，显示空状态）
+/// 歌曲评论页（多平台：网易云/酷狗/QQ，按本曲平台优先自动回退）。
 struct CommentsView: View {
     let track: Track
 
+    @State private var hot: [SongComment] = []
+    @State private var latest: [SongComment] = []
+    @State private var total = 0
+    @State private var hasMore = false
+    @State private var page = 1
+    @State private var loading = false
+    @State private var failed = false
+
+    private var songId: String { track.platformSongId ?? "" }
+    private var platform: String { track.sourcePlatform }
+
     var body: some View {
-        NavigationView {
-            VStack(spacing: 16) {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 48))
-                    .foregroundColor(.secondary)
-                Text("评论功能开发中")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-                Text("《\(track.name)》")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary.opacity(0.8))
+        Group {
+            if loading && latest.isEmpty {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在加载评论…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if failed && latest.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "text.bubble").font(.system(size: 40)).foregroundStyle(.secondary)
+                    Text("暂时拿不到评论").font(.headline).foregroundStyle(.secondary)
+                    Button("重试") { Task { await load(refresh: true) } }
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    if total > 0 {
+                        Text("共 \(total) 条评论")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .listRowSeparator(.hidden)
+                    }
+                    if !hot.isEmpty {
+                        Section("热门评论") {
+                            ForEach(hot) { CommentRow(comment: $0) }
+                        }
+                    }
+                    Section("最新评论(\(total))") {
+                        ForEach(latest) { CommentRow(comment: $0) }
+                        if hasMore {
+                            Button {
+                                Task { await load(refresh: false) }
+                            } label: {
+                                if loading {
+                                    ProgressView()
+                                } else {
+                                    Text("加载更多").frame(maxWidth: .infinity)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .refreshable { await load(refresh: true) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("评论")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle("评论")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { if latest.isEmpty && !loading { await load(refresh: true) } }
+    }
+
+    private func load(refresh: Bool) async {
+        if refresh {
+            loading = true
+            failed = false
+            page = 1
+        }
+        let target = refresh ? 1 : page + 1
+        if let result = await CommentsAPI.fetch(platform: platform, songId: songId, page: target) {
+            hot = result.hot
+            if refresh { latest = result.latest } else { latest += result.latest }
+            total = result.total
+            hasMore = result.hasMore
+            page = target
+        } else if refresh {
+            failed = true
+        }
+        loading = false
+    }
+}
+
+private struct CommentRow: View {
+    let comment: SongComment
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let avatar = comment.avatarURL, let url = URL(string: avatar) {
+                WellRemoteImage(url: url, displaySize: 36)
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text(comment.nickname)
+                        .font(.footnote.weight(.medium))
+                    Spacer()
+                    Text(comment.timeText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Text(comment.content)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                if comment.likedCount > 0 {
+                    Label("\(comment.likedCount)", systemImage: "hand.thumbsup")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.vertical, 3)
     }
 }
 

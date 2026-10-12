@@ -59,6 +59,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("歌单") {
+                    NavigationLink {
+                        PlaylistImportView()
+                    } label: {
+                        Label("导入歌单", systemImage: "square.and.arrow.down.on.square")
+                    }
+                    Text("粘贴网易云 / QQ 音乐的歌单分享链接，整张歌单保存到本地。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("界面") {
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in

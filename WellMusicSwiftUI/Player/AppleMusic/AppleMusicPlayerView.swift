@@ -244,13 +244,6 @@ struct AppleMusicPlayerView: View {
 
             Divider()
 
-            // 播放器选择
-            Button {
-                showPlaybackModeSheet = true
-            } label: {
-                Label("播放器样式", systemImage: "music.note.tv")
-            }
-
             // 歌词偏移
             Button {
                 showLyricOffsetSheet = true
@@ -258,20 +251,11 @@ struct AppleMusicPlayerView: View {
                 Label("歌词偏移", systemImage: "timer")
             }
 
-            // 播放器调整：背景明暗/暗度 + AMLL 歌词位置，集中在一个页面里
+            // 播放器调整：背景明暗/暗度 + AMLL 歌词位置/字体，集中在一个页面里
             Button {
                 showPlayerAdjustSheet = true
             } label: {
                 Label("播放器调整", systemImage: "slider.horizontal.3")
-            }
-
-            // FLAC 精准同步（仅 AMLL 开启时显示）
-            if settings.appleMusicUseAMLL {
-                Button {
-                    settings.preciseFLAC.toggle()
-                } label: {
-                    Label("FLAC 精准同步", systemImage: settings.preciseFLAC ? "checkmark.circle.fill" : "circle")
-                }
             }
 
             // 睡眠定时
@@ -303,27 +287,6 @@ struct AppleMusicPlayerView: View {
             } label: {
                 Label("睡眠定时", systemImage: player.sleepTimer.state.isActive ? "timer.circle.fill" : "timer")
             }
-
-            Divider()
-
-            // 底部控制区域高度调节（仅 Apple Music 播放器）
-            Menu {
-                ForEach([0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5], id: \.self) { scale in
-                    Button {
-                        settings.appleMusicControlsHeight = scale
-                    } label: {
-                        if abs(settings.appleMusicControlsHeight - scale) < 0.01 {
-                            Label("\(Int(scale * 100))%", systemImage: "checkmark")
-                        } else {
-                            Text("\(Int(scale * 100))%")
-                        }
-                    }
-                }
-            } label: {
-                Label("底部区域高度", systemImage: "slider.vertical.3")
-            }
-
-            Divider()
 
             // 复制链接
             Button {
@@ -660,13 +623,20 @@ struct AppleMusicPlayerView: View {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
 
-            // 模糊封面背景（AMLL 和非 AMLL 模式都有）。
+            // 背景层：AMLL 同款「四色流体渐变」（默认）或封面模糊。
             //
-            // 当前 AMLL 页面是**轻量歌词页**（403KB、无 WebGL 流动背景渲染器），
-            // 它自己不渲染背景层，所以模糊封面常驻、不需要「让位」。
-            CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
-                .ignoresSafeArea()
+            // 流体渐变是原生实现（FluidGradientBackground.swift）：只在 ≈48×106 的
+            // 极低分辨率位图上逐帧取色/扭曲/旋转，再由 GPU 拉伸到全屏，
+            // CPU 每帧 < 2ms —— 不会再重演「打开播放器就卡死」。
+            if settings.appleMusicFluidBackground {
+                FluidGradientBackground(url: coverURL)
+                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
+                    .ignoresSafeArea()
+            } else {
+                CoverBlurBackground(url: coverURL, scheme: colorScheme)
+                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
+                    .ignoresSafeArea()
+            }
 
             // AMLL 歌词只在**展开歌词页时**才创建。
             //

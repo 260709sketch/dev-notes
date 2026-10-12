@@ -175,7 +175,17 @@ final class NeteaseMusicAPI {
     private struct PlaylistDetailResponse: Decodable {
         var code: Int?
         var playlist: Body?
-        struct Body: Decodable { var tracks: [Song]? }
+        struct Body: Decodable {
+            var name: String?
+            var coverImgUrl: String?
+            var tracks: [Song]?
+            var trackIds: [TrackID]?
+            struct TrackID: Decodable { var id: Int? }
+        }
+    }
+
+    private struct SongsDetailResponse: Decodable {
+        var songs: [Song]?
     }
 
     private struct AlbumDetailResponse: Decodable {
@@ -459,6 +469,41 @@ final class NeteaseMusicAPI {
         let resp: PlaylistDetailResponse = try await Self.apiRequest(
             "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
         return (resp.playlist?.tracks ?? []).compactMap(Self.mapSong)
+    }
+
+    /// 歌单导入：返回歌单名 + 封面 + **完整**歌曲列表。
+    ///
+    /// `api/v6/playlist/detail` 明文可用，但 `tracks` 字段在大歌单上会被服务端
+    /// 截断（约前 1000 首），所以照 `trackIds` 分块走 `api/v3/song/detail`
+    /// 补齐（每块 500 个 id）。
+    func playlistForImport(id: String) async throws -> (name: String, coverURL: String?, tracks: [MusicItem]) {
+        let idValue: Any = Int(id).map { $0 as Any } ?? id
+        let params: [String: Any] = ["id": idValue, "n": 1000, "s": 0, "csrf_token": ""]
+        let resp: PlaylistDetailResponse = try await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        guard let body = resp.playlist else {
+            throw NetworkClient.NetworkError.noData
+        }
+
+        var songs = body.tracks ?? []
+        let allIds = (body.trackIds ?? []).compactMap { $0.id }
+        if songs.count < allIds.count {
+            let have = Set(songs.compactMap { $0.id })
+            let missing = allIds.filter { !have.contains($0) }
+            for start in stride(from: 0, to: missing.count, by: 500) {
+                let end = min(start + 500, missing.count)
+                let chunk = missing[start..<end]
+                let cPayload = "[" + chunk.map { "{\"id\":\($0)}" }.joined(separator: ",") + "]"
+                if let detail: SongsDetailResponse = try? await Self.apiRequest(
+                    "api/v3/song/detail", params: ["c": cPayload, "csrf_token": ""],
+                    type: SongsDetailResponse.self) {
+                    songs.append(contentsOf: detail.songs ?? [])
+                }
+            }
+        }
+
+        let tracks = songs.compactMap(Self.mapSong)
+        return (body.name ?? "导入的歌单", body.coverImgUrl, tracks)
     }
 
     /// 专辑歌曲
