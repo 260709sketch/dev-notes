@@ -453,6 +453,22 @@ final class PlayerCore: NSObject, ObservableObject {
         if let d = engine.duration, d.isFinite, d > 0, abs(d - duration) > 0.1 {
             duration = d
         }
+        // ★ 试听片段**事前拦截**：LX 音源对 VIP/无版权歌曲返回 15~30s 试听链接，
+        //   播放开始 1~2 秒内 mpv 就能报告真实 duration。一旦发现真实时长远短于
+        //   歌曲元数据（短 20s+ 且未尝试过官方通道），立即换官方通道重播，
+        //   而不是等播完试听才发现（用户几乎无感）。
+        if !isScrubbing,
+           let item = currentItem,
+           item.duration > 30,
+           duration > 0, duration < item.duration - 20,
+           officialRetriedTrackKey != item.keyOf,
+           !isLoading {
+            officialRetriedTrackKey = item.keyOf
+            PlayerDiag.log("试听片段事前拦截 dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 官方通道重播")
+            ToastCenter.shared.show("已切换完整版")
+            playCurrentItem(seekTo: 0, autoPlay: true, preferOfficial: true)
+            return
+        }
         // 渲染态：缓冲期（paused-for-cache）音频没有在走，歌词时钟据此冻结
         let rendering = !engine.isPaused && !engine.isCoreIdle && !engine.isBuffering
         if rendering != isRenderingAudio {
