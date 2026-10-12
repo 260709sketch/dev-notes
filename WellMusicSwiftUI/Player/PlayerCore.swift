@@ -247,33 +247,17 @@ final class PlayerCore: NSObject, ObservableObject {
         guard time.isFinite else { return }
         isScrubbing = true
         scrubTime = time
-        lastContinuousSeekAt = 0
     }
 
     /// 拖动中更新预览时间（手指移动时持续调用）。
     ///
-    /// ★ 音频跟手：MPV 的 seek 命令即时返回且内部串行化，直接按节流下发即可。
+    /// ⚠️ 只改显示、**不连续 seek 音频**：音频是远端流媒体（LX 音源 CDN），
+    /// 每次 seek 都是一次 Range 请求 + 解码器 flush，拖动中高频 seek 会让
+    /// 音频反复中断 —— 表现就是「拖一下暂停一下再播放」。松手时才 seek 一次
+    /// 到最终落点（见 `endScrubbing`）。
     func updateScrubbing(to time: TimeInterval) {
         guard isScrubbing, time.isFinite else { return }
         scrubTime = time
-        requestContinuousSeek(to: time)
-    }
-
-    // MARK: 拖动中的连续 seek
-
-    /// 拖动过程中让**音频**跟到手指位置。
-    ///
-    /// mpv 的 seek 是「flush 解码/输出队列 → 重新填充 → 从新位置渲染」，
-    /// 命令即时返回、内部串行。为避免 60Hz 地灌 seek 压垮 demuxer（远端无损
-    /// 每次都要重拉字节范围），按 0.1s 节流下发；松手时 `endScrubbing`
-    /// 再精确补一次最终位置。
-    private var lastContinuousSeekAt: TimeInterval = 0
-
-    private func requestContinuousSeek(to target: TimeInterval) {
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastContinuousSeekAt >= 0.1 else { return }
-        lastContinuousSeekAt = now
-        engine.seek(to: target)
     }
 
     /// 结束拖动：精确 seek 到手指落点。
