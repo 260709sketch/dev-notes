@@ -50,10 +50,9 @@ struct DailyRecommendListView: View {
                     }
                 }
                 .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             }
         }
-        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
+        // ★ 系统 plain List 背景自动延伸到 chrome 区域下面，不手动干预。
         .navigationTitle("每日推荐")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

@@ -50,11 +50,11 @@ struct ProfileView: View {
                 }
             }
         }
-        // 分组列表页照 kumone Playlist 的写法：底色按主题显式切换
-        // （浅色 = systemGroupedBackground 浅灰、深色 = 纯黑），行块由 List 自己渲染，
-        // 深浅两种模式下都与系统 nav bar / tab bar 的底色连续，不会出现色差断层。
-        .scrollContentBackground(.hidden)
-        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+        // ★ List 的系统自带 insetGrouped 背景（systemGroupedBackground）会由系统自动
+        //   延伸到状态栏 / nav bar / tab bar 的 chrome 区域下面，颜色天然连续。
+        //   之前 scrollContentBackground(.hidden) + 手动补背景，手动背景延伸不到
+        //   chrome 区域 → 状态栏露白、tab bar 露白（iOS 26 TabView chrome 挡住手动层）。
+        //   所以这里什么都不写，完全交给系统（与 iOS 设置 app 同一机制）。
         .navigationTitle("我的")
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -296,8 +296,8 @@ struct NeteasePlayRecordView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            // 与页面底色同一套条件色（kumone 写法），保证与 nav bar 连续
-            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+            // plain List 系统底色是 systemBackground（浅白/深黑），Picker 遮底用同色才连续
+            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemBackground))
         }
         .task(id: period) { await load() }
     }

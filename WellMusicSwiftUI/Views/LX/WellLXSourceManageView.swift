@@ -21,9 +21,8 @@ struct WellLXSourceManageView: View {
             importSection
             sourceListSection
         }
-        // 分组表单页照 kumone Playlist 的写法：底色按主题显式切换，与 nav bar 连续
-        .scrollContentBackground(.hidden)
-        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+        // ★ Form 系统自带背景自动延伸到 chrome 区域下面（理由同 ProfileView），
+        //   不写 scrollContentBackground / background，完全交给系统。
         .navigationTitle("自定义音源")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

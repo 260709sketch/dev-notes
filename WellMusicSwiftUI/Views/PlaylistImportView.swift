@@ -52,9 +52,7 @@ struct PlaylistImportView: View {
         }
         .navigationTitle("歌单导入")
         .navigationBarTitleDisplayMode(.inline)
-        .scrollContentBackground(.hidden)
-        // 分组表单页照 kumone Playlist 的写法：底色按主题显式切换，与 nav bar 连续
-        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
+        // ★ List 系统自带背景自动延伸到 chrome 区域下面（理由同 ProfileView）
         .alert("导入成功", isPresented: $showSuccess) {
             Button("好的", role: .cancel) {}
         } message: {

@@ -38,9 +38,8 @@ struct FavoritesView: View {
                 }
             }
             .listStyle(.plain)
-            .scrollContentBackground(.hidden)   // 透明 List，透出系统底色（与系统渲染链连续）
+            // ★ 系统 plain List 背景自动延伸到 chrome 区域下面，不手动干预。
         }
-        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
         .navigationTitle("音乐库")
     }
 
