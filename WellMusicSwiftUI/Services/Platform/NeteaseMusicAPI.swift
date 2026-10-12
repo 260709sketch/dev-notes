@@ -1,10 +1,79 @@
 import Foundation
 
-/// 网易云音乐 API（weapi 加密版）
+/// 网易云音乐 API。
+///
+/// ⚠️ **通道说明（2026-10 实测，改动前务必先读这段）**
+///
+/// `music.163.com/weapi/*`（AES + RSA 加密通道）**已被服务端停用**：
+/// 不论参数是否正确，一律返回 `HTTP 200 + 空响应体（0 字节）`。
+/// 已实测：两个域名（`music.163.com` / `interface.music.163.com`）、
+/// 带不带 Cookie 都一样 —— 也就是说这条通道上的调用会**静默拿不到任何数据**，
+/// 而不是抛出一个明确的错误。
+///
+/// 明文 `api/*` 通道**全部正常**（搜索页一直能出结果就是因为它走的是明文，
+/// 见 `runSearch` 里的注释）。所以本文件统一走明文通道：`apiRequest(_:params:type:)`。
 final class NeteaseMusicAPI {
     static let shared = NeteaseMusicAPI()
 
     init() {}
+
+    // MARK: 通道（明文 api/）
+
+    /// 网易云**明文**接口请求。
+    ///
+    /// - Parameter path: 以 `api/` 开头的路径，如 `api/toplist`。
+    /// - Parameter params: 会被编码成 `application/x-www-form-urlencoded` 表单。
+    ///   `Bool` 会编码为 `true` / `false`（网易云不少接口的 `total` 是布尔）。
+    ///
+    /// 之所以不用 `NeteaseCrypto.weapi`：加密通道已被服务端停用，只会返回空响应体，
+    /// 详见本文件头部说明。
+    private static func apiRequest<T: Decodable>(_ path: String,
+                                                 params: [String: Any] = [:],
+                                                 type: T.Type) async throws -> T {
+        let body = Data(formEncode(params).utf8)
+        let resp = try await NetworkClient.shared.postRaw(
+            "https://music.163.com/\(path)",
+            body: body,
+            contentType: "application/x-www-form-urlencoded",
+            headers: ["Referer": "https://music.163.com/", "Origin": "https://music.163.com"]
+        )
+        // 显式校验状态码：否则 403/5xx 会被后面的解码失败吞掉，
+        // 界面上只剩一句「没有返回数据」，排查时看不出真因。
+        guard (200..<300).contains(resp.statusCode) else {
+            throw NetworkClient.NetworkError.badStatus(resp.statusCode)
+        }
+        guard let decoded = NetworkClient.decode(type, from: resp.data) else {
+            throw NetworkClient.NetworkError.noData
+        }
+        return decoded
+    }
+
+    /// 参数 → `a=1&b=2`，键按字典序排列（便于复现问题），值全部严格百分号编码。
+    private static func formEncode(_ params: [String: Any]) -> String {
+        params.keys.sorted().compactMap { key -> String? in
+            guard let value = formValue(params[key]) else { return nil }
+            return "\(escapeForm(key))=\(escapeForm(value))"
+        }
+        .joined(separator: "&")
+    }
+
+    /// 表单值编码：只接受标量，其他类型（数组/字典）直接跳过。
+    private static func formValue(_ any: Any?) -> String? {
+        switch any {
+        case let string as String: return string
+        case let bool as Bool: return bool ? "true" : "false"
+        case let int as Int: return String(int)
+        case let double as Double: return String(double)
+        case let number as NSNumber: return number.stringValue
+        default: return nil
+        }
+    }
+
+    private static func escapeForm(_ string: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return string.addingPercentEncoding(withAllowedCharacters: allowed) ?? string
+    }
 
     // MARK: 解码模型
 
@@ -42,8 +111,15 @@ final class NeteaseMusicAPI {
     private struct PlaylistItem: Decodable {
         var id: Int?
         var name: String?
+        /// 搜索 / 歌单接口用这个字段
         var coverImgUrl: String?
-        var playCount: Int?
+        /// 个性化推荐接口（`api/personalized/playlist`）**只给 `picUrl`**，没有 `coverImgUrl`
+        var picUrl: String?
+        /// ⚠️ 类型故意是 `Double` 而不是 `Int`：同一个字段在不同接口下的 JSON 字面量不一样 ——
+        /// `cloudsearch` 给整数 `33762588`，`api/personalized/playlist` 给浮点 `28266136.0`。
+        /// 用 `Int?` 接浮点有解码失败风险，一旦失败**整条响应都解不出来**（整个货架凭空消失），
+        /// 所以统一用 `Double?` 接住，映射时再转 `Int`。
+        var playCount: Double?
         var trackCount: Int?
         var creator: Creator?
         struct Creator: Decodable { var nickname: String? }
@@ -186,7 +262,7 @@ final class NeteaseMusicAPI {
                 guard let id = pl.id, let name = pl.name else { return nil }
                 return WellPlaylistSummary(
                     id: "\(id)", name: name, coverURL: pl.coverImgUrl,
-                    playCount: pl.playCount ?? 0, trackCount: pl.trackCount ?? 0,
+                    playCount: Int(pl.playCount ?? 0), trackCount: pl.trackCount ?? 0,
                     creatorName: pl.creator?.nickname)
             }
             hasMore = playlists.count >= limit
@@ -215,17 +291,9 @@ final class NeteaseMusicAPI {
             return decoded
         }
 
-        // 备用通道：原 weapi 加密接口（主通道异常时兜底）
-        let params: [String: Any] = [
-            "s": keyword,
-            "type": kind.rawValue,
-            "offset": offset,
-            "limit": limit,
-            "total": offset == 0,
-            "csrf_token": "",
-        ]
-        return try await NeteaseCrypto.weapi(
-            "weapi/cloudsearch/get/web", params: params, type: SearchResponse.self)
+        // 没有备用通道：原先的 weapi 加密接口已被服务端停用（返回空响应体），
+        // 走它只会白白多花一次请求，错误也和「什么都没拿到」一样，故直接上抛。
+        throw NetworkClient.NetworkError.noData
     }
 
     /// 纯小写 ASCII 查询 → 每个单词首字母大写。
@@ -259,8 +327,8 @@ final class NeteaseMusicAPI {
 
     /// 歌手专辑列表（歌手详情页用）。
     func artistAlbums(id: String, limit: Int = 50) async throws -> [WellAlbumSummary] {
-        let resp: ArtistAlbumsResponse = try await NeteaseCrypto.weapi(
-            "weapi/artist/albums/\(id)", params: ["limit": limit, "offset": 0, "total": true, "csrf_token": ""],
+        let resp: ArtistAlbumsResponse = try await Self.apiRequest(
+            "api/artist/albums/\(id)", params: ["limit": limit, "offset": 0, "total": true, "csrf_token": ""],
             type: ArtistAlbumsResponse.self)
         return (resp.hotAlbums ?? []).compactMap { al in
             guard let id = al.id, let name = al.name else { return nil }
@@ -281,22 +349,22 @@ final class NeteaseMusicAPI {
     func playlistTracks(id: String) async throws -> [MusicItem] {
         let idValue: Any = Int(id).map { $0 as Any } ?? id
         let params: [String: Any] = ["id": idValue, "n": 100_000, "s": 8, "csrf_token": ""]
-        let resp: PlaylistDetailResponse = try await NeteaseCrypto.weapi(
-            "weapi/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        let resp: PlaylistDetailResponse = try await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
         return (resp.playlist?.tracks ?? []).compactMap(Self.mapSong)
     }
 
     /// 专辑歌曲
     func albumTracks(id: String) async throws -> [MusicItem] {
-        let resp: AlbumDetailResponse = try await NeteaseCrypto.weapi(
-            "weapi/v1/album/\(id)", params: ["csrf_token": ""], type: AlbumDetailResponse.self)
+        let resp: AlbumDetailResponse = try await Self.apiRequest(
+            "api/v1/album/\(id)", params: ["csrf_token": ""], type: AlbumDetailResponse.self)
         return (resp.songs ?? []).compactMap(Self.mapSong)
     }
 
     /// 歌手热门歌曲
     func artistTopSongs(id: String) async throws -> [MusicItem] {
-        let resp: ArtistDetailResponse = try await NeteaseCrypto.weapi(
-            "weapi/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
+        let resp: ArtistDetailResponse = try await Self.apiRequest(
+            "api/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
         return (resp.hotSongs ?? []).compactMap(Self.mapSong)
     }
 
@@ -308,15 +376,15 @@ final class NeteaseMusicAPI {
     /// 推荐歌单（个性化推荐）
     func personalizedPlaylists(limit: Int = 30) async throws -> [WellPlaylistSummary] {
         let params: [String: Any] = ["limit": limit, "total": true, "n": 1000, "csrf_token": ""]
-        let resp: PersonalizedPlaylistResponse = try await NeteaseCrypto.weapi(
-            "weapi/personalized/playlist", params: params, type: PersonalizedPlaylistResponse.self)
+        let resp: PersonalizedPlaylistResponse = try await Self.apiRequest(
+            "api/personalized/playlist", params: params, type: PersonalizedPlaylistResponse.self)
         return (resp.result ?? []).compactMap(Self.mapPlaylist)
     }
 
     /// 排行榜列表（带更新频率）
     func toplists() async throws -> [WellToplistSummary] {
-        let resp: ToplistResponse = try await NeteaseCrypto.weapi(
-            "weapi/toplist", params: ["csrf_token": ""], type: ToplistResponse.self)
+        let resp: ToplistResponse = try await Self.apiRequest(
+            "api/toplist", params: ["csrf_token": ""], type: ToplistResponse.self)
         return (resp.list ?? []).compactMap { item in
             guard let id = item.id else { return nil }
             return WellToplistSummary(
@@ -333,20 +401,20 @@ final class NeteaseMusicAPI {
         let params: [String: Any] = [
             "area": area, "limit": limit, "offset": 0, "total": true, "csrf_token": "",
         ]
-        let resp: NewAlbumsResponse = try await NeteaseCrypto.weapi(
-            "weapi/album/new", params: params, type: NewAlbumsResponse.self)
+        let resp: NewAlbumsResponse = try await Self.apiRequest(
+            "api/album/new", params: params, type: NewAlbumsResponse.self)
         return (resp.albums ?? []).compactMap(Self.mapAlbum)
     }
 
     /// 热门歌手
     func topArtists(limit: Int = 30) async throws -> [WellArtistSummary] {
         let params: [String: Any] = ["type": 1, "limit": limit, "offset": 0, "total": true, "csrf_token": ""]
-        let resp: TopArtistsResponse = try await NeteaseCrypto.weapi(
-            "weapi/toplist/artist", params: params, type: TopArtistsResponse.self)
+        let resp: TopArtistsResponse = try await Self.apiRequest(
+            "api/toplist/artist", params: params, type: TopArtistsResponse.self)
         return (resp.list?.artists ?? []).compactMap(Self.mapArtist)
     }
 
-    // MARK: 播放地址（weapi 音质：standard/higher/exhigh/lossless/hires）
+    // MARK: 播放地址（音质：standard/higher/exhigh/lossless/hires）
 
     func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let id = item.neteaseId ?? item.platformId else {
@@ -358,8 +426,8 @@ final class NeteaseMusicAPI {
             "encodeType": "flac",
             "csrf_token": "",
         ]
-        let resp: URLResponse = try await NeteaseCrypto.weapi(
-            "weapi/song/enhance/player/url/v1", params: params, type: URLResponse.self)
+        let resp: URLResponse = try await Self.apiRequest(
+            "api/song/enhance/player/url/v1", params: params, type: URLResponse.self)
         guard let url = resp.data?.first?.url, !url.isEmpty else {
             throw NetworkClient.NetworkError.noData
         }
@@ -401,8 +469,9 @@ final class NeteaseMusicAPI {
         return WellPlaylistSummary(
             id: String(id),
             name: item.name ?? "歌单",
-            coverURL: item.coverImgUrl,
-            playCount: item.playCount ?? 0,
+            // 个性化推荐只给 picUrl，搜索/歌单接口给 coverImgUrl —— 两个都接住。
+            coverURL: item.coverImgUrl ?? item.picUrl,
+            playCount: Int(item.playCount ?? 0),
             trackCount: item.trackCount ?? 0,
             creatorName: item.creator?.nickname
         )

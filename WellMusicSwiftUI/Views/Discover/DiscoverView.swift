@@ -64,7 +64,16 @@ final class WellDiscoverViewModel: ObservableObject {
         let nothingAtAll = playlists.isEmpty && toplists.isEmpty
             && albums.isEmpty && artists.isEmpty
         if nothingAtAll {
-            phase = .failed("网络连接失败，请检查网络后重试")
+            // 四路全空时再补一次诊断请求，把真实报错捞出来 ——
+            // 之前只显示「网络连接失败」，连是 403、超时还是解码失败都看不出，
+            // 排查全靠猜。这里多花一次请求换一个能定位的提示。
+            var detail = ""
+            do {
+                _ = try await api.toplists()
+            } catch {
+                detail = error.localizedDescription
+            }
+            phase = .failed(detail.isEmpty ? "网络连接失败，请检查网络后重试" : "加载失败：\(detail)")
         } else {
             hasLoadedOnce = true
             phase = .loaded
