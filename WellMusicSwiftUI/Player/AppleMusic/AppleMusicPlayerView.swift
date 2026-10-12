@@ -29,6 +29,15 @@ struct AppleMusicPlayerView: View {
             .safeAreaInsets.bottom ?? 0
     }
 
+    /// 顶部安全区域间距。下滑关闭的指示条要在灵动岛下方，不能用固定值。
+    static var safeAreaTopInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?
+            .safeAreaInsets.top ?? 0
+    }
+
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.colorScheme) private var colorScheme
@@ -51,11 +60,34 @@ struct AppleMusicPlayerView: View {
     @State private var showAddToPlaylist = false
     @State private var showLyricOffsetSheet = false
     @State private var showPlaybackModeSheet = false
+    @State private var showPlayerAdjustSheet = false
     @State private var showVolumePopover = false
     @State private var appleLayoutPart: AppleMusicLayoutPart = .cover
     @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
     @AppStorage("wellmusic.showSongVIPBadge") private var showSongVIPBadge = true
     @AppStorage("wellmusic.player.swipeSwitchSong") private var swipeSwitchSong = true
+
+    // MARK: 「播放器调整」里需要**实时预览**的项
+    //
+    // ⚠️ 这里必须用本视图自己的 `@AppStorage` 镜像，不能只读 `settings.xxx`。
+    //
+    // `SettingsManager` 上的 `@AppStorage` 写入时**不会**触发 `objectWillChange`，
+    // 所以只观察 `settings` 的视图拿不到刷新 —— 在调整页面拖滑块时背景不会动。
+    // `@AppStorage` 依赖 `UserDefaults` 的变更通知，两边用同一个 key 就会同步，
+    // 因此在这里再声明一份即可拿到实时刷新（值本身仍存在同一处 UserDefaults）。
+    @AppStorage("wellmusic.appleMusic.backgroundMode") private var bgMode: AppleMusicBackgroundMode = .dark
+    @AppStorage("wellmusic.appleMusic.backgroundDim") private var bgDim: Double = 0.48
+    @AppStorage("wellmusic.appleMusic.amllLyricTopPx") private var amllTopPx: Int = 140
+    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") private var amllBottomPx: Int = 305
+    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = 10
+
+    /// 整页下滑关闭时，页面跟随手指下移的距离。
+    ///
+    /// 只有**正在拖拽**时才作为 `.offset(y:)` 使用；其余时刻强制为 0，
+    /// 避免旧值残留导致播放器打开时偏移半屏。
+    @State private var dismissDragOffset: CGFloat = 0
+    /// 是否正在执行下滑关闭拖拽。
+    @State private var isDismissDragging = false
 
     @State private var lyricCenters: [Int: CGFloat] = [:]
     @State private var focusedLyricID: Int?
@@ -94,15 +126,35 @@ struct AppleMusicPlayerView: View {
                 portraitLayout(size: screenSize)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            // 下滑关闭指示条：既是视觉提示，也是唯一的拖拽热区。
+            //
+            // ⚠️ 只在**大封面**状态出现。歌词页展开后要留给歌词自己的滚动/拖拽，
+            // 而且那里顶部已经有自己的下滑手势（`headerDismissGesture`）。
+            if !showLyrics && !isLandscape {
+                dismissIndicator
+                    .padding(.top, Self.safeAreaTopInset + 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .zIndex(1)
+            }
         }
         .ignoresSafeArea()
+        // 下滑关闭的跟手位移。只有正在拖拽时才生效，
+        // 否则强制 0 —— 免得残留值让播放器打开时偏移半屏。
+        .offset(y: isDismissDragging ? dismissDragOffset : 0)
         // 歌词页面可见时禁用播放器下滑关闭手势，避免和歌词滚动手势冲突
         .environment(\.allowsNowPlayingDismiss, !showLyrics)
         .onChange(of: showLyrics) { _ in
             // 切换回大封面时重置底部控制区域隐藏状态
             hideBottomControls = false
         }
-        .onAppear { if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
+        .onAppear {
+            // 复位下滑关闭状态：`fullScreenCover` 的内容视图可能被复用，
+            // 残留的 dragOffset 会让播放器打开时就偏移半屏。
+            dismissDragOffset = 0
+            isDismissDragging = false
+            if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) }
+        }
         .onChange(of: track?.id) { _ in if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
         .onChange(of: settings.dynamicCoverEnabled) { enabled in
             if enabled {
@@ -144,6 +196,10 @@ struct AppleMusicPlayerView: View {
         }
         .sheet(isPresented: $showLyricOffsetSheet) {
             LyricOffsetSheet()
+        }
+        .sheet(isPresented: $showPlayerAdjustSheet) {
+            PlayerAdjustSheet()
+                .environmentObject(settings)
         }
     }
 
@@ -190,6 +246,13 @@ struct AppleMusicPlayerView: View {
                 showLyricOffsetSheet = true
             } label: {
                 Label("歌词偏移", systemImage: "timer")
+            }
+
+            // 播放器调整：背景明暗/暗度 + AMLL 歌词位置，集中在一个页面里
+            Button {
+                showPlayerAdjustSheet = true
+            } label: {
+                Label("播放器调整", systemImage: "slider.horizontal.3")
             }
 
             // FLAC 精准同步（仅 AMLL 开启时显示）
@@ -507,9 +570,9 @@ struct AppleMusicPlayerView: View {
                 // 背景由 `playerBackground` 的模糊封面承担。
                 AMLLWebLyricsView(useAppleMusicSettings: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
-                    .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
-                    .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
+                    .padding(.top, ScreenAdapter.h(CGFloat(amllTopPx)))
+                    .padding(.bottom, ScreenAdapter.h(CGFloat(amllBottomPx)))
+                    .padding(.horizontal, ScreenAdapter.w(CGFloat(amllHorizPx)))
             } else if !lyrics.isEmpty {
                 // 普通歌词：滚动视图
                 ScrollViewReader { proxy in
@@ -578,7 +641,10 @@ struct AppleMusicPlayerView: View {
 
     @ViewBuilder
     private var playerBackground: some View {
-        let isDark = settings.appleMusicBackgroundMode == .dark
+        let isDark = bgMode == .dark
+        // 压暗/提亮遮罩的强度，由「播放器调整」里的「背景暗度」控制。
+        // 默认 0.48 —— 白字在暗底上清晰，同时封面还留得住细节。
+        let dim = min(max(bgDim, 0), 1)
         ZStack {
             // 底层背景：暗色用黑色，浅色用白色
             (isDark ? Color.black : Color.white)
@@ -589,7 +655,7 @@ struct AppleMusicPlayerView: View {
             // 当前 AMLL 页面是**轻量歌词页**（403KB、无 WebGL 流动背景渲染器），
             // 它自己不渲染背景层，所以模糊封面常驻、不需要「让位」。
             CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                .overlay(isDark ? Color.black.opacity(0.48) : Color.white.opacity(0.35))
+                .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
                 .ignoresSafeArea()
 
             // AMLL 歌词只在**展开歌词页时**才创建。
@@ -602,9 +668,9 @@ struct AppleMusicPlayerView: View {
             if settings.appleMusicUseAMLL && showLyrics {
                 AMLLWebLyricsView(useAppleMusicSettings: true)
                     .ignoresSafeArea()
-                    .padding(.top, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricTop)))
-                    .padding(.bottom, ScreenAdapter.h(CGFloat(settings.appleMusicAmllLyricBottom)))
-                    .padding(.horizontal, ScreenAdapter.w(CGFloat(settings.appleMusicAmllLyricHorizontal)))
+                    .padding(.top, ScreenAdapter.h(CGFloat(amllTopPx)))
+                    .padding(.bottom, ScreenAdapter.h(CGFloat(amllBottomPx)))
+                    .padding(.horizontal, ScreenAdapter.w(CGFloat(amllHorizPx)))
             }
         }
     }
@@ -714,6 +780,71 @@ struct AppleMusicPlayerView: View {
             moreMenu
         }
         .frame(maxWidth: ScreenAdapter.w(420))
+    }
+
+    // MARK: - 下滑关闭
+
+    private static let dismissIndicatorWidth: CGFloat = 44
+    private static let dismissIndicatorHeight: CGFloat = 5
+    private static let dismissIndicatorHitWidth: CGFloat = 180
+    private static let dismissIndicatorHitHeight: CGFloat = 82
+    /// 松手时判定「要关闭」的位移阈值（点）。
+    private static let dismissDistance: CGFloat = 110
+    /// 松手时的**预测**位移阈值：快速轻扫的真实位移可能很小，用预测值补足手感。
+    private static let dismissPrediction: CGFloat = 190
+
+    /// 顶部的下滑关闭指示条。
+    ///
+    /// 这个胶囊既是**视觉提示**（告诉用户这里可以往下拖），也是**唯一的热区**。
+    /// 热区做成 180×82 而不是整页：播放页里进度条、音量条、歌词滚动都在抢手势，
+    /// 把关闭手势限定在这块顶部区域才不会互相打架。
+    ///
+    /// ⚠️ 这里补的是 Kumone `IOSNowPlayingPresentation` 的缺失一环 ——
+    /// 之前只移植了 `allowsNowPlayingDismiss` 这个环境键，但全项目没有任何地方
+    /// 读它；而播放页是用 `fullScreenCover` 呈现的，系统不提供整页下滑关闭。
+    /// 两者叠加的结果就是「进入播放器后向下滑动退不出来」。
+    private var dismissIndicator: some View {
+        ZStack(alignment: .top) {
+            Color.clear
+
+            Capsule()
+                .fill(.white.opacity(0.38))
+                .frame(width: Self.dismissIndicatorWidth, height: Self.dismissIndicatorHeight)
+                .padding(.top, 1)
+        }
+        .frame(width: Self.dismissIndicatorHitWidth, height: Self.dismissIndicatorHitHeight)
+        .contentShape(Rectangle())
+        .gesture(dismissDragGesture)
+        .accessibilityLabel("下滑关闭播放页")
+    }
+
+    /// 下滑关闭手势。
+    ///
+    /// ⚠️ 必须用 `.global` 坐标系：指示条自己会跟着手指下移，
+    /// 若用局部坐标，手指与「移动中的热区」会互相反馈震荡。
+    private var dismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .onChanged { value in
+                guard !showLyrics else { return }
+                isDismissDragging = true
+                // 只接受向下拖拽（正值）；向上拖不动页面
+                dismissDragOffset = max(value.translation.height, 0)
+            }
+            .onEnded { value in
+                guard !showLyrics else { return }
+                let translation = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                if translation > Self.dismissDistance || predicted > Self.dismissPrediction {
+                    // 关闭时**保持** `isDismissDragging = true`：
+                    // 否则页面会先弹回原位再关闭，视觉上「弹一下」。
+                    onDismiss()
+                } else {
+                    isDismissDragging = false
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        dismissDragOffset = 0
+                    }
+                }
+            }
     }
 
     // MARK: - 歌词页

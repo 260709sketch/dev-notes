@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import WebKit
+import Combine
 
 /// The original Apple Music-like Lyrics player (https://github.com/amll-dev/applemusic-like-lyrics, AGPL-3.0), running in a
 /// web view. The lyric lines and clock samples are pushed in; the page animates with AMLL's own spring layout, blur and
@@ -155,6 +156,11 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var fontSize: CGFloat = 30
         private var fontWeight: Int = 600
         private var timer: Timer?
+        /// 订阅 `PlayerCore.isScrubbing`，用于拖动收尾的精确重锚。
+        private var scrubObserver: AnyCancellable?
+        /// 拖动的收尾重锚：`isScrubbing` 转 false 的那次回调可能发生在 seek
+        /// 真正落地**之前**，所以让出一个 runloop 再读位置。
+        private var settleWork: DispatchWorkItem?
 
         func attach(_ web: WKWebView) {
             self.web = web
@@ -162,11 +168,30 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pushClock() }
             }
+
+            // 拖动收尾：用**同步即时**的精确位置重锚一次页面时钟。
+            // 详见 `syncPrecisePosition()` 的说明。
+            scrubObserver = PlayerCore.shared.$isScrubbing
+                .removeDuplicates()
+                .sink { [weak self] isScrubbing in
+                    guard !isScrubbing else { return }
+                    guard let self else { return }
+                    self.settleWork?.cancel()
+                    let work = DispatchWorkItem { [weak self] in
+                        MainActor.assumeIsolated { self?.syncPrecisePosition() }
+                    }
+                    self.settleWork = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
+                }
         }
 
         func detach() {
             timer?.invalidate()
             timer = nil
+            scrubObserver?.cancel()
+            scrubObserver = nil
+            settleWork?.cancel()
+            settleWork = nil
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
         }
 
@@ -288,6 +313,42 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             let moving = abs(ms - lastSampleMs) >= 30
             lastSampleMs = ms
             let running = player.isPlaying && !player.isBuffering && moving
+            run("AMLLBridge.sync(\(ms), \(running), 1.0)")
+        }
+
+        /// 拖动收尾时用**同步即时**的播放位置重锚页面时钟。
+        ///
+        /// ## 为什么需要这一步（「无损音质以上拖动进度条后歌词慢半拍」的根因）
+        ///
+        /// 页面时钟是「采样点 + 线性外推」：
+        ///
+        /// ```js
+        /// sync(ms, running, rate) { co = ms; _l = now; }      // 记下基准点
+        /// 当前位置 = playing ? co + (now - _l) * rate : co    // 基准点之间自己外推
+        /// ```
+        ///
+        /// 也就是说，**给它一个滞后的基准，它就会带着这个滞后一路走下去**，不会被
+        /// 后续采样自动纠正。而常态采样的时间源 `livePlaybackTime` 走的是
+        /// `PlayerCore.currentTime` —— 那个值由 `addPeriodicTimeObserver` 的周期回调
+        /// 维护，**无损 / Hi-Res 大文件上回调间隔被明显拉长**，松手瞬间它可能还停在
+        /// 上百毫秒之前。页面拿到这个滞后值当新基准，于是「歌词和歌声错开」。
+        ///
+        /// 修法与 RN 版 `emitSeek` 一致：拖动结束的那一刻，改用
+        /// `PlayerService.precisePlaybackTime` —— 它直接读 `AVPlayer.currentTime()`，
+        /// **同步、即时、不经过轮询缓存**。页面的 `sync` 会无条件把 `co` 置为该值并
+        /// 重置纪元 `_l`，等价于一次硬校准，误差当场清零。
+        ///
+        /// 为什么不在拖动**过程中**下发：高频注入会不断重置外推纪元、挤掉最终那次
+        /// 校准，反而导致松手后彻底脱节（RN 源码里明确记录过这个坑）。
+        private func syncPrecisePosition() {
+            guard ready else { return }
+            let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
+            let precise = PlayerService.shared.precisePlaybackTime
+            guard precise.isFinite else { return }
+            let ms = Int(((max(0, precise) + offset) * 1000).rounded())
+            lastSampleMs = ms
+            let player = PlayerService.shared
+            let running = player.isPlaying && !player.isBuffering
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 

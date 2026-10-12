@@ -28,15 +28,35 @@ final class LyricsService {
 
         let fallbacks: [MusicSource] = [.netease, .qq, .kugou, .kuwo]
 
+        // 优先要**逐字**结果。
+        //
+        // 酷狗 / 酷我根本不提供逐字，QQ / 网易云只对部分歌曲提供。若像以前那样
+        // 「第一个有歌词的源就返回」，首个源只给到逐行时就会直接定稿，
+        // 后面明明有逐字的源也不会再问 —— 表现就是「这首歌永远没有逐字」。
+        //
+        // 现在：逐行结果先留着兜底，继续往后找带逐字的源；全都只有逐行时再用兜底。
+        var lineOnlyFallback: LyricResult?
+
         for source in fallbacks {
-            if let result = await fetchFrom(source, item: item), !result.lrc.isEmpty {
-                // 顺序去重 + 上限裁剪
-                if cache.count >= cacheLimit { cache.removeValue(forKey: cache.keys.first ?? key) }
-                cache[key] = result
+            guard let result = await fetchFrom(source, item: item), !result.lrc.isEmpty else { continue }
+            if let word = result.wordLyric, !word.isEmpty {
+                store(result, for: key)
                 return result
             }
+            if lineOnlyFallback == nil { lineOnlyFallback = result }
+        }
+
+        if let fallback = lineOnlyFallback {
+            store(fallback, for: key)
+            return fallback
         }
         return nil
+    }
+
+    /// 写入缓存（顺序去重 + 上限裁剪）。
+    private func store(_ result: LyricResult, for key: String) {
+        if cache.count >= cacheLimit { cache.removeValue(forKey: cache.keys.first ?? key) }
+        cache[key] = result
     }
 
     /// 清除指定歌曲缓存（切歌时由 PlayerCore 调用，保证换歌必重新拉取）
@@ -228,43 +248,63 @@ enum LyricParser {
         }
     }
 
-    // MARK: 逐字 YRC（网易/QQ 的 <mm:ss.xx>字<mm:ss.xx> 结构）
+    // MARK: 逐字 YRC
 
+    /// 解析网易云 / QQ 音乐的逐字歌词（YRC）。
+    ///
+    /// ## 真实格式
+    ///
+    /// ```
+    /// [行起始毫秒,行时长毫秒](字起始毫秒,字时长毫秒,标志)字(…)字
+    /// ```
+    ///
+    /// 例如：`[0,1830](0,380,0)作(380,300,0)词(680,200,0)：`
+    ///
+    /// ## ⚠️ 曾经的错误（「AMLL 歌词没有逐字」的根因）
+    ///
+    /// 早先这里按 LRC 的 `<mm:ss.xxx>` 去匹配时间标签，而 YRC 的标签里是
+    /// **纯毫秒整数**、且用的是圆括号 —— 两个正则都永远匹配不到，
+    /// `parseYRC` 于是对每首歌都返回空数组。空数组会让 `ParsedLyrics.from`
+    /// 走「逐行歌词」分支，表现就是「歌词只有整行高亮，没有逐字」。
+    ///
+    /// 返回的 `WordLyricLine.start/end` 单位是**秒**（与模型一致；
+    /// `ParsedLyrics.from` 再乘 1000 转成毫秒喂给歌词页）。
     static func parseYRC(_ text: String) -> [WordLyricLine] {
         var result: [WordLyricLine] = []
-        let timeTag = try? NSRegularExpression(pattern: #"<(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?>"#)
-        let header = try? NSRegularExpression(pattern: #"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]"#)
+        // 行头必须是 `[数字,数字]`；顶部那些 JSON 元信息（credits）行不匹配，会被跳过。
+        guard let lineRE = try? NSRegularExpression(pattern: #"^\[(\d+),(\d+)\]"#),
+              let wordRE = try? NSRegularExpression(pattern: #"\((\d+),(\d+),\d+\)([^(]*)"#)
+        else { return [] }
+
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, let timeTag, let header else { continue }
+            guard !line.isEmpty else { continue }
             let ns = line as NSString
-            // 行起始时间
-            guard let hm = header.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { continue }
-            let lineStart = parseTime(m: hm, ns: ns)
-            // 所有 <time> 标签
-            let tags = timeTag.matches(in: line, range: NSRange(location: 0, length: ns.length))
-            guard !tags.isEmpty else { continue }
+            let full = NSRange(location: 0, length: ns.length)
+
+            guard let head = lineRE.firstMatch(in: line, range: full),
+                  head.numberOfRanges >= 3 else { continue }
+            let lineStartMs = Double(ns.substring(with: head.range(at: 1))) ?? 0
+
             var words: [WordLyricLine.Word] = []
-            for i in 0..<tags.count {
-                let tag = tags[i]
-                let start = parseTime(m: tag, ns: ns)
-                let end: TimeInterval
-                let startChar = NSMaxRange(tag.range)
-                if i + 1 < tags.count {
-                    end = parseTime(m: tags[i + 1], ns: ns)
-                } else {
-                    end = start
-                }
-                let charEnd = i + 1 < tags.count ? tag.range.location + tags[i + 1].range.location - startChar : ns.length
-                let charRange = NSRange(location: startChar, length: max(0, charEnd))
-                let char = ns.substring(with: charRange).replacingOccurrences(of: "<", with: "")
-                guard !char.isEmpty else { continue }
-                words.append(WordLyricLine.Word(char: char, start: start, end: max(start, end)))
+            var composed = ""
+            for m in wordRE.matches(in: line, range: full) {
+                guard m.numberOfRanges >= 4 else { continue }
+                let startMs = Double(ns.substring(with: m.range(at: 1))) ?? 0
+                let durationMs = Double(ns.substring(with: m.range(at: 2))) ?? 0
+                let piece = ns.substring(with: m.range(at: 3))
+                guard !piece.isEmpty else { continue }
+                let start = startMs / 1000
+                // 时长为 0 时至少给 1ms，避免下游出现 end == start 的零宽片段
+                let end = (startMs + max(durationMs, 1)) / 1000
+                words.append(WordLyricLine.Word(char: piece, start: start, end: end))
+                composed += piece
             }
-            guard !words.isEmpty else { continue }
+            guard !words.isEmpty, !composed.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+
             result.append(WordLyricLine(
-                start: lineStart,
-                end: words.last?.end ?? lineStart,
+                start: lineStartMs / 1000,
+                end: words.last?.end ?? lineStartMs / 1000,
                 words: words
             ))
         }
@@ -275,15 +315,5 @@ enum LyricParser {
 
     static func parseKuwoLRC(_ text: String) -> [LrcLine] {
         parseLRC(text)
-    }
-
-    private static func parseTime(m: NSTextCheckingResult, ns: NSString) -> TimeInterval {
-        let minute = Double(ns.substring(with: m.range(at: 1))) ?? 0
-        let second = Double(ns.substring(with: m.range(at: 2))) ?? 0
-        let frac = Double(ns.substring(with: m.range(at: 3))) ?? 0
-        // 时间戳百分位：00:12.34 → frac=34 → 0.34
-        if frac >= 100 { return minute * 60 + second + frac / 1000.0 }
-        if frac >= 10 { return minute * 60 + second + frac / 100.0 }
-        return minute * 60 + second + frac / 1000.0
     }
 }

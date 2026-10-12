@@ -122,11 +122,28 @@ enum AMLLBackgroundQuality: String, Codable, CaseIterable, Identifiable {
 }
 
 // MARK: - AppleMusicBackgroundMode
-enum AppleMusicBackgroundMode: String, Codable, CaseIterable {
-    case gradient
-    case coverBlur
-    case dynamicCover
+/// Apple Music 播放页的整体明暗。
+///
+/// 播放器里只有一个判据 `settings.appleMusicBackgroundMode == .dark`：
+///   * `.dark`  → 底层纯黑 + 封面压暗，白字清晰（默认，与 Kumone 一致）
+///   * `.light` → 底层纯白 + 封面提亮
+///
+/// 曾经这里还有 `gradient` / `coverBlur` / `dynamicCover` 三个取值，但全项目
+/// **从未被引用过**（只在 `== .dark` 这一处判断里被当作「非暗色」），
+/// 结果是默认值 `.gradient` 让整个播放页变成白底白字、完全看不清。
+/// 已按 Kumone 收敛为两档。
+enum AppleMusicBackgroundMode: String, Codable, CaseIterable, Identifiable {
     case dark
+    case light
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .dark: return "暗色"
+        case .light: return "浅色"
+        }
+    }
 }
 
 // MARK: - WellAppTheme
@@ -261,12 +278,23 @@ final class SettingsManager: ObservableObject {
     /// AMLL 字重（其他模式下）
     @AppStorage("wellmusic.amllFontWeight") var amllFontWeight: Int = 600
 
-    /// AMLL 上边距比例
-    @AppStorage("wellmusic.appleMusic.amllLyricTop") var appleMusicAmllLyricTop: Double = 0.38
-    /// AMLL 下边距比例
-    @AppStorage("wellmusic.appleMusic.amllLyricBottom") var appleMusicAmllLyricBottom: Double = 0.08
-    /// AMLL 水平边距
-    @AppStorage("wellmusic.appleMusic.amllLyricHorizontal") var appleMusicAmllLyricHorizontal: Double = 24
+    /// AMLL 歌词顶部位置（**点**，不是比例）。
+    ///
+    /// ⚠️ key 从 `…amllLyricTop` 改成了 `…amllLyricTopPx`：旧 key 里存的是
+    /// 0.38 这种「比例」值，而播放器一直把它当**点**用（`ScreenAdapter.h(0.38)`
+    /// ≈ 0），所以旧值本身是坏的。改 key 让新默认值干净生效，不必做迁移。
+    /// 取值范围与默认值对齐 Kumone（50…400，默认 140）。
+    @AppStorage("wellmusic.appleMusic.amllLyricTopPx") var appleMusicAmllLyricTop: Int = 140
+    /// AMLL 歌词底部位置（点，100…500，默认 305）
+    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") var appleMusicAmllLyricBottom: Int = 305
+    /// AMLL 歌词左右位置（点，-200…200，默认 10；正值=两侧留白更多）
+    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") var appleMusicAmllLyricHorizontal: Int = 10
+
+    /// 播放页背景暗度（0…1）。
+    ///
+    /// 作用在封面模糊层之上的那块压暗遮罩：暗色模式下 0 = 不压暗（封面最亮）、
+    /// 1 = 几乎全黑；浅色模式下则是提亮遮罩的强度。默认 0.48，与旧版硬编码一致。
+    @AppStorage("wellmusic.appleMusic.backgroundDim") var appleMusicBackgroundDim: Double = 0.48
 
     // MARK: - Apple Music 播放器（回迁自 Kumone / wellam）
 
@@ -292,7 +320,10 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.player.progressBarStyle") var progressBarStyle: Int = 0
 
     /// 背景模式
-    @AppStorage("wellmusic.appleMusic.backgroundMode") var appleMusicBackgroundMode: AppleMusicBackgroundMode = .gradient
+    /// 播放页整体明暗。默认 **暗色** —— 与 Kumone 一致，白字在暗底上才看得清。
+    /// （旧默认值是已废弃的 `.gradient`，存进 UserDefaults 后反序列化失败会回落到
+    /// 这里的默认值，即自动迁到 `.dark`，无需额外迁移代码。）
+    @AppStorage("wellmusic.appleMusic.backgroundMode") var appleMusicBackgroundMode: AppleMusicBackgroundMode = .dark
 
     /// 是否启用动态封面
     @AppStorage("wellmusic.appleMusic.dynamicCoverEnabled") var dynamicCoverEnabled: Bool = true
