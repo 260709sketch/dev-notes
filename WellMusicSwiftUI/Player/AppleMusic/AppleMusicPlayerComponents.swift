@@ -392,19 +392,51 @@ final class CoverBlurView: UIView {
     /// 背景动态效果：模糊封面缓慢呼吸缩放 + 主色渐变端点缓慢摆动。
     private func startBackgroundAnimations() {
         imageView.layer.removeAnimation(forKey: "wellmusicBgBreathe")
+        imageView.layer.removeAnimation(forKey: "wellmusicBgPanX")
+        imageView.layer.removeAnimation(forKey: "wellmusicBgPanY")
         gradientLayer.removeAnimation(forKey: "wellmusicGradStart")
         gradientLayer.removeAnimation(forKey: "wellmusicGradEnd")
         imageView.transform = .identity
 
+        // 严格对齐参考源码 `WellMusicAppleMusicV2Player.tsx` 的位图流动背景：
+        //   bgScale       1.1  → 1.15   20000ms  inOut(ease)  自动反向 → 等效 autoreverses
+        //   bgTranslateX  -20  → +20    15000ms  inOut(ease)
+        //   bgTranslateY  -15  → +15    18000ms  inOut(ease)
+        // RN 用 `withRepeat(withSequence(A, B), -1, true)`：A→B→A 单程各 20s/15s/18s，
+        // CABasicAnimation 的 `autoreverses = true` + 单程 duration 与之完全等价。
+        // 注：RN 的 translate 是相对于原点的 ±值，这里拆成「单程半幅」以配合 autoreverses。
+
+        // 1) 呼吸缩放：1.1 → 1.15（基准 1.1，振幅 0.05）
         let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 1.0
-        scale.toValue = 1.10
-        scale.duration = 14
+        scale.fromValue = AppleMusicV2.Motion.Background.scaleFrom
+        scale.toValue = AppleMusicV2.Motion.Background.scaleTo
+        scale.duration = AppleMusicV2.Motion.Background.scaleDuration
         scale.autoreverses = true
         scale.repeatCount = .infinity
         scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         imageView.layer.add(scale, forKey: "wellmusicBgBreathe")
 
+        // 2) 横向平移：-20 → +20（振幅 20pt）
+        let panX = CABasicAnimation(keyPath: "transform.translation.x")
+        panX.fromValue = -AppleMusicV2.Motion.Background.translateX
+        panX.toValue = AppleMusicV2.Motion.Background.translateX
+        panX.duration = AppleMusicV2.Motion.Background.translateXDuration
+        panX.autoreverses = true
+        panX.repeatCount = .infinity
+        panX.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        imageView.layer.add(panX, forKey: "wellmusicBgPanX")
+
+        // 3) 纵向平移：-15 → +15（振幅 15pt）
+        let panY = CABasicAnimation(keyPath: "transform.translation.y")
+        panY.fromValue = -AppleMusicV2.Motion.Background.translateY
+        panY.toValue = AppleMusicV2.Motion.Background.translateY
+        panY.duration = AppleMusicV2.Motion.Background.translateYDuration
+        panY.autoreverses = true
+        panY.repeatCount = .infinity
+        panY.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        imageView.layer.add(panY, forKey: "wellmusicBgPanY")
+
+        // 渐变色缓慢摆动（背景基调的呼吸感，不属参考源码但保留既有观感）
         let start = CABasicAnimation(keyPath: "startPoint")
         start.fromValue = NSValue(cgPoint: CGPoint(x: 0.5, y: 0))
         start.toValue = NSValue(cgPoint: CGPoint(x: 0.68, y: 0))
@@ -705,5 +737,785 @@ final class DynamicCoverManager: ObservableObject {
         fetchTask?.cancel()
         currentTrackID = nil
         coverURL = nil
+    }
+}
+
+// MARK: - 歌词偏移精细调节
+
+/// 歌词偏移弹窗（对应参考源码 `lyricOffset` 面板）。
+///
+/// 语义与播放器 `moreMenu` 里的「歌词时间微调」保持一致：
+/// - 正值 = 歌词高亮**提前**（歌声还没到，歌词已高亮）
+/// - 负值 = 歌词高亮**推迟**
+///
+/// 写入两个位置：
+/// - `appState.lyricOffset`：驱动非 AMLL 歌词页与 `LyricTiming` 的实时高亮
+/// - `settings.lyricOffset`：驱动 AMLL Web 歌词页（读 `wellmusic.lyricOffset`）
+///
+/// 范围 ±5 秒、步进 0.1 秒（滑块连续、按钮微调）。
+struct LyricOffsetSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var settings: SettingsManager
+
+    @Environment(\.dismiss) private var dismiss
+
+    /// 下限 / 上限 / 最小步进（秒）
+    private static let range: ClosedRange<Double> = -5.0...5.0
+    private static let step: Double = 0.1
+
+    /// 本地草稿值：拖动过程中不反复写 UserDefaults，松手才落盘
+    @State private var draft: Double = 0
+    @State private var didLoad = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                valueDisplay
+
+                slider
+
+                presetRow
+
+                fineTuneRow
+
+                Text("正值表示歌词提前，负值表示歌词推迟。\n用于校准蓝牙耳机等设备的输出延迟。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("歌词偏移")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        apply(draft)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            draft = clamped(appState.lyricOffset)
+        }
+    }
+
+    // MARK: - 子视图
+
+    /// 当前值：大字 + 方向说明
+    private var valueDisplay: some View {
+        VStack(spacing: 6) {
+            Text(formatted(draft))
+                .font(.system(size: 44, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+
+            Text(directionText(draft))
+                .font(.system(size: 14))
+                .foregroundStyle(draft == 0 ? Color.secondary : Color.accentColor)
+        }
+        .padding(.top, 8)
+    }
+
+    private var slider: some View {
+        VStack(spacing: 8) {
+            Slider(
+                value: Binding(
+                    get: { draft },
+                    set: { draft = clamped($0) }
+                ),
+                in: Self.range,
+                step: Self.step,
+                onEditingChanged: { editing in
+                    // 松手时落盘，拖动中只改草稿
+                    if !editing { apply(draft) }
+                }
+            )
+            .tint(.accentColor)
+            .padding(.horizontal, 24)
+
+            HStack {
+                Text("-5.0s")
+                Spacer()
+                Text("0")
+                Spacer()
+                Text("+5.0s")
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 28)
+        }
+    }
+
+    /// 常用预设（与播放器菜单里的档位一致）
+    private var presetRow: some View {
+        HStack(spacing: 8) {
+            ForEach([-1.0, -0.5, 0, 0.5, 1.0], id: \.self) { value in
+                Button {
+                    draft = value
+                    apply(value)
+                } label: {
+                    Text(value == 0 ? "复位" : formatted(value))
+                        .font(.system(size: 13, weight: .medium))
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Swift.abs(draft - value) < 0.01
+                                      ? Color.accentColor.opacity(0.18)
+                                      : Color(uiColor: .secondarySystemGroupedBackground))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// 微调：-0.1 / +0.1
+    private var fineTuneRow: some View {
+        HStack(spacing: 16) {
+            fineButton(systemName: "minus", delta: -Self.step, label: "减少 0.1 秒")
+            fineButton(systemName: "plus", delta: Self.step, label: "增加 0.1 秒")
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func fineButton(systemName: String, delta: Double, label: String) -> some View {
+        Button {
+            let next = clamped(draft + delta)
+            draft = next
+            apply(next)
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: - 逻辑
+
+    /// 双写：AppState 驱动原生歌词页，SettingsManager 驱动 AMLL 网页歌词
+    private func apply(_ value: Double) {
+        let next = clamped(value)
+        appState.lyricOffset = next
+        settings.lyricOffset = next
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        // 对齐到 0.1 秒，避免浮点误差累积
+        let rounded = (value * 10).rounded() / 10
+        return min(max(rounded, Self.range.lowerBound), Self.range.upperBound)
+    }
+
+    private func formatted(_ value: Double) -> String {
+        String(format: "%+.1f s", value)
+    }
+
+    private func directionText(_ value: Double) -> String {
+        if value == 0 { return "无偏移" }
+        return value > 0 ? "歌词提前" : "歌词推迟"
+    }
+}
+
+// =====================================================================================
+// MARK: - 播放器 UI 与交互组件
+//
+// 范围限定为「视觉 + 交互」。两个承载**行为**的部件一律使用本项目自身实现：
+//   * `PlayerSeekBar`  —— 时间源走 `PlayerCore` 的拖拽仲裁
+//                             （`beginScrubbing` / `updateScrubbing` / `endScrubbing`）。
+//   * AMLL 歌词同步        —— 由 `AMLLWebLyricsView` + `hardCalibrate` 通道负责。
+// =====================================================================================
+
+// MARK: - 封面 / 文本锚点
+
+/// 收集歌词行在视口坐标系内的中线位置，用于判定「当前聚焦行」。
+struct LyricLineCenterKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [:]
+
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// 大封面与歌词页迷你封面之间做插值动画时，用来指认「大 / 小」两个落点。
+enum CoverArtAnchor: Hashable {
+    case expanded
+    case compact
+}
+
+/// 收集大封面与迷你封面在各自坐标系内的实际位置。
+struct AppleMusicArtworkFrameKey: PreferenceKey {
+    static var defaultValue: [CoverArtAnchor: Anchor<CGRect>] = [:]
+
+    static func reduce(
+        value: inout [CoverArtAnchor: Anchor<CGRect>],
+        nextValue: () -> [CoverArtAnchor: Anchor<CGRect>]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// 歌名 / 歌手文本在大封面页与歌词页两处的落点。
+enum HeaderTextAnchor: Hashable {
+    case titleExpanded
+    case titleCompact
+    case artistExpanded
+    case artistCompact
+}
+
+struct AppleMusicTextFrameKey: PreferenceKey {
+    static var defaultValue: [HeaderTextAnchor: Anchor<CGRect>] = [:]
+
+    static func reduce(
+        value: inout [HeaderTextAnchor: Anchor<CGRect>],
+        nextValue: () -> [HeaderTextAnchor: Anchor<CGRect>]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
+/// 竖屏排版常量。
+enum PlayerLayoutMetrics {
+    /// 顶部留白
+    static let headerTopSpacing: CGFloat = 20
+}
+
+// MARK: - 进度条
+
+/// Apple Music 风格的进度条。
+///
+/// **注意（关键设计）**：拖拽状态一律由 `PlayerCore` 仲裁，本视图不持有
+/// `scrubbing` / `isSeeking` 这类本地时间状态。若改用「本地猜测位置是否已对上」
+/// （例如 `abs(newProgress - scrubValue) < 0.3`），会在无损 / Hi-Res 文件上
+/// 长时间不满足，从而把 `isSeeking` 卡在 true、进度条停在拖拽值不动。
+///
+/// 这里改为：
+///   * onChanged → `PlayerCore.beginScrubbing()` / `updateScrubbing(_:)`
+///   * onEnded   → `PlayerCore.endScrubbing(_:)`，由它在超时 / 位置对齐后自行收尾
+/// 显示值则直接取 `PlayerCore.displayTime`，拖拽期间它就是 scrubTime。
+struct PlayerSeekBar: View {
+    @EnvironmentObject private var player: PlayerService
+    @ObservedObject private var core = PlayerCore.shared
+    /// 是否显示拖拽气泡
+    @State private var showBubble = false
+
+    private var totalDuration: Double {
+        max(max(player.duration, player.currentTrack?.duration ?? 0), 1)
+    }
+
+    /// 拖拽中显示手指位置，否则显示播放位置——两者统一由 PlayerCore 提供。
+    private var displayTime: Double {
+        let time = core.displayTime
+        guard time.isFinite else { return 0 }
+        return min(max(time, 0), totalDuration)
+    }
+
+    var body: some View {
+        let total = totalDuration
+        let time = displayTime
+
+        VStack(spacing: 6) {
+            GeometryReader { geometry in
+                let width = max(geometry.size.width, 1)
+                let progress = CGFloat(min(max(time / total, 0), 1))
+                let filledWidth = width * progress
+                let trackH: CGFloat = showBubble ? 15 : 7
+                // 气泡水平方向夹在轨道内，避免贴边溢出
+                let bubbleX = max(-width / 2 + 31, min(width / 2 - 31, filledWidth - width / 2))
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.18))
+                        .frame(height: trackH)
+
+                    Capsule()
+                        .fill(.white.opacity(0.55))
+                        .frame(width: max(0, filledWidth), height: trackH)
+                }
+                .frame(height: 30)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let ratio = min(max(value.location.x / width, 0), 1)
+                            let target = Double(ratio) * total
+                            if !showBubble {
+                                showBubble = true
+                                // 以**当前播放位置**进入拖拽态：若传手指位置，进度条会在
+                                // 按下瞬间从原位跳到手指处，视觉上是断的。
+                                core.beginScrubbing(to: min(max(core.displayTime, 0), total))
+                            }
+                            core.updateScrubbing(to: target)
+                        }
+                        .onEnded { value in
+                            let ratio = min(max(value.location.x / width, 0), 1)
+                            let target = Double(ratio) * total
+                            core.updateScrubbing(to: target)
+                            core.endScrubbing(to: target)
+                            showBubble = false
+                        }
+                )
+                .overlay(alignment: .top) {
+                    if showBubble {
+                        Text(wellamTimeString(time))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(.black.opacity(0.5), in: Capsule())
+                            .offset(x: bubbleX, y: -30)
+                            .transition(.scale(scale: 0.9).combined(with: .opacity))
+                    }
+                }
+            }
+            .frame(height: 30)
+
+            HStack {
+                Text(wellamTimeString(time))
+                Spacer()
+                Text("-" + wellamTimeString(max(0, total - time)))
+            }
+            .font(.system(size: 11, weight: .regular, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.52))
+        }
+        .frame(maxWidth: 420)
+        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: showBubble)
+        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: core.isScrubbing)
+    }
+}
+
+// MARK: - 收藏按钮（叶子视图）
+
+/// 播放页的收藏（心形）按钮。
+///
+/// **为什么要单独抽成一个视图**：收藏状态只驱动这一个图标，但它来源于
+/// `AccountStore`。如果把 `@ObservedObject AccountStore.shared` 挂在
+/// `AppleMusicPlayerView` 顶层，任何收藏变化都会让**整页**重算 —— 页里有
+/// `WKWebView`（474KB 页面 + WebGL 流动背景），一次全量重算就要重新测量
+/// `UIScreen`、遍历 window scene、并向下发一轮 `evaluateJavaScript`。
+/// 抽成叶子后，重算范围收敛到这一个 38pt 的按钮，开销可忽略。
+struct PlayerLikeButton: View {
+    let track: Track?
+    var primaryColor: Color = .white
+    var accentColor: Color = .red
+
+    /// 只订阅收藏集合，不订阅整个 `AccountStore` 的其它状态。
+    @ObservedObject private var account = AccountStore.shared
+
+    private var isLiked: Bool {
+        guard let track else { return false }
+        return account.isLiked(track: track)
+    }
+
+    var body: some View {
+        Button {
+            guard let track else { return }
+            Task { await AccountStore.shared.toggleLike(trackID: track.id, track: track) }
+        } label: {
+            Image(systemName: isLiked ? "heart.fill" : "heart")
+                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+                .foregroundStyle(isLiked ? accentColor : primaryColor.opacity(0.78))
+                .frame(width: ScreenAdapter.h(38), height: ScreenAdapter.h(38))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 音量条
+
+/// 常驻横向音量条：左右为喇叭图标，中间可拖拽。
+struct PlayerVolumeControl: View {
+    @EnvironmentObject private var player: PlayerService
+    @EnvironmentObject private var settings: SettingsManager
+    @State private var isDragging = false
+    @State private var dragValue: Double = 0
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.fill")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: 16, height: 20)
+
+            GeometryReader { geo in
+                let width = max(geo.size.width, 1)
+                let fraction = isDragging ? dragValue : Double(player.volume)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.18))
+                        .frame(height: 7)
+                    Capsule()
+                        .fill(.white.opacity(0.55))
+                        .frame(width: width * CGFloat(min(max(fraction, 0), 1)), height: 7)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            isDragging = true
+                            let val = Double(min(max(value.location.x / width, 0), 1))
+                            dragValue = val
+                            player.volume = Float(val)
+                        }
+                        .onEnded { value in
+                            let val = Double(min(max(value.location.x / width, 0), 1))
+                            dragValue = val
+                            player.volume = Float(val)
+                            isDragging = false
+                        }
+                )
+            }
+            .frame(height: 20)
+
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: 16, height: 20)
+        }
+        .frame(height: 20)
+    }
+}
+
+// MARK: - 迷你歌词预览
+
+/// 大封面页上的两行歌词预览，点击进入歌词页。
+struct MiniLyricsPreview: View {
+    let action: () -> Void
+
+    @EnvironmentObject private var player: PlayerService
+    @ObservedObject private var lyricsCursor = PlayerService.shared.lyricsCursor
+
+    private var currentLines: (previous: LyricLine?, current: LyricLine?, next: LyricLine?) {
+        guard let lyrics = player.lyrics, !lyrics.isEmpty else { return (nil, nil, nil) }
+        guard let index = lyricsCursor.activeIndex else {
+            return (nil, nil, lyrics.lines.first)
+        }
+        let all = lyrics.lines
+        return (
+            index > 0 ? all[index - 1] : nil,
+            all[index],
+            index + 1 < all.count ? all[index + 1] : nil
+        )
+    }
+
+    var body: some View {
+        let (_, current, next) = currentLines
+        Button(action: action) {
+            VStack(spacing: 8) {
+                if current == nil && next == nil {
+                    Text("暂无歌词")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.54))
+                } else {
+                    line(current, emphasized: true)
+                    line(next, emphasized: false)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 70)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: current?.id)
+    }
+
+    @ViewBuilder
+    private func line(_ line: LyricLine?, emphasized: Bool) -> some View {
+        Text(line?.text.isEmpty == false ? line!.text : " ")
+            .font(.system(size: emphasized ? 17 : 14, weight: emphasized ? .bold : .medium))
+            .foregroundStyle(.white.opacity(emphasized ? 1 : 0.45))
+            .lineLimit(1)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 28)
+            .id(line?.id)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+// MARK: - 播放队列
+
+struct PlayQueueList: View {
+    @EnvironmentObject private var player: PlayerService
+    @Environment(\.dismiss) private var dismiss
+
+    private var playbackModeIcon: String {
+        if player.shuffleEnabled { return "shuffle" }
+        switch player.repeatMode {
+        case .one: return "repeat.1"
+        case .all: return "repeat"
+        case .off: return "repeat"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(.secondary.opacity(0.45))
+                .frame(width: 36, height: 5)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+            HStack(spacing: 8) {
+                Text("播放队列")
+                    .font(.system(size: 17, weight: .bold))
+                Text("\(player.queue.count) 首")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button {
+                    player.cyclePlaybackMode()
+                } label: {
+                    Image(systemName: playbackModeIcon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(player.shuffleEnabled ? Color.accentColor : .primary)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                Button(role: .destructive) {
+                    player.clearQueue()
+                } label: {
+                    Text("清空")
+                        .font(.system(size: 15, weight: .medium))
+                }
+                .disabled(player.queue.isEmpty)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
+
+            if player.queue.isEmpty {
+                Spacer()
+                EmptyStateView(icon: "music.note.list", title: "播放队列为空")
+                Spacer()
+            } else {
+                List {
+                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
+                        row(track, index: index)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
+                    }
+                    .onDelete { offsets in
+                        // 从大到小删除，避免索引漂移
+                        for index in offsets.sorted(by: >) where player.queue.indices.contains(index) {
+                            player.removeFromQueue(at: index)
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .listStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func row(_ track: Track, index: Int) -> some View {
+        let isCurrent = index == player.currentIndex
+        HStack(spacing: 12) {
+            CoverImage(url: URL(string: track.album.picUrl ?? ""), size: 46, cornerRadius: 9)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.name)
+                    .font(.system(size: 15, weight: isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isCurrent ? Theme.accent : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(track.artistNames)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+            if isCurrent {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.accent)
+            } else {
+                Text(Formatters.duration(track.duration))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            player.play(tracks: player.queue, source: .none, startAt: track)
+            dismiss()
+        }
+    }
+}
+
+// MARK: - Sheet 辅助
+
+/// 评论区 sheet：iOS 16.4+ 使用半屏 detents，背景交给 `CommentsView` 自绘。
+struct PlayerSheetDetents: ViewModifier {
+    func body(content: Content) -> some View {
+        Group {
+            if #available(iOS 16.4, *) {
+                content
+                    .presentationDetents([.medium, .large])
+                    .presentationBackground(.white)
+            } else {
+                content
+                    .presentationDetents([.medium, .large])
+            }
+        }
+    }
+}
+
+extension View {
+    /// 在不支持 detents 的系统上退化为普通 sheet。
+    @ViewBuilder
+    func presentationDetentsSafe() -> some View {
+        if #available(iOS 16.0, *) {
+            self.presentationDetents([.medium])
+        } else {
+            self
+        }
+    }
+}
+
+// MARK: - 音量浮层
+
+/// 竖直音量浮层（Apple Music 播放器的音量按钮弹出样式）。
+struct VolumePopover: View {
+    @EnvironmentObject private var player: PlayerService
+    @State private var isDragging = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.system(size: 16, weight: .medium))
+
+            GeometryReader { geo in
+                let height = max(geo.size.height, 1)
+                let fraction = min(max(CGFloat(player.volume), 0), 1)
+                ZStack(alignment: .bottom) {
+                    Capsule().fill(.white.opacity(0.22))
+                    Capsule().fill(.white.opacity(0.82))
+                        .frame(height: height * fraction)
+                }
+                .frame(width: isDragging ? 12 : 8)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            isDragging = true
+                            updateVolume(at: value.location.y, height: height)
+                        }
+                        .onEnded { value in
+                            updateVolume(at: value.location.y, height: height)
+                            isDragging = false
+                        }
+                )
+                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isDragging)
+            }
+            .frame(width: 32, height: 132)
+            .accessibilityElement()
+            .accessibilityLabel("音量")
+            .accessibilityValue("\(Int((player.volume * 100).rounded()))%")
+            .accessibilityAdjustableAction(adjustVolume)
+
+            Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.fill")
+                .font(.system(size: 14, weight: .medium))
+        }
+        .foregroundStyle(.white.opacity(0.85))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(alignment: .bottom) {
+            PopoverArrow()
+                .fill(.white.opacity(0.18))
+                .frame(width: 16, height: 8)
+                .offset(y: 8)
+        }
+    }
+
+    private func updateVolume(at location: CGFloat, height: CGFloat) {
+        guard height > 0 else { return }
+        player.volume = Float(min(max(1 - location / height, 0), 1))
+    }
+
+    private func adjustVolume(_ direction: AccessibilityAdjustmentDirection) {
+        let step: Float = 0.05
+        switch direction {
+        case .increment: player.volume = min(player.volume + step, 1)
+        case .decrement: player.volume = max(player.volume - step, 0)
+        @unknown default: break
+        }
+    }
+}
+
+/// 浮层底部的小三角。
+struct PopoverArrow: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.closeSubpath()
+        }
+    }
+}
+
+// MARK: - 播放器样式选择
+
+struct PlaybackModeSheet: View {
+    @EnvironmentObject private var settings: SettingsManager
+    @Environment(\.dismiss) private var dismiss
+
+    /// 可选模式（已排除停用的经典模式）
+    private let availableModes: [NowPlayingMode] = [.appleMusic, .immersive, .immersiveV2, .vinyl, .minimal]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(availableModes) { mode in
+                    Button {
+                        dismiss()
+                        // 延迟切换，确保 sheet 先关闭再重建播放器视图
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            settings.nowPlayingMode = mode
+                        }
+                    } label: {
+                        HStack {
+                            Text(mode.displayName)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if settings.nowPlayingMode == mode {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("播放器样式")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetentsSafe()
     }
 }

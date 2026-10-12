@@ -9,28 +9,124 @@ enum LyricsAnnotation: String, Codable {
     case romaji
 }
 
+// MARK: - AMLLBackgroundMode
+/// AMLL 歌词页的背景渲染方式。
+///
+/// 流动背景由官方 AMLL 页面里的渲染器（`Fu`）绘制：它从专辑封面取色，
+/// 生成持续流动的渐变光斑。这里给用户四档选择，在观感与耗电之间自行取舍。
+enum AMLLBackgroundMode: String, Codable, CaseIterable, Identifiable {
+    /// 流动背景 + 高斯模糊（推荐）：光斑柔和，GPU 开销可控
+    case blurFlow
+    /// 流动背景：官方原始观感，光斑清晰锐利
+    case flowing
+    /// 静态背景：完全不渲染流动层，最省电；只留 SwiftUI 底图
+    case still
+    /// 不使用 AMLL 背景：完全交给 SwiftUI 的模糊封面
+    case off
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .blurFlow: return "流动背景（模糊）"
+        case .flowing: return "流动背景"
+        case .still: return "静态背景"
+        case .off: return "不使用（跟随播放器）"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .blurFlow: return "专辑取色流动光斑，叠加高斯模糊，观感柔和、功耗适中"
+        case .flowing: return "专辑取色流动光斑，官方原版观感，GPU 占用最高"
+        case .still: return "关闭流动渲染，纯底色 + 歌词，最省电"
+        case .off: return "背景完全由播放器的模糊封面提供"
+        }
+    }
+
+    /// 对应的页面端模式名。
+    var bridgeValue: String {
+        switch self {
+        case .blurFlow: return "blurOnly"
+        case .flowing: return "flowing"
+        case .still: return "still"
+        case .off: return "off"
+        }
+    }
+
+    /// 高斯模糊半径（px）。只有 `blurFlow` 需要。
+    var blurRadius: Double {
+        switch self {
+        case .blurFlow: return 28
+        case .flowing, .still, .off: return 0
+        }
+    }
+
+    /// 背景层不透明度。
+    var layerOpacity: Double {
+        switch self {
+        case .blurFlow: return 0.72
+        case .flowing: return 1.0
+        case .still, .off: return 0
+        }
+    }
+}
+
+// MARK: - AMLLBackgroundQuality
+/// AMLL 流动背景的渲染质量档位。
+///
+/// 流动背景是 GPU 密集的：它是全屏 GPU 着色器，每帧都要重绘整块背景。
+/// 官方默认 `setFPS(40)` + `setRenderScale(0.5)`，本身已经做过一次折中。
+/// 这里把它做成用户可调的三档，让低电量 / 老机型可以再降一档。
+enum AMLLBackgroundQuality: String, Codable, CaseIterable, Identifiable {
+    /// 省电：30 fps + 0.4 倍分辨率
+    case power
+    /// 均衡：40 fps + 0.5 倍分辨率（官方默认）
+    case balanced
+    /// 观感优先：60 fps + 0.75 倍分辨率
+    case high
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .power: return "省电"
+        case .balanced: return "均衡"
+        case .high: return "高画质"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .power: return "30 帧 · 0.4x 渲染分辨率，最省电"
+        case .balanced: return "40 帧 · 0.5x 渲染分辨率，官方默认"
+        case .high: return "60 帧 · 0.75x 渲染分辨率，最流畅但更耗电"
+        }
+    }
+
+    var fps: Int {
+        switch self {
+        case .power: return 30
+        case .balanced: return 40
+        case .high: return 60
+        }
+    }
+
+    var renderScale: Double {
+        switch self {
+        case .power: return 0.4
+        case .balanced: return 0.5
+        case .high: return 0.75
+        }
+    }
+}
+
 // MARK: - AppleMusicBackgroundMode
 enum AppleMusicBackgroundMode: String, Codable, CaseIterable {
     case gradient
     case coverBlur
     case dynamicCover
     case dark
-}
-
-// MARK: - WellTabBarStyle
-/// 底部栏样式
-enum WellTabBarStyle: String, CaseIterable, Identifiable {
-    case `default`    // 默认毛玻璃
-    case liquidGlass  // 液态玻璃
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .default: return "默认毛玻璃"
-        case .liquidGlass: return "液态玻璃"
-        }
-    }
 }
 
 // MARK: - WellAppTheme
@@ -68,98 +164,51 @@ enum WellAppTheme: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - WellGlassPreset
-/// 液态玻璃预设
-enum WellGlassPreset: String, CaseIterable, Identifiable {
-    case custom      // 自定义
-    case white       // 白色高模糊
-    case lightBlue   // 浅蓝色（原库 regular 浅色模式）
-    case darkBlue    // 深蓝色（原库 regular 深色模式）
-    case lens        // 透镜（通透高色散）
-    case thumb       // 缩略图（近透明淡冷色）
+// MARK: - NowPlayingMode
+/// 「正在播放」页的形态。回迁自 Kumone / wellam 的 NowPlayingMode。
+///
+/// 说明：`.classic` 已按上游注释停用，`.appleMusic` 即本文件所在的 Apple Music 播放器。
+enum NowPlayingMode: String, Codable, CaseIterable, Identifiable {
+    case appleMusic
+    case immersive
+    case immersiveV2
+    case vinyl
+    case minimal
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .custom: return "自定义"
-        case .white: return "白色"
-        case .lightBlue: return "浅蓝"
-        case .darkBlue: return "深蓝"
-        case .lens: return "透镜"
-        case .thumb: return "透明"
+        case .appleMusic: return "Apple Music"
+        case .immersive: return "沉浸模式"
+        case .immersiveV2: return "沉浸模式 V2"
+        case .vinyl: return "唱片模式"
+        case .minimal: return "极简模式"
         }
     }
 
-    /// 预设对应的配置
-    var config: WellGlassConfig {
+    /// 模式的排版族：compact 类共用紧凑布局。
+    var usesCompactLayout: Bool {
         switch self {
-        case .custom: return .default
-        case .white:
-            return WellGlassConfig(tintOpacity: 0.45, blurRadius: 0.6, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
-        case .lightBlue:
-            // 原库 regular 浅色模式：RGB(0.902, 0.951, 1.0)
-            return WellGlassConfig(tintOpacity: 0.8, blurRadius: 0.3, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 0.902, tintGreen: 0.951, tintBlue: 1.0)
-        case .darkBlue:
-            // 原库 regular 深色模式：RGB(0, 0.05, 0.1)
-            return WellGlassConfig(tintOpacity: 0.8, blurRadius: 0.3, glassThickness: 10, refractiveIndex: 1.5, dispersionStrength: 5, tintRed: 0, tintGreen: 0.05, tintBlue: 0.1)
-        case .lens:
-            return WellGlassConfig(tintOpacity: 0, blurRadius: 0, glassThickness: 6, refractiveIndex: 1.1, dispersionStrength: 15, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
-        case .thumb:
-            return WellGlassConfig(tintOpacity: 0.15, blurRadius: 0, glassThickness: 10, refractiveIndex: 1.11, dispersionStrength: 5, tintRed: 1.0, tintGreen: 1.0, tintBlue: 1.0)
+        case .appleMusic, .immersiveV2: return true
+        case .immersive, .vinyl, .minimal: return false
         }
     }
 }
 
-// MARK: - WellGlassConfig
-/// 液态玻璃自定义配置
-struct WellGlassConfig: Codable, Equatable, Hashable {
-    /// 色调透明度 0-1
-    var tintOpacity: Double = 0.45
-    /// 背景模糊半径 0-1
-    var blurRadius: Double = 0.6
-    /// 玻璃厚度 0-20
-    var glassThickness: Double = 10
-    /// 折射率 1.0-2.0
-    var refractiveIndex: Double = 1.5
-    /// 色散强度 0-30
-    var dispersionStrength: Double = 5
-    /// 渲染帧率 30/60/90/120
-    var preferredFramesPerSecond: Int = 40
-    /// 色调颜色 R 0-1
-    var tintRed: Double = 1.0
-    /// 色调颜色 G 0-1
-    var tintGreen: Double = 1.0
-    /// 色调颜色 B 0-1
-    var tintBlue: Double = 1.0
+// MARK: - allowsNowPlayingDismiss
+/// 控制「正在播放」页是否允许整页下滑关闭。
+///
+/// 歌词页可见时置 false：避免和歌词滚动 / 拖拽手势互相抢占。
+private struct AllowsNowPlayingDismissKey: EnvironmentKey {
+    static let defaultValue: Bool = true
+}
 
-    static let `default` = WellGlassConfig()
-
-    #if os(iOS)
-    /// 转换成 WellGlass 配置
-    var toWellGlass: WellGlass {
-        WellGlass(
-            shaderUniforms: .init(
-                glassThickness: Float(glassThickness),
-                refractiveIndex: Float(refractiveIndex),
-                dispersionStrength: Float(dispersionStrength),
-                fresnelDistanceRange: 70,
-                fresnelIntensity: 0,
-                fresnelEdgeSharpness: 0,
-                glareDistanceRange: 30,
-                glareAngleConvergence: 0.1,
-                glareOppositeSideBias: 1,
-                glareIntensity: 0.1,
-                glareEdgeSharpness: -0.15,
-                glareDirectionOffset: -.pi / 4
-            ),
-            backgroundTextureSizeCoefficient: 1,
-            backgroundTextureScaleCoefficient: 0.2,
-            backgroundTextureBlurRadius: blurRadius,
-            tintColor: UIColor(red: CGFloat(tintRed), green: CGFloat(tintGreen), blue: CGFloat(tintBlue), alpha: CGFloat(tintOpacity))
-        )
+extension EnvironmentValues {
+    var allowsNowPlayingDismiss: Bool {
+        get { self[AllowsNowPlayingDismissKey.self] }
+        set { self[AllowsNowPlayingDismissKey.self] = newValue }
     }
-    #endif
 }
 
 // MARK: - SettingsManager
@@ -170,36 +219,10 @@ final class SettingsManager: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    // MARK: - Now Playing Mode
-
-    @AppStorage("wellmusic.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
-
     // MARK: - 外观主题
 
     /// 应用外观主题（深色 / 浅色 / 跟随系统）
     @AppStorage("wellmusic.appTheme") var appTheme: WellAppTheme = .system
-
-    // MARK: - 底部栏样式
-
-    /// 底部栏样式（默认毛玻璃 / 液态玻璃）
-    @AppStorage("wellmusic.tabBarStyle") var tabBarStyle: WellTabBarStyle = .default
-
-    /// 液态玻璃预设
-    @AppStorage("wellmusic.liquidGlassPreset") var liquidGlassPreset: WellGlassPreset = .custom
-
-    /// 液态玻璃自定义配置（用户调节后的参数，切换预设不覆盖）
-    @Published var customLiquidGlassConfig: WellGlassConfig {
-        didSet {
-            if let data = try? JSONEncoder().encode(customLiquidGlassConfig) {
-                UserDefaults.standard.set(data, forKey: "wellmusic.customLiquidGlassConfig")
-            }
-        }
-    }
-
-    /// 液态玻璃当前生效配置（自定义预设取自定义值，否则取预设默认值）
-    var liquidGlassConfig: WellGlassConfig {
-        liquidGlassPreset == .custom ? customLiquidGlassConfig : liquidGlassPreset.config
-    }
 
     // MARK: - Lyrics
 
@@ -216,14 +239,15 @@ final class SettingsManager: ObservableObject {
 
     // MARK: - Apple Music 专属
 
-    @AppStorage("wellmusic.appleMusic.showVolume") var appleMusicShowVolume: Bool = true
-    @AppStorage("wellmusic.appleMusic.showLyricPreview") var appleMusicShowLyricPreview: Bool = true
+    /// 是否使用 AMLL 逐字歌词渲染（Apple Music 播放器）
     @AppStorage("wellmusic.appleMusic.useAMLL") var appleMusicUseAMLL: Bool = true
 
-    @AppStorage("wellmusic.appleMusic.primaryHex") var appleMusicPrimaryHex: String = ""
-    @AppStorage("wellmusic.appleMusic.secondaryHex") var appleMusicSecondaryHex: String = ""
-    @AppStorage("wellmusic.appleMusic.accentHex") var appleMusicAccentHex: String = ""
-    @AppStorage("wellmusic.appleMusic.volumeHex") var appleMusicVolumeHex: String = ""
+    /// AMLL 歌词页的背景渲染方式（流动 / 模糊流动 / 静态 / 关闭）
+    @AppStorage("wellmusic.amll.backgroundMode") var amllBackgroundMode: AMLLBackgroundMode = .blurFlow
+
+    /// AMLL 流动背景的渲染质量：帧率与分辨率倍率。
+    /// 越低越省电；`high` 用于观感优先。
+    @AppStorage("wellmusic.amll.backgroundQuality") var amllBackgroundQuality: AMLLBackgroundQuality = .balanced
 
     @AppStorage("wellmusic.appleMusic.controlsHeight") var appleMusicControlsHeight: Double = 1.0
 
@@ -244,6 +268,29 @@ final class SettingsManager: ObservableObject {
     /// AMLL 水平边距
     @AppStorage("wellmusic.appleMusic.amllLyricHorizontal") var appleMusicAmllLyricHorizontal: Double = 24
 
+    // MARK: - Apple Music 播放器（回迁自 Kumone / wellam）
+
+    /// 当前「正在播放」页形态
+    @AppStorage("wellmusic.player.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
+
+    /// 大封面页是否显示迷你歌词预览（点击可进入歌词页）
+    @AppStorage("wellmusic.appleMusic.showLyricPreview") var showLyricPreview: Bool = false
+
+    /// 是否常驻显示音量条（false 时走音量按钮 + 浮层）
+    @AppStorage("wellmusic.appleMusic.showVolume") var showVolumeControl: Bool = false
+
+    /// 自定义配色（十六进制，空串表示用默认色）
+    @AppStorage("wellmusic.appleMusic.primaryHex") var appleMusicPrimaryHex: String = ""
+    @AppStorage("wellmusic.appleMusic.secondaryHex") var appleMusicSecondaryHex: String = ""
+    @AppStorage("wellmusic.appleMusic.accentHex") var appleMusicAccentHex: String = ""
+    @AppStorage("wellmusic.appleMusic.volumeHex") var appleMusicVolumeHex: String = ""
+
+    /// 呼吸/律动强度（0...1）
+    @AppStorage("wellmusic.player.breath") var breath: Double = 0.6
+
+    /// 进度条样式（0 为默认）
+    @AppStorage("wellmusic.player.progressBarStyle") var progressBarStyle: Int = 0
+
     /// 背景模式
     @AppStorage("wellmusic.appleMusic.backgroundMode") var appleMusicBackgroundMode: AppleMusicBackgroundMode = .gradient
 
@@ -259,11 +306,10 @@ final class SettingsManager: ObservableObject {
 
     @AppStorage("wellmusic.player.autoSkipOnFailure") var autoSkipOnFailure: Bool = true
 
+    /// 断开蓝牙耳机 / 拔出耳机时自动暂停播放（默认开启）
+    @AppStorage("wellmusic.player.bluetoothAutoPause") var bluetoothAutoPause: Bool = true
+
     @AppStorage("wellmusic.player.swipeSwitchSong") var swipeSwitchSong: Bool = true
-
-    @AppStorage("wellmusic.player.breath") var breathEffect: Bool = true
-
-    @AppStorage("wellmusic.player.progressBarStyle") var progressBarStyle: String = "appleMusic"
 
     /// 无损/高音质
     @AppStorage("wellmusic.player.preciseFLAC") var preciseFLAC: Bool = false
@@ -271,14 +317,6 @@ final class SettingsManager: ObservableObject {
     private init() {
         // 同步 AppState 的 playMode / lyricOffset 等
         // 使用 KVO 或定时同步太复杂，直接在各自属性的 setter 中做
-
-        // 恢复液态玻璃自定义配置
-        if let data = defaults.data(forKey: "wellmusic.customLiquidGlassConfig"),
-           let config = try? JSONDecoder().decode(WellGlassConfig.self, from: data) {
-            customLiquidGlassConfig = config
-        } else {
-            customLiquidGlassConfig = .default
-        }
     }
 
     // MARK: - 与 AppState 双向同步
@@ -306,13 +344,30 @@ final class AccountStore: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
-        // 监听 AppState.favoriteTracks 变化来触发 objectWillChange
-        // 简化：使用定时器轮询
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        // ⚠️ 这里**不能**用定时器轮询 `objectWillChange.send()`。
+        //
+        // 曾经写成 0.5s 一次的 `Timer { objectWillChange.send() }`，而
+        // `AppleMusicPlayerView` 顶层就 `@ObservedObject account`。结果是
+        // **整个播放页每 0.5 秒无条件全量重算一次** —— 包括 `UIScreen.main.bounds`、
+        // 安全区遍历、preference/anchor 层，以及最贵的
+        // `AMLLWebRepresentable.updateUIView` → 往 474KB 的 WebGL 歌词页
+        // 下发 `evaluateJavaScript`。2Hz 的整页重算足以让主线程饱和，
+        // 表现为「打开播放器就卡死」。
+        //
+        // 正确做法：只在收藏集合**真的变化**时通知。
+        // 收藏的写入点统一在 `AppState.favoriteTracks`（`@Published`），
+        // 直接订阅它即可，天然去重、零轮询。
+        AppState.shared.$favoriteTracks
+            .dropFirst()                       // 初值不需要通知（视图初始化时会自己读）
+            .removeDuplicates { lhs, rhs in
+                // 只比 id 列表，避免 `MusicItem` 整体相等性比较的开销与误判。
+                lhs.map(\.id) == rhs.map(\.id)
+            }
+            .sink { [weak self] _ in
+                // 转发成自身的变更信号，让观察 `AccountStore` 的视图重算。
                 self?.objectWillChange.send()
             }
-        }
+            .store(in: &cancellables)
     }
 
     func isLiked(track: Track) -> Bool {
