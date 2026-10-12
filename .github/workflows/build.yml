@@ -55,7 +55,17 @@ jobs:
             -destination "platform=iOS Simulator,id=$DEST" \
             -derivedDataPath build/tests \
             CODE_SIGNING_ALLOWED=NO \
-            test
+            test 2>&1 | tee /tmp/build-test.log
+
+      # 兜底：无论成败，都把编译日志存成 artifact，方便排查（日志 blob 偶尔拿不到）
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.sha }}
+          path: /tmp/build-test.log
+          if-no-files-found: ignore
+
 
       # 2) 模拟器 Release 构建：验证代码可编译
       - name: Build (Simulator, Release)
