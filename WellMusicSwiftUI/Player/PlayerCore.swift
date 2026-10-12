@@ -400,10 +400,39 @@ final class PlayerCore: NSObject, ObservableObject {
         }
 
         // ② 真·自然播完（EOF 且位置接近实际时长）
+        //
+        // ⚠️ 双保险：还要求 mpv 报告的 duration 与歌曲元数据时长**接近**（差 <15s）。
+        // 某些 CDN / 试听链路的容器元数据时长是错的（报出 15~30s 的假时长），
+        // 播到「duration - 5」就满足 nearEnd → 被误判成播完 → 无声切下一首。
+        // 元数据对不上的一律不算播完，交给 ①（试听重播）或 ③（断流重载）。
         let nearEnd = duration > 0 && currentTime >= duration - 5
-        if reason == .eof, nearEnd {
+        let durationMatchesMeta: Bool = {
+            guard let item = currentItem, item.duration > 0, duration > 0 else { return true }
+            return abs(item.duration - duration) < 15
+        }()
+
+        if reason == .eof, nearEnd, durationMatchesMeta {
             PlayerDiag.log("自然播完 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) → 下一首")
             next()
+            return
+        }
+
+        // ②b EOF 且到了文件结尾、但时长与元数据对不上：
+        //    - 未尝试过官方通道 → 官方重播（试听片段的兜底分支：差 15~20s 的
+        //      短文件 ① 的 ">20s" 条件抓不到，这里补上）
+        //    - 已尝试过 → 确认这就是该平台能给的**最长版本**（如 VIP 歌只剩
+        //      试听），明确提示后正常进入下一首（避免「无声切歌」的困惑）。
+        if reason == .eof, nearEnd, !durationMatchesMeta, let item = currentItem {
+            if officialRetriedTrackKey != item.keyOf {
+                officialRetriedTrackKey = item.keyOf
+                PlayerDiag.log("短文件检测（试听/截断）dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 官方通道重播完整版")
+                ToastCenter.shared.show("已切换为完整版播放")
+                playCurrentItem(seekTo: 0, autoPlay: true, preferOfficial: true)
+            } else {
+                PlayerDiag.log("已播完最长可用版本 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 提示后下一首")
+                ToastCenter.shared.show("该歌曲仅有试听片段，已播放完整试听")
+                next()
+            }
             return
         }
 

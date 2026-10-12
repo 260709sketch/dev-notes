@@ -98,8 +98,11 @@ final class LyricsService {
         guard !parsedLRC.lines.isEmpty else { return nil }
         let lrc = parsedLRC.lines
         var word: [WordLyricLine]?
-        if let yrcText = json["yrc"] as? String, !yrcText.isEmpty {
-            word = LyricParser.parseYRC(yrcText)
+        // 逐字：QQ 的逐字是 **QRC**（hex 加密，3DES+zlib），走
+        // `GetPlayLyricInfo qrc=1` 拉取（无需登录）。旧接口的 `yrc` 字段永远缺席。
+        if let qrcText = await QQMusicAPI.shared.wordLyric(songmid: mid), !qrcText.isEmpty {
+            let parsed = QQMusicAPI.shared.parseQrc(qrcText)
+            if !parsed.isEmpty { word = parsed }
         }
         return LyricResult(lrc: lrc, wordLyric: word, source: .qq)
     }

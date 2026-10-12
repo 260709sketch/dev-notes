@@ -288,9 +288,15 @@ final class QQMusicAPI {
         }
         // media_mid 优先（部分歌曲的音频文件名用 media_mid 而非 songmid）
         let mediaMid = (item.qqMediaMid?.isEmpty == false ? item.qqMediaMid : nil) ?? mid
-        // 无损档位是 FLAC，扩展名必须跟着变，否则服务端按 mp3 容器找不到文件
-        let ext = quality.rawValue >= WellAudioQuality.lossless.rawValue ? "flac" : "mp3"
-        let filename = "\(quality.qqFilePrefix)\(mediaMid).\(ext)"
+        // ⚠️ 档位降级链：vkey 接口对「该档位文件不存在 / 无版权 / VIP 限制」一律
+        //    返回**空 purl**（实测 HTTP 200 + code 0 但 purl=""），必须降档重试。
+        //    一次请求带多个 filename，midurlinfo 按序返回，取第一个非空 purl。
+        let candidates: [(String, String)] = [
+            (quality.qqFilePrefix, quality.rawValue >= WellAudioQuality.lossless.rawValue ? "flac" : "mp3"),
+            ("M800", "mp3"),
+            ("M500", "mp3"),
+        ]
+        let filenames = candidates.map { "\($0.0)\(mediaMid).\($0.1)" }
         let guid = "10000"
 
         // 该接口的 data 为 JSON 字符串，需先拼好再整体 URL 编码进 query。
@@ -299,7 +305,7 @@ final class QQMusicAPI {
                 "module": "vkey.GetVkeyServer",
                 "method": "CgiGetVkey",
                 "param": [
-                    "filename": [filename],
+                    "filename": filenames,
                     "guid": guid,
                     "songmid": [mid],
                     "songtype": [0],
@@ -321,15 +327,106 @@ final class QQMusicAPI {
         let resp = try await NetworkClient.shared.get(url.absoluteString, headers: ["Referer": "https://y.qq.com/"])
         guard let json = NetworkClient.jsonObject(resp.data),
               let req0 = json["req_0"] as? [String: Any],
-              let data = req0["data"] as? [String: Any],
-              let purl = (data["midurlinfo"] as? [[String: Any]])?.first?["purl"] as? String,
-              !purl.isEmpty else {
+              let data = req0["data"] as? [String: Any] else {
             throw NetworkClient.NetworkError.noData
         }
-        // purl 形如 `M800xxxx.mp3?vkey=...`，拼 siren 域名即完整可播地址
-        let sip = (data["sip"] as? [String])?.first(where: { $0.hasPrefix("https://") }) ?? "https://dl.stream.qqmusic.qq.com/"
+        // ⚠️ sip 域名：实测（2026-10）返回的全是 **http://** 前缀（aqqmusic.tc.qq.com 等），
+        //    旧的「找 https 域名，没有就默认 dl.stream.qqmusic.qq.com」兜底拼出来的
+        //    https 地址是不可用的（该域名已废弃）。所以现在 https 优先、没有就
+        //    直接用返回的 http 域名（ATS 已由 NSAllowsArbitraryLoads 放开）。
+        let sips = (data["sip"] as? [String])?.filter { !$0.isEmpty } ?? []
+        let sip = sips.first(where: { $0.hasPrefix("https://") }) ?? sips.first
+            ?? "http://aqqmusic.tc.qq.com/"
         let base = sip.hasSuffix("/") ? sip : sip + "/"
-        return base + purl
+
+        // 按请求顺序取第一个非空 purl（vkey 会按 filename 顺序返回）
+        let midurlinfos = (data["midurlinfo"] as? [[String: Any]]) ?? []
+        for info in midurlinfos {
+            guard let purl = info["purl"] as? String, !purl.isEmpty else { continue }
+            return base + purl
+        }
+        // 全部档位都拿不到（VIP / 无版权 / 未登录限制）→ 明确报错，
+        // 上层 MusicURLResolver 已有自定义音源优先链，走到这里说明音源也没解析出来。
+        throw NetworkClient.NetworkError.noData
+    }
+
+    // MARK: - 逐字歌词（QRC）
+
+    /// QQ 逐字歌词：`music.musichallSong.PlayLyricInfo.GetPlayLyricInfo`，
+    /// `qrc=1` 时返回 hex 加密的 QRC（3DES + zlib），无需登录（uin=0 即可）。
+    /// 移植自 kumone `QQMusicAPI.wordLyric`（同一作者项目）。
+    /// 返回解密后的 QRC 明文；无逐字 / 解析失败返回 nil。
+    func wordLyric(songmid: String) async -> String? {
+        let body: [String: Any] = [
+            "comm": ["uin": 0, "format": 1, "ct": 19, "cv": 0],
+            "detail": [
+                "module": "music.musichallSong.PlayLyricInfo",
+                "method": "GetPlayLyricInfo",
+                "param": [
+                    "qrc": 1, "qrc_t": 0, "roma": 1, "guoke": 1,
+                    "type": -1, "licenseID": "", "cp": 0, "cv": 0, "ct": 19,
+                    "songmid": songmid,
+                ],
+            ],
+        ]
+        guard let url = URL(string: Self.musicuAPI) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "User-Agent": Self.mobileUA,
+            "Content-Type": "application/json",
+            "Referer": "https://y.qq.com/",
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 10
+        guard let resp = try? await NetworkClient.shared.rawRequest(request),
+              let json = NetworkClient.jsonObject(resp.data),
+              let detail = json["detail"] as? [String: Any],
+              let detailData = detail["data"] as? [String: Any],
+              let qrcFlag = detailData["qrc"] as? Int, qrcFlag == 1,
+              let encrypted = detailData["lyric"] as? String, !encrypted.isEmpty else {
+            return nil
+        }
+        return QQQrcDecoder.decrypt(encrypted)
+    }
+
+    /// 解析 QRC 明文 → `WordLyricLine`（复用网易云 YRC 的模型）。
+    ///
+    /// QRC 行格式：`[行开始ms,行时长ms]字(绝对开始ms,字时长ms)字(…)…`
+    /// （注意与 YRC 的区别：QRC 的**字**时间标签在字**后面**，是 `(text,start,dur)`）。
+    func parseQrc(_ text: String) -> [WordLyricLine] {
+        var result: [WordLyricLine] = []
+        guard let lineRegex = try? NSRegularExpression(pattern: #"\[(-?\d+),-?\d+\]([^\r\n]*)"#),
+              let wordRegex = try? NSRegularExpression(pattern: #"([^\(\)\r\n]*?)\((-?\d+),(-?\d+)\)"#) else {
+            return []
+        }
+        let nsText = text as NSString
+        for lm in lineRegex.matches(in: text, range: NSRange(location: 0, length: nsText.length)) {
+            guard lm.numberOfRanges >= 3 else { continue }
+            let lineStartMs = Double(nsText.substring(with: lm.range(at: 1))) ?? 0
+            let body = nsText.substring(with: lm.range(at: 2))
+            let nsBody = body as NSString
+            var words: [WordLyricLine.Word] = []
+            var composed = ""
+            for wm in wordRegex.matches(in: body, range: NSRange(location: 0, length: nsBody.length)) {
+                guard wm.numberOfRanges >= 4 else { continue }
+                let piece = nsBody.substring(with: wm.range(at: 1))
+                let startMs = Double(nsBody.substring(with: wm.range(at: 2))) ?? 0
+                let durMs = Double(nsBody.substring(with: wm.range(at: 3))) ?? 0
+                let start = max(0, startMs) / 1000
+                let end = start + max(durMs, 1) / 1000
+                guard !piece.isEmpty else { continue }
+                words.append(WordLyricLine.Word(char: piece, start: start, end: end))
+                composed += piece
+            }
+            guard !words.isEmpty, !composed.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            result.append(WordLyricLine(
+                start: lineStartMs / 1000,
+                end: words.last?.end ?? lineStartMs / 1000,
+                words: words
+            ))
+        }
+        return result.sorted { $0.start < $1.start }
     }
 
     // MARK: - 搜索歌手 / 专辑（对外接口）
