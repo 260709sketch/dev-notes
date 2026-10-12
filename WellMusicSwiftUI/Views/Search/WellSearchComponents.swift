@@ -14,10 +14,12 @@ enum WellSearchMetrics {
 struct WellRemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
+    /// 卡片在屏幕上的点尺寸。给了就向图床要对应尺寸的缩图 ——
+    /// 原图 1024×1024 解码就是 4 MB，货架里铺十几张足以把滚动拖垮。
+    var displaySize: CGFloat?
 
     private var resolvedURL: URL? {
-        guard let url, !url.isEmpty else { return nil }
-        return URL(string: url)
+        WellArtworkURL.resolved(url, pixelSize: displaySize.map(WellArtworkURL.pixelSize(forPoints:)))
     }
 
     var body: some View {
@@ -73,7 +75,10 @@ struct WellShelf<Content: View>: View {
             WellSectionHeader(title: title, action: action)
                 .padding(.horizontal, WellSearchMetrics.contentInset)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: spacing) {
+                // 懒加载：货架上不可见的卡片不建视图、不发图请求。
+                // 非懒加载会把四个货架几十张图一次性全拉回来（发现页首屏就是 48 张），
+                // 首帧和解码都会被拖慢。
+                LazyHStack(alignment: .top, spacing: spacing) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
                     content()
                     Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
@@ -159,7 +164,7 @@ struct WellCoverCard: View {
 
     @ViewBuilder
     private var artwork: some View {
-        let base = WellRemoteImage(url: coverURL)
+        let base = WellRemoteImage(url: coverURL, displaySize: size)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -200,7 +205,7 @@ struct WellArtistCard: View {
 
     @ViewBuilder
     private var artwork: some View {
-        let base = WellRemoteImage(url: artist.picURL)
+        let base = WellRemoteImage(url: artist.picURL, displaySize: size)
             .clipShape(Circle())
             .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
         if fillWidth {

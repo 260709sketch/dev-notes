@@ -28,6 +28,9 @@ final class WellDiscoverViewModel: ObservableObject {
     /// 已经成功载入过就不再自动重拉（切 Tab 回来不闪骨架屏）。
     private var hasLoadedOnce = false
 
+    /// 每日推荐歌曲。除了给功能卡片当封面，也是「心动模式」的种子来源。
+    @Published private(set) var dailySongs: [MusicItem] = []
+
     /// 首屏载入。已成功载入过则直接返回。
     func loadIfNeeded() async {
         guard !hasLoadedOnce else { return }
@@ -44,27 +47,30 @@ final class WellDiscoverViewModel: ObservableObject {
         if !hasLoadedOnce { phase = .loading }
 
         let api = NeteaseMusicAPI.shared
-        // 四路并发：各自失败只影响自己那一块，不拖垮整页
+        // 五路并发：各自失败只影响自己那一块，不拖垮整页
         async let playlistsTask = try? api.personalizedPlaylists(limit: 30)
         async let toplistsTask = try? api.toplists()
         async let albumsTask = try? api.newAlbums(limit: 20)
         async let artistsTask = try? api.topArtists(limit: 30)
+        async let dailyTask = try? api.dailyRecommendSongs()
 
         let fetchedPlaylists = await playlistsTask ?? []
         let fetchedToplists = await toplistsTask ?? []
         let fetchedAlbums = await albumsTask ?? []
         let fetchedArtists = await artistsTask ?? []
+        let fetchedDaily = await dailyTask ?? []
 
         playlists = fetchedPlaylists
         toplists = Array(fetchedToplists.prefix(12))
         albums = Array(fetchedAlbums.prefix(20))
         // 热门歌手取前 30 后再打散截取，避免每次都看到同一批面孔
         artists = Array(fetchedArtists.shuffled().prefix(12))
+        dailySongs = fetchedDaily
 
         let nothingAtAll = playlists.isEmpty && toplists.isEmpty
-            && albums.isEmpty && artists.isEmpty
+            && albums.isEmpty && artists.isEmpty && dailySongs.isEmpty
         if nothingAtAll {
-            // 四路全空时再补一次诊断请求，把真实报错捞出来 ——
+            // 全空时再补一次诊断请求，把真实报错捞出来 ——
             // 之前只显示「网络连接失败」，连是 403、超时还是解码失败都看不出，
             // 排查全靠猜。这里多花一次请求换一个能定位的提示。
             var detail = ""
@@ -79,6 +85,91 @@ final class WellDiscoverViewModel: ObservableObject {
             phase = .loaded
         }
     }
+
+    // MARK: 功能卡片（每日推荐 / 私人漫游 / 心动模式）
+
+    /// 发现页顶部的三张功能卡。
+    enum Feature: String, CaseIterable, Identifiable {
+        case daily = "每日推荐"
+        case personalFM = "私人漫游"
+        case intelligence = "心动模式"
+
+        var id: String { rawValue }
+
+        var symbol: String {
+            switch self {
+            case .daily: return "calendar"
+            case .personalFM: return "dot.radiowaves.left.and.right"
+            case .intelligence: return "heart.fill"
+            }
+        }
+
+        var tagline: String {
+            switch self {
+            case .daily: return "每天 6:00 更新"
+            case .personalFM: return "无限私人电台"
+            case .intelligence: return "猜你爱听"
+            }
+        }
+    }
+
+    /// 功能卡加载失败的原因（View 拿去弹 toast）。
+    @Published private(set) var featureMessage: String?
+
+    /// 准备某张功能卡要播的队列。返回 nil 表示失败，原因在 `featureMessage`。
+    ///
+    /// 这里只负责「拿数据」，播放交给 View —— ViewModel 不依赖播放器，
+    /// 免得音乐库层反过来持有播放引擎。
+    func prepareQueue(for feature: Feature) async -> [MusicItem]? {
+        featureMessage = nil
+        switch feature {
+        case .daily:
+            if dailySongs.isEmpty {
+                dailySongs = (try? await NeteaseMusicAPI.shared.dailyRecommendSongs()) ?? []
+            }
+            guard !dailySongs.isEmpty else {
+                featureMessage = "每日推荐暂时拿不到，请稍后重试"
+                return nil
+            }
+            return dailySongs
+
+        case .personalFM:
+            let tracks = (try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 4)) ?? []
+            guard !tracks.isEmpty else {
+                featureMessage = "私人漫游暂时没有歌曲，请稍后重试"
+                return nil
+            }
+            return tracks
+
+        case .intelligence:
+            if dailySongs.isEmpty {
+                dailySongs = (try? await NeteaseMusicAPI.shared.dailyRecommendSongs()) ?? []
+            }
+            guard let seed = dailySongs.first?.neteaseId else {
+                featureMessage = "心动模式需要一首种子歌曲，请先加载每日推荐"
+                return nil
+            }
+            // 口味范围优先用「我喜欢的音乐」，但用户歌单列表还没接，
+            // 这里按服务端约定退化成种子歌曲自身 id —— 与 RN 版的兜底一致。
+            let tracks = (try? await NeteaseMusicAPI.shared.intelligenceList(
+                songId: seed, playlistId: seed)) ?? []
+            guard !tracks.isEmpty else {
+                featureMessage = "心动模式暂时拿不到歌曲，请稍后重试"
+                return nil
+            }
+            return tracks
+        }
+    }
+
+    func clearFeatureMessage() { featureMessage = nil }
+
+    /// 正在加载的功能卡（显示菊花，同时防重复点击）。
+    @Published private(set) var busyFeature: Feature?
+
+    func setBusy(_ feature: Feature?) { busyFeature = feature }
+
+    /// 每日推荐卡片的封面：拿日推第一首的专辑图，比放一张固定图更有信息量。
+    var dailyCoverURL: String? { dailySongs.first?.albumCoverURL }
 }
 
 // MARK: - 发现页
@@ -91,7 +182,12 @@ final class WellDiscoverViewModel: ObservableObject {
 /// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
 /// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时在视图树中时，
 /// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
+///
+/// `@MainActor`：功能卡片的加载在 `Task` 里跑，标上主 actor 让
+/// `Task` 继承主线程上下文，才能直接改 `@MainActor` 的 ViewModel 状态。
+@MainActor
 struct DiscoverView: View {
+    @EnvironmentObject private var player: PlayerCore
     @StateObject private var model = WellDiscoverViewModel()
 
     private var contentInset: CGFloat { WellSearchMetrics.contentInset }
@@ -105,6 +201,7 @@ struct DiscoverView: View {
                 case .failed(let message):
                     failureBody(message)
                 case .loaded:
+                    featureRow
                     loadedBody
                 }
 
@@ -113,10 +210,73 @@ struct DiscoverView: View {
             }
             .padding(.top, 6)
         }
-        .background(AppTheme.background)
+        // ignoresSafeArea：否则屏幕最上/最下的安全区会露出下层底色。
+        .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("发现")
         .task { await model.loadIfNeeded() }
         .refreshable { await model.reload() }
+    }
+
+    // MARK: 功能卡片
+
+    /// 顶部横滑功能卡：每日推荐 / 私人漫游 / 心动模式。
+    private var featureRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                Color.clear.frame(width: contentInset - 12, height: 1)
+                ForEach(WellDiscoverViewModel.Feature.allCases) { feature in
+                    Button {
+                        start(feature)
+                    } label: {
+                        WellFeatureCard(
+                            feature: feature,
+                            coverURL: cover(for: feature),
+                            subtitle: subtitle(for: feature),
+                            busy: model.busyFeature == feature
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                Color.clear.frame(width: contentInset - 12, height: 1)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func cover(for feature: WellDiscoverViewModel.Feature) -> String? {
+        switch feature {
+        case .daily:
+            return model.dailyCoverURL
+        case .personalFM:
+            // 私人漫游没有专属封面，用榜单里第一张图当视觉锚点（对齐 RN 版做法）
+            return model.toplists.first?.coverURL
+        case .intelligence:
+            return model.toplists.dropFirst().first?.coverURL
+        }
+    }
+
+    private func subtitle(for feature: WellDiscoverViewModel.Feature) -> String {
+        switch feature {
+        case .daily:
+            return model.dailySongs.isEmpty ? feature.tagline : "\(model.dailySongs.count) 首 · \(feature.tagline)"
+        default:
+            return feature.tagline
+        }
+    }
+
+    /// 取队列 → 交给播放器。拿不到就弹提示。
+    private func start(_ feature: WellDiscoverViewModel.Feature) {
+        guard model.busyFeature == nil else { return }
+        Task {
+            model.setBusy(feature)
+            defer { model.setBusy(nil) }
+            guard let tracks = await model.prepareQueue(for: feature) else {
+                if let message = model.featureMessage { ToastCenter.shared.show(message) }
+                return
+            }
+            model.clearFeatureMessage()
+            player.play(queue: tracks, startIndex: 0)
+        }
     }
 
     // MARK: 内容
@@ -208,7 +368,7 @@ struct DiscoverView: View {
         let size = WellSearchMetrics.cardSize
         return VStack(alignment: .leading, spacing: 7) {
             ZStack(alignment: .bottomLeading) {
-                WellRemoteImage(url: toplist.coverURL)
+                WellRemoteImage(url: toplist.coverURL, displaySize: size)
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
@@ -296,5 +456,74 @@ struct DiscoverView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32)
         .padding(.top, 90)
+    }
+}
+
+// MARK: - 功能卡片
+
+/// 发现页顶部的功能卡（每日推荐 / 私人漫游 / 心动模式）。
+///
+/// 版式对齐 RN 版发现页的「功能卡片横滑」：正方形封面 + 底部渐变 + 图标角标，
+/// 标题和副标题压在封面下方。加载中时封面变暗并叠一个菊花。
+private struct WellFeatureCard: View {
+    let feature: WellDiscoverViewModel.Feature
+    let coverURL: String?
+    let subtitle: String
+    var busy: Bool = false
+
+    private let size: CGFloat = 140
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                WellRemoteImage(url: coverURL, displaySize: size)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                // 底部渐变：保证角标和图标在浅色封面上也读得清
+                LinearGradient(
+                    colors: [.black.opacity(0.45), .clear, .black.opacity(0.35)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack {
+                    HStack {
+                        Image(systemName: feature.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 28, height: 28)
+                            .background(.black.opacity(0.32), in: Circle())
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(9)
+
+                if busy {
+                    ZStack {
+                        Color.black.opacity(0.35)
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+            .frame(width: size, height: size)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(feature.rawValue)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: size, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

@@ -114,34 +114,44 @@ struct AppleMusicPlayerView: View {
         let isLandscape = screenSize.width > screenSize.height
 
         ZStack {
-            // 底层：playerBackground 内部已集成 AMLL（开启时）或原版背景
-            playerBackground
-
-            if isLandscape {
-                // 横屏布局：左右分栏，参考沉浸模式 regularLayout
-                landscapeLayout(size: screenSize)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // 竖屏布局：原有布局
-                portraitLayout(size: screenSize)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            // 下滑关闭指示条：既是视觉提示，也是唯一的拖拽热区。
+            // 下滑关闭时**露出来的底色**。
             //
-            // ⚠️ 只在**大封面**状态出现。歌词页展开后要留给歌词自己的滚动/拖拽，
-            // 而且那里顶部已经有自己的下滑手势（`headerDismissGesture`）。
-            if !showLyrics && !isLandscape {
-                dismissIndicator
-                    .padding(.top, Self.safeAreaTopInset + 1)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .zIndex(1)
+            // 播放页是 `fullScreenCover` 呈现的，下面的 tab 页并没有跟着缩小/变暗；
+            // 一旦把播放器整体往下平移，顶上空出来的那块就会直接露出下层页面 ——
+            // 浅色模式下就是一大片刺眼的白，看起来像「有块白色的东西粘着播放器一起滑」。
+            // 这里先铺一层不参与位移的深色底，位移露出来的是它。
+            Color.black.ignoresSafeArea()
+
+            ZStack {
+                // 底层：playerBackground 内部已集成 AMLL（开启时）或原版背景
+                playerBackground
+
+                if isLandscape {
+                    // 横屏布局：左右分栏，参考沉浸模式 regularLayout
+                    landscapeLayout(size: screenSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    // 竖屏布局：原有布局
+                    portraitLayout(size: screenSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                // 下滑关闭指示条：既是视觉提示，也是唯一的拖拽热区。
+                //
+                // ⚠️ 只在**大封面**状态出现。歌词页展开后要留给歌词自己的滚动/拖拽，
+                // 而且那里顶部已经有自己的下滑手势（`headerDismissGesture`）。
+                if !showLyrics && !isLandscape {
+                    dismissIndicator
+                        .padding(.top, Self.safeAreaTopInset + 1)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .zIndex(1)
+                }
             }
+            // 下滑关闭的跟手位移。只有正在拖拽时才生效，
+            // 否则强制 0 —— 免得残留值让播放器打开时偏移半屏。
+            .offset(y: isDismissDragging ? dismissDragOffset : 0)
         }
         .ignoresSafeArea()
-        // 下滑关闭的跟手位移。只有正在拖拽时才生效，
-        // 否则强制 0 —— 免得残留值让播放器打开时偏移半屏。
-        .offset(y: isDismissDragging ? dismissDragOffset : 0)
         // 歌词页面可见时禁用播放器下滑关闭手势，避免和歌词滚动手势冲突
         .environment(\.allowsNowPlayingDismiss, !showLyrics)
         .onChange(of: showLyrics) { _ in

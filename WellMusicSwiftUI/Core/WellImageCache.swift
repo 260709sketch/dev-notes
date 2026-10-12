@@ -1,5 +1,46 @@
 import SwiftUI
 import CryptoKit
+import ImageIO
+
+// MARK: - 封面地址
+
+/// 封面图地址的统一处理：换 https + 向图床要「够用尺寸」的缩图。
+///
+/// ⚠️ **这是货架滚动卡顿的根因所在，改动前先量一下**：
+/// 网易云封面原图实测是 **1024×1024**，一张解码成位图要 **4 MB**；
+/// 发现页四个货架同时铺 48 张卡 ≈ **190 MB 位图**，解码 + 常驻内存直接把滚动拖垮。
+/// 而图床支持 `?param=NyN` 让服务端直接返回缩好的图 —— 同一张图带
+/// `?param=384y384` 只有 15.9 KB / 0.56 MB（原图 79.6 KB / 4 MB）。
+enum WellArtworkURL {
+
+    /// 目标点尺寸 → 需要向图床请求的像素边长。
+    ///
+    /// 按 3x 屏算（一张 156pt 的卡片要 468px），再向上取到固定的几档 ——
+    /// 固定档位是为了**提高缓存命中率**：不同页面只要尺寸落进同一档就复用同一张图。
+    static func pixelSize(forPoints points: CGFloat) -> Int {
+        let needed = Int((points * 3).rounded(.up))
+        for bucket in [128, 192, 256, 384, 512, 640, 1024] where needed <= bucket {
+            return bucket
+        }
+        return 1024
+    }
+
+    /// 解析出最终要请求的地址。`pixelSize` 为 nil 时只做 https 替换（原图）。
+    static func resolved(_ raw: String?, pixelSize: Int? = nil) -> URL? {
+        guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        // 网易云图床大量返回 http:// 地址，统一升级到 https
+        if text.hasPrefix("http://") {
+            text = "https://" + text.dropFirst("http://".count)
+        }
+        if let pixelSize, text.contains("music.126.net") {
+            let param = "param=\(pixelSize)y\(pixelSize)"
+            text += text.contains("?") ? "&\(param)" : "?\(param)"
+        }
+        return URL(string: text)
+    }
+}
 
 /// 两级（内存 + 磁盘）图片缓存，带请求合并。
 ///
@@ -14,7 +55,12 @@ actor WellImageCache {
 
     typealias CachedHandler = @MainActor @Sendable (UIImage) -> Void
 
+    /// 解码上限（像素）。超过就按比例缩到这个尺寸再进内存 ——
+    /// 兜住那些图床不吃 `?param` 参数、只能拿原图的封面（如 QQ / 酷狗）。
+    private static let maxPixelSize = 1280
+
     private nonisolated(unsafe) let memory = NSCache<NSString, UIImage>()
+
     private let directory: URL
     private let session: URLSession
     private var inflight: [String: Task<UIImage?, Never>] = [:]
@@ -64,7 +110,9 @@ actor WellImageCache {
             }
             guard let (data, response) = try? await session.data(for: request),
                   (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
-                  let image = UIImage(data: data) else { return nil }
+                  let image = Self.decode(data, maxPixelSize: Self.maxPixelSize) else { return nil }
+            // 落盘存的是**原图字节**，内存里放的是缩略图：
+            // 以后要按更大尺寸重新出图时还有原始数据可用。
             try? data.write(to: directory.appendingPathComponent(key), options: .atomic)
             return image
         }
@@ -76,6 +124,27 @@ actor WellImageCache {
             memory.setObject(result, forKey: key as NSString, cost: Self.cost(of: result))
         }
         return result
+    }
+
+    /// 用 ImageIO 按需降采样解码。
+    ///
+    /// 直接 `UIImage(data:)` 会把整张原图全解码进内存（1024×1024 ≈ 4 MB），
+    /// 缩略图解码只产出目标尺寸的位图，耗时与内存都低一个量级。
+    private static func decode(_ data: Data, maxPixelSize: Int) -> UIImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cgImage)
     }
 
     /// 按域名推导图片防盗链 Referer。
@@ -95,7 +164,7 @@ actor WellImageCache {
     private static func loadFromDisk(directory: URL, key: String) -> UIImage? {
         let fileURL = directory.appendingPathComponent(key)
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return UIImage(data: data)
+        return decode(data, maxPixelSize: maxPixelSize)
     }
 
     private static func cost(of image: UIImage) -> Int {

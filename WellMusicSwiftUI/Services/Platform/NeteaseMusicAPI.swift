@@ -30,7 +30,17 @@ final class NeteaseMusicAPI {
     private static func apiRequest<T: Decodable>(_ path: String,
                                                  params: [String: Any] = [:],
                                                  type: T.Type) async throws -> T {
-        let body = Data(formEncode(params).utf8)
+        var finalParams = params
+        // 网易云对「会改状态」的接口（发验证码 / 登录 / 收藏）要求表单里的 `csrf_token`
+        // 与 Cookie 里的 `__csrf` 一致。调用点大多写死空串，这里统一补一次 ——
+        // 少了它会直接被判成非法请求，表现为「输入验证码后报错」这种莫名其妙的失败。
+        let providedCSRF = (finalParams["csrf_token"] as? String) ?? ""
+        if providedCSRF.isEmpty,
+           let cookieCSRF = NeteaseSession.shared.cookie(named: "__csrf"), !cookieCSRF.isEmpty {
+            finalParams["csrf_token"] = cookieCSRF
+        }
+
+        let body = Data(formEncode(finalParams).utf8)
         let resp = try await NetworkClient.shared.postRaw(
             "https://music.163.com/\(path)",
             body: body,
@@ -43,8 +53,9 @@ final class NeteaseMusicAPI {
                 "Cookie": NeteaseSession.shared.cookieHeader,
             ]
         )
-        // 服务端可能在响应头里续期票据，顺手吸收掉。
-        if let setCookie = resp.headers["Set-Cookie"] {
+        // 服务端可能在响应头里续期票据（登录成功后 `MUSIC_U` 就是走这里下发的），
+        // 顺手吸收掉。字段名大小写不敏感 —— `allHeaderFields` 给的 casing 不保证。
+        if let setCookie = headerValue(resp.headers, "Set-Cookie") {
             NeteaseSession.shared.absorb(setCookieHeaders: [setCookie])
         }
         // 显式校验状态码：否则 403/5xx 会被后面的解码失败吞掉，
@@ -56,6 +67,14 @@ final class NeteaseMusicAPI {
             throw NetworkClient.NetworkError.noData
         }
         return decoded
+    }
+
+    /// 取响应头（键名大小写不敏感）。
+    private static func headerValue(_ headers: [String: String], _ name: String) -> String? {
+        if let exact = headers[name] { return exact }
+        let target = name.lowercased()
+        for (key, value) in headers where key.lowercased() == target { return value }
+        return nil
     }
 
     /// 参数 → `a=1&b=2`，键按字典序排列（便于复现问题），值全部严格百分号编码。
@@ -206,6 +225,41 @@ final class NeteaseMusicAPI {
         var code: Int?
         var list: Body?
         struct Body: Decodable { var artists: [ArtistItem]? }
+    }
+
+    // MARK: 每日推荐 / 私人漫游 / 心动模式 的响应模型
+
+    private struct DailyRecommendResponse: Decodable {
+        var code: Int?
+        var data: Body?
+        struct Body: Decodable { var dailySongs: [Song]? }
+    }
+
+    /// 私人 FM 的歌曲（老格式，与 `Song` 不同，见 `mapFMTrack` 的说明）
+    private struct FMTrack: Decodable {
+        var id: Int?
+        var name: String?
+        /// 毫秒
+        var duration: Int?
+        var artists: [Artist]?
+        var album: Album?
+        struct Artist: Decodable { var name: String? }
+        struct Album: Decodable {
+            var name: String?
+            var picUrl: String?
+        }
+    }
+
+    private struct FMResponse: Decodable {
+        var code: Int?
+        var data: [FMTrack]?
+    }
+
+    private struct IntelligenceResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var data: [Item]?
+        struct Item: Decodable { var songInfo: Song? }
     }
 
     // MARK: 登录相关模型
@@ -467,6 +521,71 @@ final class NeteaseMusicAPI {
         return (resp.list?.artists ?? []).compactMap(Self.mapArtist)
     }
 
+    // MARK: 每日推荐 / 私人漫游 / 心动模式
+
+    /// 每日推荐歌曲（发现页顶部功能卡片之一）。
+    ///
+    /// 实测**未登录也有内容**（服务端给一批公共推荐，34 首左右），登录后才是真正的「日推」。
+    func dailyRecommendSongs() async throws -> [MusicItem] {
+        let resp: DailyRecommendResponse = try await Self.apiRequest(
+            "api/v3/discovery/recommend/songs", params: [:], type: DailyRecommendResponse.self)
+        try Self.ensureOK(resp.code, fallback: "每日推荐加载失败")
+        return (resp.data?.dailySongs ?? []).compactMap(Self.mapSong)
+    }
+
+    /// 私人漫游（私人 FM）。
+    ///
+    /// 服务端**每次只返回 1 首**（实测），所以这里连拉几批拼成一个可播队列；
+    /// 批与批之间留一点间隔，避免被限流吞掉。
+    func personalFMTracks(batches: Int = 4) async throws -> [MusicItem] {
+        var collected: [MusicItem] = []
+        var seen = Set<String>()
+        for index in 0..<max(1, batches) {
+            if index > 0 { try? await Task.sleep(nanoseconds: 250_000_000) }
+            let resp: FMResponse = try await Self.apiRequest(
+                "api/v1/radio/get", params: [:], type: FMResponse.self)
+            try Self.ensureOK(resp.code, fallback: "私人漫游加载失败")
+            for track in resp.data ?? [] {
+                guard let item = Self.mapFMTrack(track) else { continue }
+                guard seen.insert(item.keyOf).inserted else { continue }
+                collected.append(item)
+            }
+        }
+        return collected
+    }
+
+    /// 心动模式：以一首歌为种子、以一个歌单为口味范围，让服务端推一串相近的歌。
+    func intelligenceList(songId: String, playlistId: String) async throws -> [MusicItem] {
+        let params: [String: Any] = [
+            "songId": songId,
+            "type": "fromPlayOne",
+            "playlistId": playlistId,
+            "startMusicId": songId,
+            "count": 1,
+            "csrf_token": "",
+        ]
+        let resp: IntelligenceResponse = try await Self.apiRequest(
+            "api/playmode/intelligence/list", params: params, type: IntelligenceResponse.self)
+        try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "心动模式加载失败")
+        return (resp.data ?? []).compactMap { $0.songInfo }.compactMap(Self.mapSong)
+    }
+
+    /// 私人 FM 的歌曲结构是**老格式**（`artists` / `album` / `duration`），
+    /// 与搜索、日推用的 `ar` / `al` / `dt` 不是一套 —— 实测确认，别混用。
+    private static func mapFMTrack(_ track: FMTrack) -> MusicItem? {
+        guard let id = track.id, let name = track.name else { return nil }
+        let names = track.artists?.compactMap { $0.name }.joined(separator: "/")
+        return MusicItem(
+            source: .netease,
+            title: name,
+            artist: names?.isEmpty == false ? names : "未知歌手",
+            album: track.album?.name,
+            albumCoverURL: track.album?.picUrl,
+            duration: TimeInterval(track.duration ?? 0) / 1000,
+            neteaseId: "\(id)"
+        )
+    }
+
     // MARK: 登录
     //
     // 三种方式共用同一套票据逻辑：登录成功后服务端会把 `MUSIC_U`（有时还带 `__csrf`）
@@ -529,7 +648,7 @@ final class NeteaseMusicAPI {
             params: ["cellphone": phone, "ctcode": countryCode,
                      "secrete": "music_middleuser_pclogin", "csrf_token": ""],
             type: CodeResponse.self)
-        try Self.ensureOK(resp.code, fallback: "验证码发送失败")
+        try Self.ensureOK(resp.code, serverMessage: resp.message ?? resp.msg, fallback: "验证码发送失败")
     }
 
     /// 手机号登录：验证码与密码二选一。
@@ -552,7 +671,7 @@ final class NeteaseMusicAPI {
         if let cookie = resp.cookie, !cookie.isEmpty {
             NeteaseSession.shared.ingest(cookieString: cookie)
         }
-        try Self.ensureOK(resp.code, fallback: "登录失败")
+        try Self.ensureOK(resp.code, serverMessage: resp.message ?? resp.msg, fallback: "登录失败")
 
         // 有些账号模式下服务端只回票据、不回资料，这里以「有没有票据」为准，
         // 资料再补拉一次。
@@ -591,12 +710,14 @@ final class NeteaseMusicAPI {
         )
     }
 
-    /// 业务码非 200 → 抛成人话。
-    private static func ensureOK(_ code: Int?, fallback: String) throws {
+    /// 业务码非 200 → 抛成人话。带上服务端原话，方便用户截图后直接定位。
+    private static func ensureOK(_ code: Int?, serverMessage: String? = nil, fallback: String) throws {
         guard let code else { return }
         guard code == 200 else {
-            throw NeteaseAPIError(code: code,
-                                  message: NeteaseAPIError.describe(code, fallback: fallback))
+            throw NeteaseAPIError(
+                code: code,
+                message: NeteaseAPIError.describe(code, serverMessage: serverMessage, fallback: fallback)
+            )
         }
     }
 
@@ -700,7 +821,7 @@ struct NeteaseAPIError: LocalizedError {
     var errorDescription: String? { message }
 
     /// 把裸错误码翻成人话。只挑登录链路上真会碰到的几个，其余带原始码方便排查。
-    static func describe(_ code: Int, fallback: String) -> String {
+    static func describe(_ code: Int, serverMessage: String? = nil, fallback: String) -> String {
         switch code {
         case 301: return "登录已过期，请重新登录"
         case 400: return "手机号格式不正确"
@@ -714,7 +835,9 @@ struct NeteaseAPIError: LocalizedError {
         case 802: return "已扫码，请在手机上确认"
         case 803: return "登录成功"
         case 8821: return "该账号仅支持手机号登录"
-        default: return "\(fallback)（错误码 \(code)）"
+        default:
+            // 服务端自己的话最准（如「验证码错误」「操作过于频繁」），优先用它
+            return "\(serverMessage?.isEmpty == false ? serverMessage! : fallback)（错误码 \(code)）"
         }
     }
 }

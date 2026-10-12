@@ -35,7 +35,10 @@ struct FavoritesView: View {
                 }
             }
             .listStyle(.plain)
+            // 用页面统一的背景，避免 `.plain` 列表在页面上下缘露出一条系统底色。
+            .scrollContentBackground(.hidden)
         }
+        .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("音乐库")
     }
 

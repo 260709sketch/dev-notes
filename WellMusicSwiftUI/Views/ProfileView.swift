@@ -40,6 +40,10 @@ struct ProfileView: View {
                 }
             }
         }
+        // 用页面统一的背景：默认的分组列表背景在浅色下是「浅灰底 + 纯白行块」，
+        // 那一条条白块和 App 其它页面完全不是一套观感。
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("我的")
         .sheet(isPresented: $showingSettings) {
             SettingsView()

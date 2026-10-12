@@ -55,7 +55,7 @@ struct SearchView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 if hasQuery {
                     platformPicker
                     typePicker
@@ -77,7 +77,7 @@ struct SearchView: View {
             }
             .padding(.top, 8)
         }
-        .background(AppTheme.background)
+        .background(AppTheme.background.ignoresSafeArea())
         // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
         // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
         // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
@@ -93,7 +93,10 @@ struct SearchView: View {
             }
         }
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
-        .navigationBarTitleDisplayMode(.inline)
+        // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
+        // kumone 搜索页用的是系统默认的**大标题**，抬头就是一行大字「搜索」。
+        // 之前设成 inline 之后抬头变成导航栏里的小字，和 kumone 完全不是一套，
+        // 用户一眼就看出来了。
         .task(id: taskID) {
             model.clear()
             await model.load(keyword: committedQuery)
@@ -111,6 +114,7 @@ struct SearchView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .padding(.horizontal, WellSearchMetrics.contentInset)
+        .padding(.top, 12)
     }
 
     private var typePicker: some View {
@@ -140,7 +144,7 @@ struct SearchView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32)
-        .padding(.top, 80)
+        .padding(.top, 60)
     }
 
     // MARK: 内容

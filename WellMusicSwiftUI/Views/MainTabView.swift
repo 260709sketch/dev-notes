@@ -19,6 +19,9 @@ struct MainTabView: View {
 
     var body: some View {
         tabInterface
+            // 根背景：TabView / 全屏 cover 过渡、安全区这些「空隙」都落在这一层。
+            // 不显式指定的话会露出系统窗口底色，在切换/滑动时看起来像一块多余的纯色。
+            .background(AppTheme.background.ignoresSafeArea())
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
@@ -251,16 +254,10 @@ struct MiniPlayerView: View {
             }
             .padding(.leading, 7)
 
-            // 右：上一首 / 播放暂停 / 下一首
-            HStack(spacing: 12) {
-                Button {
-                    player.previous()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
+            // 右：播放暂停 / 下一首
+            //
+            // 上一首按钮按设计取消（对齐 RN/Kumone 的迷你条），下一首图标定 18pt。
+            HStack(spacing: 6) {
                 Button {
                     player.togglePlayPause()
                 } label: {
@@ -273,7 +270,7 @@ struct MiniPlayerView: View {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
@@ -301,8 +298,7 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 8
 
     private var resolvedURL: URL? {
-        guard let url, !url.isEmpty else { return nil }
-        return URL(string: url)
+        WellArtworkURL.resolved(url, pixelSize: WellArtworkURL.pixelSize(forPoints: size))
     }
 
     var body: some View {
