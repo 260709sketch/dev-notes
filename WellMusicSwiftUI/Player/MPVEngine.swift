@@ -50,12 +50,12 @@ final class MPVEngine: @unchecked Sendable {
         // 纯音频：关视频输出与视频解码，省 CPU/内存
         mpv_set_option_string(h, "vo", "null")
         mpv_set_option_string(h, "vid", "no")
-        // 网络流：开缓存，保证远端 FLAC 拖动后有足够数据立即续播。
-        // ⚠️ 预读不要调太大：网易云 CDN 对同一 URL 的大范围 Range 拉取会限流/掐连接
-        // （表现为播放十几秒就 END_FILE(EOF)），16MiB + 10s 够拖动续播且不触发风控。
-        mpv_set_option_string(h, "cache", "yes")
-        mpv_set_option_string(h, "demuxer-max-bytes", "16MiB")
-        mpv_set_option_string(h, "demuxer-readahead-secs", "10")
+        // ⚠️ 网络流缓存：音频流用 demuxer 自带的流式预读即可，**不启用 mpv 的
+        // 磁盘 cache**。实测 `cache=yes` 对短音频流在缓存耗尽时会重新 open 流
+        // （从头重放），这正是「十几秒又重新播放」的机制之一。改成流式预读。
+        mpv_set_option_string(h, "cache", "no")
+        mpv_set_option_string(h, "demuxer-max-bytes", "32MiB")
+        mpv_set_option_string(h, "demuxer-readahead-secs", "15")
         // 网络读超时：避免挂死（断流会以 END_FILE 报告，由上层恢复）
         mpv_set_option_string(h, "network-timeout", "15")
         // 播完自然结束（触发 END_FILE/EOF），不保留最后一帧
@@ -140,16 +140,24 @@ final class MPVEngine: @unchecked Sendable {
     /// 加载曲目。`headers` 作为 HTTP 请求头下发（网易云 CDN 需要 Referer 等）。
     func load(url: String, headers: [String: String], startAt: Double, autoPlay: Bool) {
         guard let h = handle else { return }
-        // 请求头：mpv 的字符串列表属性以逗号分隔；跳过 User-Agent 单独走专用选项
-        var lines: [String] = []
+        // ⚠️ 请求头逐个用 mpv 的专用/通用选项下发，**不要**用 `http-header-fields`
+        // 逗号拼接 —— 那个属性对「Name: value」带冒号的字符串解析不可靠，
+        // Referer 丢了对 LX 源站的第三方 CDN 就是 403/试听/拒绝，表现即
+        // 「每首歌十几秒就断」。
         var userAgent: String?
+        var referer: String?
         for (k, v) in headers {
-            if k.lowercased() == "user-agent" { userAgent = v; continue }
-            if v.contains(",") { continue }  // 含逗号的值无法走字符串列表，跳过保平安
-            lines.append("\(k): \(v)")
+            let key = k.lowercased()
+            if key == "user-agent" { userAgent = v; continue }
+            if key == "referer" { referer = v; continue }
         }
-        if let ua = userAgent { mpv_set_property_string(h, "user-agent", ua) }
-        mpv_set_property_string(h, "http-header-fields", lines.joined(separator: ","))
+        if let ua = userAgent {
+            mpv_set_option_string(h, "user-agent", ua)
+        }
+        if let ref = referer, !ref.isEmpty {
+            // mpv 内置 referrer 选项：可靠的来源头下发
+            mpv_set_option_string(h, "referrer", ref)
+        }
 
         command("loadfile", [url, "replace"])
         if startAt > 0 { seek(to: startAt) }
