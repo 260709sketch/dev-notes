@@ -34,6 +34,25 @@ extension Color {
     }
 }
 
+/// ★ 移除顶部/底部「白色遮挡」的 chrome 背景隐藏开关。
+///
+/// 用户实测：dock 栏（tab bar）下方与页面顶部各有一块**白色遮挡**，挡住了
+/// 延伸到这些区域的内容。这两块是系统 nav bar / tab bar 的 chrome 背景底座，
+/// 必须隐藏（不是变色）。iOS 18+ 的 `toolbarBackgroundVisibility(.hidden,
+/// for: .automatic)` 一次性隐藏 nav bar + tab bar + 搜索栏底座；
+/// iOS 16-17 退回逐个隐藏。
+struct HiddenChromeBackgroundModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .automatic)
+        } else {
+            content
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(.hidden, for: .tabBar)
+        }
+    }
+}
+
 /// 从图片提取主色调（替代原 react-native-image-colors）
 extension UIImage {
     /// 取平均主色，供播放页背景渐变使用

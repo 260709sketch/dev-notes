@@ -31,13 +31,14 @@ struct MainTabView: View {
 
     var body: some View {
         tabInterface
-            // ★ 不要在这里铺 `.background(...)`（与 kumone 一致的做法）。
+            // ★ 移除顶部/底部「白色遮挡」的核心开关。
             //
-            // 之前这里手动铺了一层 AppTheme.background.ignoresSafeArea()，各页面也各铺一层，
-            // 结果这层手动背景垫在 iOS 26 系统 nav bar / tab bar 的液态玻璃**下面**，
-            // 与系统自己的底色对不上 → 顶部/底部各出现一条「白边/色差」。
-            // kumone 全程不手动铺背景，nav bar / tab bar / 内容三者的融合全部交给
-            // 系统渲染链自动处理，颜色天然连续。现在照做。
+            // 用户实测：dock 栏（tab bar）下方与页面顶部各有一块**白色遮挡**，
+            // 挡住了延伸到这些区域的内容（「下面还有界面显示的」）。这两个白色
+            // 块是系统 nav bar / tab bar 的 chrome 背景底座 —— 把它们隐藏后，
+            // 页面内容直接延伸显示到状态栏 / Home 指示条区域，不再被挡。
+            // （与变色无关：是「移除遮挡层」本身。）
+            .modifier(HiddenChromeBackgroundModifier())
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
