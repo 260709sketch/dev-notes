@@ -4,44 +4,33 @@ import Combine
 import AVFoundation
 
 // MARK: - PlayerClock
-/// 可观测的播放时钟。
-///
-/// ⚠️ **默认不启动**（见 `PlayerService.init` 的说明）。
-///
-/// 这个类型来自 Kumone 的移植，它用一个 20Hz（50ms）的 `Timer` + `Task { @MainActor }`
-/// 双层派发，把 `PlayerCore.displayTime` 转发成 `@Published progress`。
-/// 但本项目**已经有** `PlayerCore.currentTime`（同样是 20Hz，由
-/// `addPeriodicTimeObserver` 驱动，且是直接赋值、少一层派发）——两者是**同一份数据**。
-///
-/// 两个 20Hz 时钟同时跑，意味着每秒 40 次主线程唤醒 + 视图重算；而播放页顶层
-/// 只要观察了 `clock`，整个播放器页（含 WKWebView 与 WebGL 背景）就会每 50ms
-/// 全量重算一次，直接导致「一打开播放器就卡死」。
-///
-/// 现在活代码里已经**没有**任何视图观察 `clock`：
-///   * 进度条 `PlayerSeekBar` 直接观察 `PlayerCore`
-///   * 歌词高亮走 `LyricsCursor.activeIndex`（只在换行时通知，低频）
-/// 所以它是纯粹的空转开销，不再启动。保留类型以兼容既有调用点。
+/// 可观测的播放时钟，50ms 刷新，驱动进度条与歌词高亮。
 @MainActor
 final class PlayerClock: ObservableObject {
     @Published var progress: TimeInterval = 0
 
     private var timer: Timer?
 
-    /// 是否真的在跑。默认 `false`：无人观察时不该有任何定时器。
-    private(set) var isRunning = false
-
     func start() {
-        // 有意保持空实现。若将来确实需要独立时钟，把下面的代码放回来，
-        // 但**必须**先确认没有任何大范围视图观察它。
-        //
-        // stop()
-        // timer = Timer.scheduledTimer(...)
+        stop()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                // 拖动中使用 scrubTime，否则使用 PlayerCore 的 currentTime
+                let core = PlayerCore.shared
+                if core.isScrubbing {
+                    self.progress = core.scrubTime
+                } else {
+                    self.progress = core.currentTime
+                }
+            }
+        }
+        RunLoop.main.add(timer!, forMode: .common)
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
-        isRunning = false
     }
 }
 
@@ -170,20 +159,6 @@ final class PlayerService: ObservableObject {
         PlayerCore.shared.displayTime
     }
 
-    /// 歌词时钟专用的**精确**锚点。
-    ///
-    /// 与 `livePlaybackTime`（= `displayTime`）的关键区别：
-    /// `displayTime` 在拖动结束后会**乐观地**立刻返回 `currentTime`，而 `currentTime` 是
-    /// 「上一次 AVPlayer 周期回调报告的位置」——无损 / Hi-Res 文件上该回调间隔明显拉长，
-    /// 于是松手瞬间 `displayTime` 可能比播放器真实位置**滞后上百毫秒**。
-    ///
-    /// 拖动时滞后无关紧要（时间由 `scrubTime` 提供）；但松手后的硬校准锚点必须精确，
-    /// 否则 AMLL 会以这个滞后值为起点重新外推，一路偏移下去。
-    /// 所以这里直接读 `player.currentTime()`（同步、即时、不经过 0.1s 轮询缓存）。
-    var precisePlaybackTime: TimeInterval {
-        PlayerCore.shared.playerPosition
-    }
-
     private var cancellables = Set<AnyCancellable>()
     private var coreCancellable: AnyCancellable?
     private var lastTrackKeyOf: String?
@@ -192,19 +167,9 @@ final class PlayerService: ObservableObject {
 
     private init() {
         self.volume = UserDefaults.standard.object(forKey: "player.volume") as? Float ?? 0.7
-        // ⚠️ 不启动 `clock`：它是 Kumone 带来的第二个 20Hz 时钟，与
-        // `PlayerCore.currentTime` 数据完全重复，且活代码里已无人观察。
-        // 详见 `PlayerClock` 的说明。这里保留调用以标注意图。
-        self.clock.stop()
+        self.clock.start()
 
-        // 定时同步 PlayerCore 状态（100ms 轮询以避免 KVO 复杂度）。
-        //
-        // 这个轮询是**必需**的：`PlayerService` 的 `currentTrack` / `lyrics` /
-        // `queue` 等都靠它从 `PlayerCore` 搬运。但它每条 tick 都会重建
-        // `ParsedLyrics`，因此不能更密。
-        //
-        // 注意：它只在**状态真的变化时**才写 `@Published`（每条都有 `!=` 比较），
-        // 所以静止时不会引发视图重算。
+        // 定时同步 PlayerCore 状态（100ms 轮询以避免 KVO 复杂度）
         let t = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.syncFromCore()
@@ -291,13 +256,8 @@ final class PlayerService: ObservableObject {
         }
 
         // 更新歌词游标
-        //
-        // ⚠️ 时间源必须是 `PlayerCore.displayTime`，**不能**用 `clock.progress`。
-        // `PlayerClock` 是 Kumone 带进来的第二个 20Hz 时钟，已停摆（见上文
-        // `self.clock.stop()`），它的 `progress` 恒为 0，会让歌词高亮永远停在第一行。
-        // `displayTime` 拖动时给 `scrubTime`、其余给真实播放时间，正是歌词需要的行为。
         let offset = AppState.shared.lyricOffset
-        lyricsCursor.updateProgress(PlayerCore.shared.displayTime, offset: offset)
+        lyricsCursor.updateProgress(clock.progress, offset: offset)
     }
 
     // MARK: - Control Actions
