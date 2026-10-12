@@ -207,12 +207,13 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                 }
 
             // ★ seek 落地（音频真的从新位置开始渲染，由周期观察者判定）：
-            // 用真实渲染时间硬锚一次。这是「拖完进度条歌词永久脱节」修复的
-            // 另一半 —— 落地那一刻的 `playerPosition` 已经是真实音频位置。
+            // 用落地那一刻的**渲染时间**硬锚一次。这是「拖完进度条歌词永久脱节」
+            // 修复的另一半 —— 落地时的渲染时间是 AVPlayer 报告的音频真实位置。
             landingObserver = NotificationCenter.default.addObserver(
                 forName: PlayerCore.seekDidLandNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.syncPrecisePosition() }
+            ) { [weak self] note in
+                let renderTime = (note.userInfo?["time"] as? NSNumber)?.doubleValue
+                MainActor.assumeIsolated { self?.syncPrecisePosition(renderTime: renderTime) }
             }
         }
 
@@ -429,11 +430,13 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         ///
         /// 为什么不在拖动**过程中**下发：高频注入会不断重置外推纪元、挤掉最终那次
         /// 校准，反而导致松手后彻底脱节（RN 源码里明确记录过这个坑）。
-        private func syncPrecisePosition() {
+        private func syncPrecisePosition(renderTime: TimeInterval? = nil) {
             guard ready else { return }
-            let precise = PlayerService.shared.precisePlaybackTime
-            guard precise.isFinite else { return }
-            let ms = Int(((max(0, precise) + lyricTimeShift) * 1000).rounded())
+            // 优先用落地通知带来的**渲染时间**（观察者报告的音频真实位置）；
+            // 其余时刻读同步即时的播放位置。
+            let precise = renderTime ?? PlayerService.shared.precisePlaybackTime
+            guard precise.isFinite, precise >= 0 else { return }
+            let ms = Int(((precise + lyricTimeShift) * 1000).rounded())
             lastSampleMs = ms
             lastMovementAt = Date().timeIntervalSinceReferenceDate
             // 落地信号来的时候音频确实在渲染；但保守起见仍以权威信号为准。

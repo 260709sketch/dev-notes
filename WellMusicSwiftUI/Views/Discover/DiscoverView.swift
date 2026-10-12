@@ -267,6 +267,11 @@ struct DiscoverView: View {
         // ignoresSafeArea：否则屏幕最上/最下的安全区会露出下层底色。
         .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("发现")
+        // 消除上/下白边：导航栏与 Tab 栏不再自带一块白底 —— 滚动时内容直接
+        // 从标题下穿过，页面背景（同一色）连续铺满整个屏幕，不再出现
+        // 「标题上/Tab 栏下多出一截白」的断层。
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .tabBar)
         .task { await model.loadIfNeeded() }
         .refreshable { await model.reload() }
     }

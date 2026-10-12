@@ -496,7 +496,11 @@ final class PlayerCore: NSObject, ObservableObject {
         landingTimeoutItem?.cancel()
         let timeout = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                self?.abandonSeekLandingMonitor()
+                guard let self else { return }
+                // 落地信号丢失：把位置同步回播放器真实值，避免 UI/歌词
+                // 被一个永远等不到的目标钉死（表现为歌词慢好几秒）
+                self.currentTime = self.player.currentTime().seconds
+                self.abandonSeekLandingMonitor()
             }
         }
         landingTimeoutItem = timeout
@@ -504,21 +508,25 @@ final class PlayerCore: NSObject, ObservableObject {
     }
 
     /// 周期观察者里调用：判定本次 seek 是否已落地。
+    ///
+    /// ⚠️ 窗口必须**宽**（目标 −0.5s ~ +2.5s）：远端无损上 AVPlayer 不保证精确落在
+    /// 手指位置（容差满足不了时会就近落点），窗口太窄会导致「永远等不到落地」，
+    /// 页面时钟被冻结到 2.5s 超时 —— 实测表现就是「拖完歌词慢 1~2 秒」。
     private func updateSeekLanding(observerTime: TimeInterval) {
         guard let target = seekLandingTarget else { return }
-        // 在目标附近（允许 seek 容差 + 少量余量；向后拖时旧位置会先被观察到，
-        // 距离目标太远的采样直接忽略）
-        guard observerTime >= target - 0.2, observerTime <= target + 1.0 else {
-            // 观察到的还是旧位置：不重置 probe，继续等
+        guard observerTime >= target - 0.5, observerTime <= target + 2.5 else {
+            // 观察到的还是旧位置（或离目标太远）：继续等
             return
         }
         if let probe = landingProbe {
-            // 第二次采样且在推进 → 真落地
             if observerTime > probe {
+                // 连续两次在目标附近推进 → 音频真的在新位置放了，用**渲染时间**硬锚
                 abandonSeekLandingMonitor()
-                NotificationCenter.default.post(name: Self.seekDidLandNotification, object: nil)
+                NotificationCenter.default.post(
+                    name: Self.seekDidLandNotification, object: nil,
+                    userInfo: ["time": observerTime]
+                )
             } else if observerTime < probe {
-                // 时间倒退（重复采样）→ 重置
                 landingProbe = observerTime
             }
         } else {
@@ -527,7 +535,6 @@ final class PlayerCore: NSObject, ObservableObject {
     }
 
     /// 兜底：放弃监测（seek 回调迟迟不返回 / 落地信号丢失时）。
-    /// 由 `scrubTimeoutItem` 的超时和切歌路径调用。
     private func abandonSeekLandingMonitor() {
         landingTimeoutItem?.cancel()
         landingTimeoutItem = nil
