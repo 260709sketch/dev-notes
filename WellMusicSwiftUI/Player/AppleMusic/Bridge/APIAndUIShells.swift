@@ -19,52 +19,47 @@ enum NeteaseAPI {
         return NetworkClient.jsonObject(resp.data)
     }
 
-    /// 获取歌曲动态封面（MV 短视频），返回视频 URL 或 nil
-    /// 基于网易云 weapi 的 song/detail 接口获取 mv id，再获取 mv/url 接口拿到播放地址
-    static func songDynamicCover(id: Int) async throws -> String? {
-        do {
-            // 1. song/detail 获取 mv id
-            let detailParams: [String: Any] = ["c": "[{\"id\":\(id)}]"]
-            guard let detail = try await weapiJSON(path: "weapi/v3/song/detail", params: detailParams),
-                  let songs = detail["songs"] as? [[String: Any]],
-                  let song = songs.first,
-                  let mvId = song["mv"] as? Int,
-                  mvId != 0 else {
-                return nil
-            }
+    /// 获取歌曲动态封面，返回视频直链或 nil。
+    ///
+    /// ⚠️ 通道说明（实测 2026-10）：该数据走网易云 **eapi** 接口
+    /// `/api/songplay/dynamic-cover` —— weapi 通道对它恒返回 500，
+    /// 而旧实现（weapi song/detail 取 mv id → weapi mv/url）因 weapi 通道
+    /// 整体停用 + mv/url 404 而永远拿不到数据。eapi 需要**登录 Cookie**。
+    /// 无动态封面的歌曲接口正常返回但无 videoPlayUrl，此时回退静态封面。
+    ///
+    /// - Parameter songId: 网易云**歌曲真实 id**（`Track.platformSongId`）。
+    ///   ⚠️ 不能用 `Track.id` —— 那是 keyOf 的稳定哈希，不是平台歌曲 id。
+    static func songDynamicCover(songId: String) async throws -> String? {
+        let cookie = NeteaseSession.shared.cookieHeader
+        // eapi 接口要求登录态；未登录直接返回（调用方回退静态封面）
+        guard !cookie.isEmpty, !songId.isEmpty else { return nil }
 
-            // 2. mv/url 获取视频直链
-            let mvParams: [String: Any] = [
-                "id": mvId,
-                "r": 1080,
-                "d": 0,
-            ]
-            guard let mvResp = try await weapiJSON(path: "weapi/mv/url", params: mvParams),
-                  let mvData = mvResp["data"] as? [[String: Any]],
-                  let first = mvData.first else {
-                // fallback: 尝试 mv/detail 的 brs
-                let detail2 = try await weapiJSON(path: "weapi/mv/detail", params: ["id": mvId, "r": 1080])
-                guard let data2 = detail2?["data"] as? [String: Any],
-                      let brs = data2["brs"] as? [String: String] else { return nil }
-                for br in ["1080", "720", "480", "240"] {
-                    if let u = brs[br] { return u }
-                }
-                return brs.values.first
-            }
-            if let url = first["url"] as? String, !url.isEmpty, url != "http://" {
-                return url
-            }
-            if let brs = first["brs"] as? [String: String] {
-                for br in ["1080", "720", "480", "240"] {
-                    if let u = brs[br] { return u }
-                }
-                return brs.values.first
-            }
-            return nil
-        } catch {
-            // 接口失败时静默返回 nil，不影响主流程
+        let path = "/api/songplay/dynamic-cover"
+        let params: [String: Any] = [
+            "songId": songId,
+            "csrf_token": NeteaseSession.shared.cookie(named: "__csrf") ?? "",
+            "header": NeteaseCrypto.eapiHeaderPayload(cookie: cookie),
+        ]
+        guard let body = NeteaseCrypto.makeEapiBody(path: path, params: params),
+              let bodyData = body.data(using: .utf8) else { return nil }
+
+        let url = "https://interface.music.163.com/eapi\(path)"
+        let resp = try await NetworkClient.shared.postRaw(url, body: bodyData,
+                                                          contentType: "application/x-www-form-urlencoded",
+                                                          headers: [
+                                                            "Referer": "https://music.163.com/",
+                                                            "Origin": "https://music.163.com",
+                                                            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+                                                            "Cookie": cookie,
+                                                          ])
+        guard let json = NetworkClient.jsonObject(resp.data),
+              (json["code"] as? Int) == 200,
+              let data = json["data"] as? [String: Any],
+              let videoURL = data["videoPlayUrl"] as? String,
+              !videoURL.isEmpty, videoURL != "http://" else {
             return nil
         }
+        return videoURL
     }
 }
 

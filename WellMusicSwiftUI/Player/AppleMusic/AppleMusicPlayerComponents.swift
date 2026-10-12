@@ -697,33 +697,42 @@ struct DynamicCoverPlayer: UIViewRepresentable {
 /// 动态封面管理器：负责获取动态封面地址并缓存（每个播放器视图独立实例，互不干扰）
 final class DynamicCoverManager: ObservableObject {
     @Published private(set) var coverURL: URL?
-    private var currentTrackID: Int?
+    private var currentTrackID: String?
     private var fetchTask: Task<Void, Never>?
-    private var cache: [Int: URL] = [:]
+    private var cache: [String: URL] = [:]
 
+    /// 按当前曲目更新动态封面。
+    ///
+    /// ⚠️ 两条硬约束：
+    /// 1. 只对**网易云直连**的曲目请求（`sourcePlatform == "netease"`）——
+    ///    eapi 接口按网易云歌曲 id 查询，别的平台的 id 传进去只会白打请求；
+    /// 2. 必须用 `platformSongId`（网易云真实歌曲 id）—— `Track.id` 是
+    ///    keyOf 的稳定哈希，拿它查询永远查不到。
     func updateTrack(_ track: Track?) {
-        let id = track?.id
         // 立即清除旧封面，避免显示上一首歌的动态封面
-        currentTrackID = id
+        let songId = track?.platformSongId
+        let isNetease = track?.sourcePlatform == "netease"
+        let key: String? = (isNetease && !(songId ?? "").isEmpty) ? songId : nil
+        currentTrackID = key
         fetchTask?.cancel()
         coverURL = nil
 
-        guard let id = id else { return }
+        guard let key = key else { return }
 
         // 检查缓存
-        if let cached = cache[id] {
+        if let cached = cache[key] {
             coverURL = cached
             return
         }
 
         fetchTask = Task { @MainActor in
             do {
-                if let urlString = try await NeteaseAPI.songDynamicCover(id: id),
+                if let urlString = try await NeteaseAPI.songDynamicCover(songId: key),
                    !urlString.isEmpty,
                    urlString.hasPrefix("http"),
                    let url = URL(string: urlString) {
-                    cache[id] = url
-                    if currentTrackID == id {
+                    cache[key] = url
+                    if currentTrackID == key {
                         coverURL = url
                     }
                 }
