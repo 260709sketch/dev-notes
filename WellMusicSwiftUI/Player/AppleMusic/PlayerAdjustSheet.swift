@@ -17,6 +17,7 @@ struct PlayerAdjustSheet: View {
             Form {
                 backgroundSection
                 amllLyricSection
+                amllFontSection
             }
             .navigationTitle("播放器调整")
             .navigationBarTitleDisplayMode(.inline)
@@ -89,6 +90,55 @@ struct PlayerAdjustSheet: View {
                  ? "单位为点（pt），改动即时生效。"
                  : "当前未开启 AMLL 歌词，这些设置会在开启后生效。")
         }
+    }
+
+    // MARK: - AMLL 歌词字体（大小 / 字重）
+
+    private var amllFontSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("歌词大小")
+                    Spacer()
+                    Text("\(Int(settings.appleMusicAmllFontSize))pt")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: fontSizeBinding,
+                    in: 16...48,
+                    step: 1
+                )
+            }
+
+            Picker("歌词字重", selection: fontWeightBinding) {
+                Text("中等").tag(500)
+                Text("半粗").tag(600)
+                Text("粗体").tag(700)
+                Text("特粗").tag(800)
+                Text("极粗").tag(900)
+            }
+        } header: {
+            Text("AMLL 歌词字体")
+        } footer: {
+            Text(settings.appleMusicUseAMLL
+                 ? "大小与字重改动即时生效于歌词页。"
+                 : "当前未开启 AMLL 歌词，这些设置会在开启后生效。")
+        }
+    }
+
+    private var fontSizeBinding: Binding<Double> {
+        Binding(
+            get: { settings.appleMusicAmllFontSize },
+            set: { settings.appleMusicAmllFontSize = $0 }
+        )
+    }
+
+    private var fontWeightBinding: Binding<Int> {
+        Binding(
+            get: { settings.appleMusicAmllFontWeight },
+            set: { settings.appleMusicAmllFontWeight = $0 }
+        )
     }
 
     // MARK: - 绑定
