@@ -24,6 +24,8 @@ final class NetworkClient {
     struct Response {
         let data: Data
         let statusCode: Int
+        /// 响应头（键名保持服务端原样，如 `Set-Cookie`）。
+        var headers: [String: String] = [:]
         var string: String? { String(data: data, encoding: .utf8) ?? CryptoUtils.gbkString(data) }
     }
 
@@ -105,8 +107,28 @@ final class NetworkClient {
 
     private func send(_ req: URLRequest) async throws -> Response {
         let (data, resp) = try await session.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 200
-        return Response(data: data, statusCode: code)
+        let http = resp as? HTTPURLResponse
+        let code = http?.statusCode ?? 200
+        return Response(data: data, statusCode: code, headers: Self.headerFields(http))
+    }
+
+    /// 把响应头拍平成 `[String: String]`（`Set-Cookie` 可能重复，用 `\n` 连接）。
+    ///
+    /// 网易云登录成功后票据既可能出现在响应体的 `cookie` 字段，也可能只出现在
+    /// `Set-Cookie` 里 —— 两条路都得接住，否则「登录成功但没登上」。
+    private static func headerFields(_ http: HTTPURLResponse?) -> [String: String] {
+        guard let http else { return [:] }
+        var out: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            guard let name = key as? String else { continue }
+            let text = (value as? String) ?? String(describing: value)
+            if let existing = out[name] {
+                out[name] = existing + "\n" + text
+            } else {
+                out[name] = text
+            }
+        }
+        return out
     }
 
     // MARK: JSON 解析助手

@@ -13,22 +13,10 @@ struct ProfileView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 14) {
-                    Circle()
-                        .fill(AppTheme.accent)
-                        .frame(width: 52, height: 52)
-                        .overlay {
-                            Image(systemName: "person.fill")
-                                .font(.title2)
-                                .foregroundStyle(.white)
-                        }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("本地用户").font(.headline)
-                        Text("未登录 · 支持网易云扫码登录（后续）")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 6)
+                NeteaseAccountCard()
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
 
             Section {

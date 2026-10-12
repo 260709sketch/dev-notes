@@ -35,8 +35,18 @@ final class NeteaseMusicAPI {
             "https://music.163.com/\(path)",
             body: body,
             contentType: "application/x-www-form-urlencoded",
-            headers: ["Referer": "https://music.163.com/", "Origin": "https://music.163.com"]
+            headers: [
+                "Referer": "https://music.163.com/",
+                "Origin": "https://music.163.com",
+                // 登录后所有请求都要带票据，否则拿到的是匿名数据
+                // （发现页 / 每日推荐 / 我喜欢 这类会直接空手而归）。
+                "Cookie": NeteaseSession.shared.cookieHeader,
+            ]
         )
+        // 服务端可能在响应头里续期票据，顺手吸收掉。
+        if let setCookie = resp.headers["Set-Cookie"] {
+            NeteaseSession.shared.absorb(setCookieHeaders: [setCookie])
+        }
         // 显式校验状态码：否则 403/5xx 会被后面的解码失败吞掉，
         // 界面上只剩一句「没有返回数据」，排查时看不出真因。
         guard (200..<300).contains(resp.statusCode) else {
@@ -196,6 +206,49 @@ final class NeteaseMusicAPI {
         var code: Int?
         var list: Body?
         struct Body: Decodable { var artists: [ArtistItem]? }
+    }
+
+    // MARK: 登录相关模型
+
+    private struct QRKeyResponse: Decodable {
+        var code: Int?
+        var unikey: String?
+    }
+
+    private struct QRPollResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var nickname: String?
+        var avatarUrl: String?
+        /// 少数响应会把票据放在 body 里（多数走 `Set-Cookie`，由传输层吸收）
+        var cookie: String?
+    }
+
+    /// 只关心业务码的响应（验证码发送、退出登录等）。
+    private struct CodeResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var msg: String?
+    }
+
+    private struct LoginResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var msg: String?
+        var cookie: String?
+        var profile: Profile?
+
+        struct Profile: Decodable {
+            var userId: Int?
+            var nickname: String?
+            var avatarUrl: String?
+        }
+    }
+
+    private struct AccountResponse: Decodable {
+        var code: Int?
+        /// 未登录时是 `null`
+        var profile: LoginResponse.Profile?
     }
 
     // MARK: 搜索（cloudsearch，按类型）
@@ -414,6 +467,139 @@ final class NeteaseMusicAPI {
         return (resp.list?.artists ?? []).compactMap(Self.mapArtist)
     }
 
+    // MARK: 登录
+    //
+    // 三种方式共用同一套票据逻辑：登录成功后服务端会把 `MUSIC_U`（有时还带 `__csrf`）
+    // 通过 **`Set-Cookie` 响应头**下发，`apiRequest` 已经统一吸收进 `NeteaseSession`；
+    // 少数响应还会在 body 里再给一份 `cookie` 字段，这里也一并接住。
+    //
+    // ⚠️ 密码登录要传 **MD5 之后**的密码，不是明文 —— 网易云的约定。
+
+    /// 二维码扫码状态。
+    enum NeteaseQRState: Equatable {
+        /// 801：等待扫码
+        case waiting
+        /// 802：已扫码，等手机上点确认
+        case scanned(nickname: String?)
+        /// 800：二维码失效，需要刷新
+        case expired
+        /// 803：确认成功，票据已到手
+        case confirmed
+    }
+
+    /// 二维码内容。网易云 App 扫到它会跳到授权页。
+    static func qrLoginURL(unikey: String) -> String {
+        "https://music.163.com/login?codekey=\(unikey)"
+    }
+
+    /// 申请一个二维码 unikey。
+    func qrLoginKey() async throws -> String {
+        let resp: QRKeyResponse = try await Self.apiRequest(
+            "api/login/qrcode/unikey", params: ["type": 1], type: QRKeyResponse.self)
+        try Self.ensureOK(resp.code, fallback: "二维码获取失败")
+        guard let key = resp.unikey, !key.isEmpty else {
+            throw NetworkClient.NetworkError.noData
+        }
+        return key
+    }
+
+    /// 轮询二维码状态（建议 1.5s 一次）。
+    func qrLoginCheck(key: String) async throws -> NeteaseQRState {
+        let resp: QRPollResponse = try await Self.apiRequest(
+            "api/login/qrcode/client/login", params: ["key": key, "type": 1],
+            type: QRPollResponse.self)
+        if let cookie = resp.cookie, !cookie.isEmpty {
+            NeteaseSession.shared.ingest(cookieString: cookie)
+        }
+        switch resp.code ?? 0 {
+        case 803: return .confirmed
+        case 802: return .scanned(nickname: resp.nickname)
+        case 801: return .waiting
+        case 800: return .expired
+        default:
+            throw NeteaseAPIError(code: resp.code ?? -1,
+                                  message: resp.message ?? "二维码登录失败")
+        }
+    }
+
+    /// 发送登录用短信验证码。
+    func sendLoginSMSCode(phone: String, countryCode: String = "86") async throws {
+        let resp: CodeResponse = try await Self.apiRequest(
+            "api/sms/captcha/sent",
+            params: ["cellphone": phone, "ctcode": countryCode,
+                     "secrete": "music_middleuser_pclogin", "csrf_token": ""],
+            type: CodeResponse.self)
+        try Self.ensureOK(resp.code, fallback: "验证码发送失败")
+    }
+
+    /// 手机号登录：验证码与密码二选一。
+    @discardableResult
+    func loginCellphone(phone: String,
+                        captcha: String? = nil,
+                        password: String? = nil,
+                        countryCode: String = "86") async throws -> NeteaseAccount {
+        var params: [String: Any] = [
+            "type": "1", "https": "true",
+            "phone": phone, "countrycode": countryCode,
+            "remember": "true", "secureCaptcha": "", "csrf_token": "",
+        ]
+        if let captcha, !captcha.isEmpty { params["captcha"] = captcha }
+        // 约定：服务端要的是 MD5
+        if let password, !password.isEmpty { params["password"] = CryptoUtils.md5(password) }
+
+        let resp: LoginResponse = try await Self.apiRequest(
+            "api/w/login/cellphone", params: params, type: LoginResponse.self)
+        if let cookie = resp.cookie, !cookie.isEmpty {
+            NeteaseSession.shared.ingest(cookieString: cookie)
+        }
+        try Self.ensureOK(resp.code, fallback: "登录失败")
+
+        // 有些账号模式下服务端只回票据、不回资料，这里以「有没有票据」为准，
+        // 资料再补拉一次。
+        if let profile = resp.profile, let account = Self.mapAccount(profile) {
+            return account
+        }
+        guard NeteaseSession.shared.isLoggedIn else {
+            throw NeteaseAPIError(code: -1, message: "登录没有返回票据，请改用扫码或 Cookie 方式")
+        }
+        return try await userAccount()
+    }
+
+    /// 当前账号资料。未登录时服务端返回 `profile: null` —— 这也是校验票据是否还有效的手段。
+    func userAccount() async throws -> NeteaseAccount {
+        let resp: AccountResponse = try await Self.apiRequest(
+            "api/w/nuser/account/get", params: [:], type: AccountResponse.self)
+        guard let profile = resp.profile, let account = Self.mapAccount(profile) else {
+            throw NeteaseAPIError(code: resp.code ?? 301, message: "登录已过期，请重新登录")
+        }
+        return account
+    }
+
+    /// 退出登录（失败也不抛：本地票据无论如何都要清掉）。
+    func logout() async {
+        let _: CodeResponse? = try? await Self.apiRequest(
+            "api/logout", params: ["csrf_token": NeteaseSession.shared.cookie(named: "__csrf") ?? ""],
+            type: CodeResponse.self)
+    }
+
+    private static func mapAccount(_ profile: LoginResponse.Profile) -> NeteaseAccount? {
+        guard let id = profile.userId else { return nil }
+        return NeteaseAccount(
+            userId: id,
+            nickname: profile.nickname ?? "网易云用户",
+            avatarURL: profile.avatarUrl
+        )
+    }
+
+    /// 业务码非 200 → 抛成人话。
+    private static func ensureOK(_ code: Int?, fallback: String) throws {
+        guard let code else { return }
+        guard code == 200 else {
+            throw NeteaseAPIError(code: code,
+                                  message: NeteaseAPIError.describe(code, fallback: fallback))
+        }
+    }
+
     // MARK: 播放地址（音质：standard/higher/exhigh/lossless/hires）
 
     func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
@@ -499,5 +685,36 @@ final class NeteaseMusicAPI {
             mid: nil,
             subtitle: artistSubtitle(musicSize: item.musicSize, albumSize: item.albumSize)
         )
+    }
+}
+
+/// 网易云**业务层**错误：HTTP 是 200，但响应体里的 `code` 不是 200。
+///
+/// 和 `NetworkClient.NetworkError`（传输层失败：断网、超时、5xx）分开 ——
+/// 登录这类流程里「手机号或密码不正确」是正常业务结果，不该被当成网络故障，
+/// 文案也要能直接显示给用户看。
+struct NeteaseAPIError: LocalizedError {
+    let code: Int
+    let message: String
+
+    var errorDescription: String? { message }
+
+    /// 把裸错误码翻成人话。只挑登录链路上真会碰到的几个，其余带原始码方便排查。
+    static func describe(_ code: Int, fallback: String) -> String {
+        switch code {
+        case 301: return "登录已过期，请重新登录"
+        case 400: return "手机号格式不正确"
+        case 501: return "账号不存在"
+        case 502: return "手机号或密码不正确"
+        case 503: return "操作过于频繁，请稍后再试"
+        case 505: return "该账号被风控限制，请稍后再试"
+        case 509: return "登录过于频繁，请 24 小时后再试"
+        case 800: return "二维码已失效，请刷新"
+        case 801: return "尚未扫码"
+        case 802: return "已扫码，请在手机上确认"
+        case 803: return "登录成功"
+        case 8821: return "该账号仅支持手机号登录"
+        default: return "\(fallback)（错误码 \(code)）"
+        }
     }
 }
