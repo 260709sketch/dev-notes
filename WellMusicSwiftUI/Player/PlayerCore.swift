@@ -139,10 +139,11 @@ final class PlayerCore: NSObject, ObservableObject {
         setupRemoteCommands()
         // 「音频真的在渲染」的权威信号：缓冲等待期（seek 后重新拉流、卡顿）
         // 值会变成 .waitingToPlayAtSpecifiedRate，此时音频没有在走。
+        // ⚠️ 不经过 DispatchQueue.main.async：KVO 回调本身已在 main queue，
+        //   再加一层异步跳板会让 updateSeekLanding 读到滞后一拍的旧值，
+        //   落地判定因此多冻结一拍 —— 歌词就会滞后。
         timeControlObservation = player.observe(\.timeControlStatus) { [weak self] player, _ in
-            DispatchQueue.main.async {
-                self?.isRenderingAudio = (player.timeControlStatus == .playing)
-            }
+            self?.isRenderingAudio = (player.timeControlStatus == .playing)
         }
     }
 
@@ -514,46 +515,38 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 周期观察者里调用：判定本次 seek 是否已落地。
     ///
-    /// ## 为什么不用「固定时长窗口」判定（前两版的坑）
+    /// ## 为什么用「一次推进即落地」而不是「连续两次」（第三版踩的坑）
     ///
-    /// 短距离 seek（几秒）缓冲空窗极短，几乎立刻落地 → 看起来「一直同步」。
-    /// 长距离 seek（例如从 1s 拖到 60s）AVPlayer 要**重建解码器 + 大跨度重拉字节范围**，
-    /// 空窗可以远超 2.5s —— 前两版用「目标 ±N 秒」的窗口 + 固定超时去判落地，
-    /// 长距离 seek 时要么窗口够不着、要么超时提前放开，歌词就会慢上一大截。
+    /// 短距离 seek 空窗极短；长距离 seek（重建解码器 + 大跨度重拉）空窗很长。
+    /// 第四版之前用「连续两次在目标附近推进」判定落地，本想更稳，但
+    /// `addPeriodicTimeObserver` 的 0.05s 回调在**无损 / Hi-Res 大文件上会被明显拉长**
+    /// —— 两次回调之间的真实间隔可能上百毫秒甚至更久。于是「连续两次推进」要等很久，
+    /// 歌词时钟被冻结到那时才放行，人声已经往前走了一两秒 → 歌词**滞后**。
     ///
-    /// 现在的判据**不依赖任何固定时长**，只看两条硬信号：
-    /// 1. `isRenderingAudio == false`（`timeControlStatus != .playing`）→ 音频还没在放，
-    ///    **继续冻结**，无论等了多久；
-    /// 2. 只有观察到「时间轴在目标附近真正推进」——这才是音频从新位置渲染出来的
-    ///    铁证 —— 才宣告落地。
+    /// 现在的判据：
+    /// 1. `isRenderingAudio == false` → 音频还没在放，继续冻结（无论等多久）；
+    /// 2. 一旦音频在渲染、且观察到时间在目标附近（允许就近落点 ±1.5s），
+    ///    **第一次**就宣告落地 —— 不再要求第二次。
+    ///    因为 `isRenderingAudio` 已经是「音频真的在渲染」的权威闸门，
+    ///    它一成立，第一时间硬锚就能把冻结误差压到单次回调间隔（几十 ms 内）。
     private func updateSeekLanding(observerTime: TimeInterval) {
         guard let target = seekLandingTarget else { return }
         // 音频还没真正渲染（仍在 seek 后的缓冲等待期）：无条件继续等。
-        // 这是长距离 seek 的关键 —— 不能因为"等久了"就放行。
         if !isRenderingAudio {
             landingProbe = nil
             return
         }
         // 时间轴已在目标附近推进（允许 seek 容差造成的就近落点 ±1.5s）：
-        // 这才是「音频真的从新位置放出来了」。
+        // 音频真的从新位置放出来了，第一次观察到就落地。
         guard observerTime >= target - 1.5, observerTime <= target + 2.5 else {
             // 还在旧位置（向后拖会先观察到旧位置）：继续等
             return
         }
-        if let probe = landingProbe {
-            if observerTime > probe {
-                // 连续两次在目标附近推进 → 落地，用渲染时间硬锚
-                abandonSeekLandingMonitor()
-                NotificationCenter.default.post(
-                    name: Self.seekDidLandNotification, object: nil,
-                    userInfo: ["time": observerTime]
-                )
-            } else if observerTime < probe {
-                landingProbe = observerTime
-            }
-        } else {
-            landingProbe = observerTime
-        }
+        abandonSeekLandingMonitor()
+        NotificationCenter.default.post(
+            name: Self.seekDidLandNotification, object: nil,
+            userInfo: ["time": observerTime]
+        )
     }
 
     /// 兜底：放弃监测（seek 回调迟迟不返回 / 落地信号丢失时）。
