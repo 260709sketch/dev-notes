@@ -158,16 +158,38 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var timer: Timer?
         /// 订阅 `PlayerCore.isScrubbing`，用于拖动收尾的精确重锚。
         private var scrubObserver: AnyCancellable?
+        /// 订阅 `PlayerCore.scrubTime`，拖动中逐次跟手推送。
+        private var scrubTimeObserver: AnyCancellable?
         /// 拖动的收尾重锚：`isScrubbing` 转 false 的那次回调可能发生在 seek
         /// 真正落地**之前**，所以让出一个 runloop 再读位置。
         private var settleWork: DispatchWorkItem?
 
         func attach(_ web: WKWebView) {
             self.web = web
-            // The page extrapolates the clock between samples, so ten a second keep it exact without a call per frame.
+            // 常态采样：页面会在两次采样之间做线性外推，所以 10Hz 就足够精确，
+            // 不必每次都用跨进程的 `evaluateJavaScript` 去骚扰页面。
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pushClock() }
             }
+
+            // ★ 拖动中：手指每移动一次就立刻推一次（频率 = 手指事件频率，约 60Hz）。
+            //
+            // 这是「拖进度条时歌词不跟手」的关键补丁。常态播放下 10Hz 完全看不出问题，
+            // 因为页面能自己线性外推；但**手指的移动没有规律可外推** —— 仍按 10Hz 推，
+            // 歌词就会一跳一跳、明显落后手指。
+            // 原版（Sollin/Flutter AppleMusic2 的 `_uiTicker`、RN 版的 rAF 循环）就是
+            // **每帧直读播放器真实位置**，这才是它拖动时严丝合缝的原因。
+            //
+            // 这里不引入逐帧定时器，而是订阅 `scrubTime`：频率天然等于手指事件频率，
+            // 空闲时零开销，也不会像 rAF 那样在 120Hz 屏上白跑一倍。
+            scrubTimeObserver = PlayerCore.shared.$scrubTime
+                .removeDuplicates()
+                .sink { [weak self] newValue in
+                    MainActor.assumeIsolated {
+                        guard let self, PlayerCore.shared.isScrubbing else { return }
+                        self.pushClock(secondsOverride: newValue)
+                    }
+                }
 
             // 拖动收尾：用**同步即时**的精确位置重锚一次页面时钟。
             // 详见 `syncPrecisePosition()` 的说明。
@@ -190,6 +212,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             timer = nil
             scrubObserver?.cancel()
             scrubObserver = nil
+            scrubTimeObserver?.cancel()
+            scrubTimeObserver = nil
             settleWork?.cancel()
             settleWork = nil
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
@@ -322,10 +346,24 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 同时这里**不再**叠加 `isBuffering`：那个标志一旦因为别的原因卡住，
         /// 会让页面时钟永久暂停，比偶尔多外推几十毫秒严重得多 ——
         /// 而真正的卡顿已经被上面的窗口判定覆盖了。
-        private func pushClock() {
+        /// 把当前位置推给歌词页。
+        ///
+        /// - Parameter secondsOverride: 拖动中的「预览位置」。`@Published` 是 **willSet** 语义 ——
+        ///   订阅回调触发时属性本身还没写进去，所以那条路径必须把新值直接传进来，
+        ///   不能回头去读 `scrubTime`（那样永远慢一步）。
+        private func pushClock(secondsOverride: TimeInterval? = nil) {
             guard ready else { return }
             let player = PlayerService.shared
-            let ms = Int(currentSeconds() * 1000)
+            let scrubbing = PlayerCore.shared.isScrubbing
+
+            let seconds: TimeInterval
+            if let secondsOverride {
+                let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
+                seconds = max(0, secondsOverride) + offset
+            } else {
+                seconds = currentSeconds()
+            }
+            let ms = Int(seconds * 1000)
 
             let now = Date().timeIntervalSinceReferenceDate
             if lastMovementAt == 0 { lastMovementAt = now }
@@ -335,7 +373,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             lastSampleMs = ms
 
             let moving = (now - lastMovementAt) < 0.5
-            let running = player.isPlaying && moving
+            // ⚠️ 拖动中一律 `running = false`：这时位置由**手指**决定，页面必须停在推给它的
+            // 那个值上。若还说「在播放」，页面会从该值继续向前外推 —— 歌词就跑到手指前面去了
+            // （表现是「拖着歌词，歌词自己往前溜」）。
+            let running = !scrubbing && player.isPlaying && moving
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
