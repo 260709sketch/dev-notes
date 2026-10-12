@@ -75,10 +75,15 @@ struct WellShelf<Content: View>: View {
             WellSectionHeader(title: title, action: action)
                 .padding(.horizontal, WellSearchMetrics.contentInset)
             ScrollView(.horizontal, showsIndicators: false) {
-                // 懒加载：货架上不可见的卡片不建视图、不发图请求。
-                // 非懒加载会把四个货架几十张图一次性全拉回来（发现页首屏就是 48 张），
-                // 首帧和解码都会被拖慢。
-                LazyHStack(alignment: .top, spacing: spacing) {
+                // ⚠️ 这里**必须用 `HStack`，不能换成 `LazyHStack`**。
+                //
+                // 横向 ScrollView 里放 Lazy 栈时，栈在「交叉轴」（高度）上不是立刻可测的，
+                // 外层竖向布局拿不到货架高度 → 每个货架都被算成 0 高，四个货架**全部叠在
+                // 同一个 y 位置上**（封面、歌手圆头像糊成一团）。这是实测踩过的坑。
+                //
+                // 首屏图太多的性能问题不靠懒加载解决：真正的解法是按显示尺寸向图床要缩图
+                // （见 `WellArtworkURL`），一张封面从 4 MB 降到 0.56 MB。
+                HStack(alignment: .top, spacing: spacing) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
                     content()
                     Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
