@@ -38,12 +38,21 @@ struct WellRemoteImage: View {
 
 struct WellSectionHeader: View {
     let title: String
+    /// 可选的副标题：发现页用它做「编辑精选」式的说明（如「根据你的口味」）。
+    var subtitle: String?
     var action: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.system(size: 19, weight: .bold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 19, weight: .bold))
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.tertiary)
+                }
+            }
             Spacer()
             if let action {
                 Button(action: action) {
@@ -65,6 +74,8 @@ struct WellSectionHeader: View {
 
 struct WellShelf<Content: View>: View {
     let title: String
+    /// 可选副标题（发现页的编辑式说明），透传给分区标题。
+    var subtitle: String?
     var action: (() -> Void)?
     @ViewBuilder var content: () -> Content
 
@@ -72,7 +83,7 @@ struct WellShelf<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            WellSectionHeader(title: title, action: action)
+            WellSectionHeader(title: title, subtitle: subtitle, action: action)
                 .padding(.horizontal, WellSearchMetrics.contentInset)
             ScrollView(.horizontal, showsIndicators: false) {
                 // ⚠️ 这里**必须用 `HStack`，不能换成 `LazyHStack`**。

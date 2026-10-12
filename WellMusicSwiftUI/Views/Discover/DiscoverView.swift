@@ -107,8 +107,32 @@ final class WellDiscoverViewModel: ObservableObject {
         var tagline: String {
             switch self {
             case .daily: return "每天 6:00 更新"
-            case .personalFM: return "无限私人电台"
-            case .intelligence: return "猜你爱听"
+            case .personalFM: return "猜你喜欢的电台"
+            case .intelligence: return "顺着这首往下听"
+            }
+        }
+
+        /// 卡片底色。
+        ///
+        /// 「私人漫游」「心动模式」在服务端**没有对应的封面图** ——
+        /// 之前拿榜单封面去凑，结果卡片上顶着「飙升榜」「新歌榜」的字样，
+        /// 看起来就像两张榜单卡（用户一眼就看出不对）。
+        /// 这两个功能本身也没有「封面」这个语义，所以改用设计好的品牌渐变，
+        /// 靠图标 + 配色区分，比借一张不相干的图干净得多。
+        var gradient: LinearGradient {
+            switch self {
+            case .daily:
+                return LinearGradient(colors: [Color(red: 0.93, green: 0.35, blue: 0.24),
+                                               Color(red: 0.86, green: 0.20, blue: 0.33)],
+                                      startPoint: .topLeading, endPoint: .bottomTrailing)
+            case .personalFM:
+                return LinearGradient(colors: [Color(red: 0.24, green: 0.28, blue: 0.68),
+                                               Color(red: 0.45, green: 0.32, blue: 0.82)],
+                                      startPoint: .topLeading, endPoint: .bottomTrailing)
+            case .intelligence:
+                return LinearGradient(colors: [Color(red: 0.72, green: 0.20, blue: 0.45),
+                                               Color(red: 0.91, green: 0.42, blue: 0.42)],
+                                      startPoint: .topLeading, endPoint: .bottomTrailing)
             }
         }
     }
@@ -172,12 +196,39 @@ final class WellDiscoverViewModel: ObservableObject {
     var dailyCoverURL: String? { dailySongs.first?.albumCoverURL }
 }
 
+/// 发现页的版式常量。
+///
+/// 抽出来的理由：卡片尺寸是这一页的「节奏来源」—— 四个货架交替大小，
+/// 竖着滑下来才不会像一堵同样规格的墙。集中在这里便于整体调。
+enum DiscoverLayout {
+    /// 功能卡（横滑三张）
+    static let featureSize: CGFloat = 148
+    /// 推荐歌单
+    static let cardLarge: CGFloat = 156
+    /// 新碟上架（比推荐歌单小一档）
+    static let cardMedium: CGFloat = 132
+    /// 热门歌手
+    static let artistSmall: CGFloat = 108
+    /// 分区之间的竖向间距
+    static let sectionSpacing: CGFloat = 30
+}
+
 // MARK: - 发现页
 
-/// 发现 Tab：推荐歌单 / 排行榜 / 新碟上架 / 热门歌手。
+/// 发现 Tab。
 ///
-/// 版式与 kumone 的推荐页保持一致（横向货架 + 同尺寸卡片），
-/// 但全部由本项目自己的组件（`WellShelf` / `WellCoverCard` / `WellArtistCard`）搭建。
+/// ## 版面结构（从上到下）
+/// 1. **功能卡横滑**：每日推荐 / 私人漫游 / 心动模式 —— 方形视觉 + 压图文字，
+///    整张卡即播放按钮；
+/// 2. **推荐歌单**（156）/ **排行榜**（156，更新频率压渐变）/ **新碟上架**（132）/
+///    **热门歌手**（圆形 108）。
+///
+/// ## 设计上的三条线
+/// - **节奏**：四个货架刻意交替大小尺寸，竖着滑下来不是一堵同规格的墙
+///   （尺寸集中在 `DiscoverLayout`）；
+/// - **编辑感**：分区标题带一句说明（「根据你的口味」），像音乐杂志的栏目导语；
+/// - **一致的层级**：抬头、卡片圆角、渐变遮罩的用法与搜索页/详情页同一套语汇，
+///   所以这里不另起炉灶做特殊样式。
 ///
 /// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
 /// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时在视图树中时，
@@ -194,7 +245,7 @@ struct DiscoverView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: DiscoverLayout.sectionSpacing) {
                 switch model.phase {
                 case .loading:
                     skeletonBody
@@ -244,21 +295,20 @@ struct DiscoverView: View {
     }
 
     private func cover(for feature: WellDiscoverViewModel.Feature) -> String? {
+        // 只有「每日推荐」有真实封面可用（日推第一首的专辑图）—— 它也是三张卡里
+        // 唯一「有内容实体」的功能。另外两张走 `Feature.gradient`。
         switch feature {
-        case .daily:
-            return model.dailyCoverURL
-        case .personalFM:
-            // 私人漫游没有专属封面，用榜单里第一张图当视觉锚点（对齐 RN 版做法）
-            return model.toplists.first?.coverURL
-        case .intelligence:
-            return model.toplists.dropFirst().first?.coverURL
+        case .daily: return model.dailyCoverURL
+        case .personalFM, .intelligence: return nil
         }
     }
 
     private func subtitle(for feature: WellDiscoverViewModel.Feature) -> String {
         switch feature {
         case .daily:
-            return model.dailySongs.isEmpty ? feature.tagline : "\(model.dailySongs.count) 首 · \(feature.tagline)"
+            return model.dailySongs.isEmpty
+                ? feature.tagline
+                : "\(model.dailySongs.count) 首 · \(feature.tagline)"
         default:
             return feature.tagline
         }
@@ -284,7 +334,7 @@ struct DiscoverView: View {
     @ViewBuilder
     private var loadedBody: some View {
         if !model.playlists.isEmpty {
-            WellShelf(title: "推荐歌单") {
+            WellShelf(title: "推荐歌单", subtitle: "根据你的口味", action: nil) {
                 ForEach(model.playlists.prefix(12)) { playlist in
                     NavigationLink {
                         WellSearchDetailView(
@@ -296,7 +346,8 @@ struct DiscoverView: View {
                             coverURL: playlist.coverURL,
                             title: playlist.name,
                             subtitle: playlist.creatorName,
-                            playCount: playlist.playCount
+                            playCount: playlist.playCount,
+                            size: DiscoverLayout.cardLarge
                         )
                     }
                     .buttonStyle(.plain)
@@ -305,7 +356,7 @@ struct DiscoverView: View {
         }
 
         if !model.toplists.isEmpty {
-            WellShelf(title: "排行榜") {
+            WellShelf(title: "排行榜", subtitle: "实时更新") {
                 ForEach(model.toplists) { toplist in
                     NavigationLink {
                         WellSearchDetailView(
@@ -321,7 +372,7 @@ struct DiscoverView: View {
         }
 
         if !model.albums.isEmpty {
-            WellShelf(title: "新碟上架") {
+            WellShelf(title: "新碟上架", subtitle: "本周新发行") {
                 ForEach(model.albums) { album in
                     NavigationLink {
                         WellSearchDetailView(
@@ -330,10 +381,13 @@ struct DiscoverView: View {
                             coverURL: album.picURL
                         )
                     } label: {
+                        // 比「推荐歌单」小一档：四个货架交替出现大小尺寸，
+                        // 竖着滑下来才有节奏，不会像一堵同规格的墙。
                         WellCoverCard(
                             coverURL: album.picURL,
                             title: album.name,
-                            subtitle: album.artistName
+                            subtitle: album.artistName,
+                            size: DiscoverLayout.cardMedium
                         )
                     }
                     .buttonStyle(.plain)
@@ -342,7 +396,7 @@ struct DiscoverView: View {
         }
 
         if !model.artists.isEmpty {
-            WellShelf(title: "热门歌手") {
+            WellShelf(title: "热门歌手", subtitle: "大家都在听") {
                 ForEach(model.artists) { artist in
                     NavigationLink {
                         WellSearchDetailView(
@@ -350,7 +404,7 @@ struct DiscoverView: View {
                             coverURL: artist.picURL
                         )
                     } label: {
-                        WellArtistCard(artist: artist)
+                        WellArtistCard(artist: artist, size: DiscoverLayout.artistSmall)
                     }
                     .buttonStyle(.plain)
                 }
@@ -365,7 +419,7 @@ struct DiscoverView: View {
     /// 与普通歌单卡片的区别只有这一处 —— 更新频率压在渐变上，
     /// 让「每周更新 / 实时更新」这类信息在封面里就能读到。
     private func toplistCard(_ toplist: WellToplistSummary) -> some View {
-        let size = WellSearchMetrics.cardSize
+        let size = DiscoverLayout.cardLarge
         return VStack(alignment: .leading, spacing: 7) {
             ZStack(alignment: .bottomLeading) {
                 WellRemoteImage(url: toplist.coverURL, displaySize: size)
@@ -401,7 +455,17 @@ struct DiscoverView: View {
     // MARK: 骨架屏
 
     private var skeletonBody: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: DiscoverLayout.sectionSpacing) {
+            // 顶部三张功能卡（与真实布局同尺寸，避免数据回来时高度跳一下）
+            HStack(spacing: 12) {
+                ForEach(0..<3, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(AppTheme.secondaryBackground)
+                        .frame(width: DiscoverLayout.featureSize, height: DiscoverLayout.featureSize)
+                }
+            }
+            .padding(.leading, contentInset)
+
             ForEach(0..<3, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 12) {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -463,67 +527,83 @@ struct DiscoverView: View {
 
 /// 发现页顶部的功能卡（每日推荐 / 私人漫游 / 心动模式）。
 ///
-/// 版式对齐 RN 版发现页的「功能卡片横滑」：正方形封面 + 底部渐变 + 图标角标，
-/// 标题和副标题压在封面下方。加载中时封面变暗并叠一个菊花。
+/// 版式取「编辑推荐位」的做法：**一张方形视觉 + 压在图上的标题/副标题**。
+/// 视觉部分有真实封面就用封面（每日推荐→日推第一首的专辑图），
+/// 没有就用该功能自己的品牌渐变 —— 见 `Feature.gradient` 里为什么不再借榜单封面。
+///
+/// 整张卡就是播放按钮：点一下直接开播，不做二次确认。
 private struct WellFeatureCard: View {
     let feature: WellDiscoverViewModel.Feature
     let coverURL: String?
     let subtitle: String
     var busy: Bool = false
 
-    private let size: CGFloat = 140
+    /// 卡面尺寸。三张卡横滑，148 是「一屏刚好露出 2.2 张」的宽度 ——
+    /// 露出的那截是横滑的天然提示，比任何箭头都直观。
+    private let size: CGFloat = DiscoverLayout.featureSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                WellRemoteImage(url: coverURL, displaySize: size)
-                    .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        ZStack(alignment: .bottomLeading) {
+            artwork
 
-                // 底部渐变：保证角标和图标在浅色封面上也读得清
-                LinearGradient(
-                    colors: [.black.opacity(0.45), .clear, .black.opacity(0.35)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            // 压在图上的文字需要一层底衬，否则浅色封面上根本读不出来
+            LinearGradient(colors: [.clear, .black.opacity(0.10), .black.opacity(0.62)],
+                           startPoint: .top, endPoint: .bottom)
 
-                VStack {
-                    HStack {
-                        Image(systemName: feature.symbol)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 28, height: 28)
-                            .background(.black.opacity(0.32), in: Circle())
-                        Spacer()
-                    }
-                    Spacer()
-                }
-                .padding(9)
-
-                if busy {
-                    ZStack {
-                        Color.black.opacity(0.35)
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.white)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-            }
-            .frame(width: size, height: size)
-
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(feature.rawValue)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(.white)
                 Text(subtitle)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(1)
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
-        .frame(width: size, alignment: .leading)
-        .contentShape(Rectangle())
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(alignment: .topLeading) {
+            Image(systemName: feature.symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(.white.opacity(0.18), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.22), lineWidth: 0.5))
+                .padding(10)
+        }
+        .overlay {
+            // 让卡片在浅色底上也有边界感
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+        }
+        .overlay {
+            if busy { busyOverlay }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// 卡面视觉：真实封面优先，否则品牌渐变。
+    @ViewBuilder
+    private var artwork: some View {
+        if let coverURL, !coverURL.isEmpty {
+            WellRemoteImage(url: coverURL, displaySize: size)
+                // ⚠️ 不能写 `feature.gradient.opacity(0.28)`：
+                // `ShapeStyle.opacity(_:)` 是 iOS 17 才有的 API，iOS 16 编不过。
+                // 这里要的只是「压一层中性暗色让白字读得清」，用 Color 上的透明度等价。
+                .overlay(Color.black.opacity(0.22))
+        } else {
+            feature.gradient
+        }
+    }
+
+    private var busyOverlay: some View {
+        ZStack {
+            Rectangle().fill(.black.opacity(0.34))
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white)
+        }
     }
 }
