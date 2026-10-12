@@ -166,6 +166,10 @@ final class PlayerCore: NSObject, ObservableObject {
         isLoading = true
         currentTime = time
         if item.duration > 0 { duration = item.duration }
+        // 换曲目 / 重新解析：清除「官方通道已重试」标记，新歌可再次检测试听
+        if !preferOfficial {
+            officialRetriedTrackKey = nil
+        }
         Task {
             do {
                 let resolved = try await MusicURLResolver.shared.resolvePlayback(
@@ -372,6 +376,8 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 上次断流自动恢复的时刻（冷却防死循环）
     private var lastAutoReloadAt: TimeInterval = 0
+    /// 已经尝试过「官方通道重播」的曲目 key（防试听检测无限循环）
+    private var officialRetriedTrackKey: String?
 
     /// 曲目结束处理。
     ///
@@ -387,12 +393,22 @@ final class PlayerCore: NSObject, ObservableObject {
     private func handleTrackEnded(_ reason: MPVEngine.TrackEndReason) {
         // 换曲触发旧文件的 END_FILE(STOP) 已在引擎层过滤
 
-        // ① 试听片段检测（最优先）：自定义音源对 VIP/无版权歌曲常返回 15~30s 的
-        //    试听链接，播完是**真 EOF**（位置接近实际时长），但远短于歌曲元数据
-        //    时长 —— 表现就是「放十几秒就自动切歌」。跳过自定义音源，走官方
-        //    通道从头播放完整版。
-        if let item = currentItem, item.duration > 30,
-           duration > 0, item.duration - duration > 20 {
+        // ① 试听片段检测：**只在「疑似自然播完」时触发**（EOF 且位置接近
+        //    实际播放的 duration），且**每首歌只尝试一次**。自定义音源对
+        //    VIP/无版权歌曲常返回 15~30s 试听链接，播完是真 EOF、位置接近
+        //    试听自身时长，但远短于歌曲元数据时长 —— 表现即「放十几秒就
+        //    重头再放」。这时跳过自定义音源走官方通道重播完整版。
+        //
+        //    ⚠️ 必须限制单次：若官方通道也拿不到完整版（无版权），preferOfficial
+        //    重播仍可能是试听，若不设防会「试听→重播→试听→重播」无限循环。
+        if reason == .eof,
+           let item = currentItem,
+           item.duration > 30,                    // 元数据是完整歌曲
+           duration > 0,                          // 实际时长已知
+           item.duration - duration > 20,         // 实际比元数据短 20s+ → 试听
+           currentTime >= duration - 5,           // 确实播到了试听结尾
+           officialRetriedTrackKey != item.keyOf { // 尚未尝试过官方通道
+            officialRetriedTrackKey = item.keyOf
             PlayerDiag.log("试听片段检测 dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 官方通道重播完整版")
             ToastCenter.shared.show("已切换为完整版播放")
             playCurrentItem(seekTo: 0, autoPlay: true, preferOfficial: true)
