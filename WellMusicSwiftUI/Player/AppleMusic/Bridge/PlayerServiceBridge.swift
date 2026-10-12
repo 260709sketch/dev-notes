@@ -186,6 +186,7 @@ final class PlayerService: ObservableObject {
 
     /// 歌词时钟专用的**精确**锚点。
     ///
+
     /// 与 `livePlaybackTime`（= `displayTime`）的关键区别：
     /// `displayTime` 在拖动结束后会**乐观地**立刻返回 `currentTime`，而 `currentTime` 是
     /// 「上一次 AVPlayer 周期回调报告的位置」——无损 / Hi-Res 文件上该回调间隔明显拉长，
@@ -196,6 +197,37 @@ final class PlayerService: ObservableObject {
     /// 所以这里直接读 `player.currentTime()`（同步、即时、不经过 0.1s 轮询缓存）。
     var precisePlaybackTime: TimeInterval {
         PlayerCore.shared.playerPosition
+    }
+
+    // MARK: - 输出延迟（让歌词对齐到「耳朵听到的时刻」）
+
+    /// 当前音频输出链路的**实测**延迟（秒）。
+    ///
+    /// ## 这是「歌词看着和听到的人声错开」在 iOS 上最常见的成因
+    ///
+    /// 播放器报告的 `position` 是「音频系统**已经喂给输出**」的位置，而声音还要经过
+    /// 输出缓冲才到耳朵 —— 两者差的就是这个值：
+    /// * 内建扬声器 / 有线：一般 10–30ms（基本可忽略）
+    /// * **蓝牙 A2DP：常见 150–250ms**
+    /// * AirPlay：可达 1–2 秒
+    ///
+    /// 这个量级足以让逐字歌词明显对不上，而且**任何播放内核都躲不掉** ——
+    /// 它是硬件/系统输出缓冲，不是解码或 seek 的问题（换 MPV 也一样）。
+    ///
+    /// iOS 直接给了实测值（`outputLatency` + `ioBufferDuration`），所以**不需要让用户手动猜**。
+    /// 之前「歌词偏移」面板下面写着「用于校准蓝牙耳机等设备的输出延迟」，说的就是这个数 ——
+    /// 现在由这里自动补上，用户的偏移只作为**额外**微调。
+    @Published private(set) var outputLatency: TimeInterval = 0
+
+    /// 重新测量输出延迟。由 0.1s 同步 tick 调用（一次属性读，很便宜）。
+    func refreshOutputLatency() {
+        let session = AVAudioSession.sharedInstance()
+        let measured = session.outputLatency + session.ioBufferDuration
+        let clamped = measured.isFinite ? max(0, min(measured, 3)) : 0
+        // 抖动 < 1ms 不写 @Published，避免无谓的视图重算
+        if abs(clamped - outputLatency) > 0.001 {
+            outputLatency = clamped
+        }
     }
 
     private var cancellables = Set<AnyCancellable>()
@@ -232,6 +264,10 @@ final class PlayerService: ObservableObject {
 
     private func syncFromCore() {
         let core = PlayerCore.shared
+
+        // 输出延迟：每 tick 重新测量（属性读很便宜，只在变化 >1ms 时才写 @Published）。
+        // 切换输出设备（插拔耳机 / 连蓝牙 / 切 AirPlay）后值会变，靠这里自动跟上。
+        refreshOutputLatency()
 
         // isPlaying
         if isPlaying != core.isPlaying {
@@ -311,7 +347,11 @@ final class PlayerService: ObservableObject {
         // `self.clock.stop()`），它的 `progress` 恒为 0，会让歌词高亮永远停在第一行。
         // `displayTime` 拖动时给 `scrubTime`、其余给真实播放时间，正是歌词需要的行为。
         let offset = AppState.shared.lyricOffset
-        lyricsCursor.updateProgress(PlayerCore.shared.displayTime, offset: offset)
+        // ★ 再减去**输出延迟**：你耳朵听到的声音比播放器报告的位置晚 `outputLatency`，
+        // 所以歌词要跟着晚一点显示才对得上（蓝牙耳机通常差 150–250ms，很显眼）。
+        // 用户自己的偏移仍然照加/照减，作为额外微调。
+        lyricsCursor.updateProgress(PlayerCore.shared.displayTime,
+                                    offset: offset - outputLatency)
     }
 
     // MARK: - Control Actions

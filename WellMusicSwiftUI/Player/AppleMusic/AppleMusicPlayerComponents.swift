@@ -756,6 +756,8 @@ final class DynamicCoverManager: ObservableObject {
 struct LyricOffsetSheet: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var settings: SettingsManager
+    /// 只读一个数：实测输出延迟（显示用，不订阅它的其它高频字段）
+    @EnvironmentObject private var player: PlayerService
 
     @Environment(\.dismiss) private var dismiss
 
@@ -780,7 +782,18 @@ struct LyricOffsetSheet: View {
 
                 fineTuneRow
 
-                Text("正值表示歌词提前，负值表示歌词推迟。\n用于校准蓝牙耳机等设备的输出延迟。")
+                // 实测输出延迟：既让用户看到「自动补偿」补了多少，也是验证设备链路的手段
+                // （蓝牙 A2DP 通常 150–250ms，有线/扬声器 <30ms）。
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.badge.magnifyingglass")
+                        .font(.system(size: 11))
+                    Text("当前输出延迟 \(Int((player.outputLatency * 1000).rounded())) ms · 已自动补偿")
+                        .font(.system(size: 11.5))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(.secondary)
+
+                Text("正值表示歌词提前，负值表示歌词推迟。\n蓝牙 / 有线的输出延迟已自动补偿，这里只需微调残余偏差。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

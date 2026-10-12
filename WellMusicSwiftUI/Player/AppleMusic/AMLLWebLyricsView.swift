@@ -319,9 +319,20 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         }
         #endif
 
+        /// 歌词时钟相对**播放器位置**的净偏移（秒）= 用户微调 − 输出延迟。
+        ///
+        /// 为什么要减输出延迟：播放器报告的 `position` 是「已经喂给输出」的位置，
+        /// 而你**听到**的声音还要过一遍输出缓冲 —— 内建扬声器 / 有线 10–30ms（可忽略），
+        /// **蓝牙 A2DP 常见 150–250ms，AirPlay 可达 1–2 秒**。歌词跟着晚一点才和耳朵对上。
+        /// 这是硬件/系统缓冲，**换任何播放内核都一样**；iOS 用
+        /// `AVAudioSession.outputLatency` 把实测值给了我们，所以不必让用户手动猜。
+        private var lyricTimeShift: TimeInterval {
+            UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
+                - PlayerService.shared.outputLatency
+        }
+
         private func currentSeconds() -> TimeInterval {
-            let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-            return PlayerService.shared.livePlaybackTime + offset
+            return PlayerService.shared.livePlaybackTime + lyricTimeShift
         }
 
         private var lastSampleMs = 0
@@ -358,8 +369,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
 
             let seconds: TimeInterval
             if let secondsOverride {
-                let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-                seconds = max(0, secondsOverride) + offset
+                seconds = max(0, secondsOverride) + lyricTimeShift
             } else {
                 seconds = currentSeconds()
             }
@@ -406,10 +416,9 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 校准，反而导致松手后彻底脱节（RN 源码里明确记录过这个坑）。
         private func syncPrecisePosition() {
             guard ready else { return }
-            let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
             let precise = PlayerService.shared.precisePlaybackTime
             guard precise.isFinite else { return }
-            let ms = Int(((max(0, precise) + offset) * 1000).rounded())
+            let ms = Int(((max(0, precise) + lyricTimeShift) * 1000).rounded())
             lastSampleMs = ms
             lastMovementAt = Date().timeIntervalSinceReferenceDate
             let player = PlayerService.shared
@@ -449,9 +458,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                 print("[AMLL] 歌词页实测帧率: \(fps) fps（屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz）")
             case "seek":
                 guard let milliseconds = (body["time"] as? NSNumber)?.doubleValue else { return }
-                // The page works in lyric time (clock + offset): undo the offset to get the playback position.
-                let offset = UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-                PlayerService.shared.seek(to: max(0, milliseconds / 1000 - offset))
+                // 页面给的是**歌词时间**（= 播放位置 + 净偏移）：反向减掉得到一个播放位置。
+                PlayerService.shared.seek(to: max(0, milliseconds / 1000 - lyricTimeShift))
             default:
                 break
             }
