@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var lxStore = WellLXSourceStore.shared
 
     var body: some View {
@@ -135,10 +136,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            // 与其它页面统一底色：默认的分组列表是「灰底 + 白行块」，
-            // 页面上下缘会露出一条与 App 不一致的底色。
+            // 分组列表页照 kumone Playlist 的写法：底色按主题显式切换，与 nav bar 连续
             .scrollContentBackground(.hidden)
-            .background(AppTheme.background.ignoresSafeArea())
+            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

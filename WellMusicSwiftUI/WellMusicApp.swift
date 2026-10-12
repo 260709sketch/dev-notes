@@ -24,17 +24,10 @@ struct WellMusicApp: App {
                 .environmentObject(playerCore)
                 .environmentObject(playerService)
                 .environmentObject(settingsManager)
-                // ★★★ 强制深色模式 —— 跟老版本（1011-0123）一致。
-                //
-                // 之前误改成 `settingsManager.appTheme.colorScheme`（跟随系统 / 用户设置）：
-                // 用户系统是浅色时，nav bar / tab bar / 页面兜底都是 systemBackground 白，
-                // 跟 List(.insetGrouped) 的浅灰底色形成断层 → 顶部、底部各冒一条「白条」，
-                // 用户已投诉 5 遍。深色模式下 systemBackground 黑、secondarySystemGroupedBackground
-                // 黑，nav bar / tab bar / 页面**统一全黑**，没有断层，「白条」从概念上不存在。
-                //
-                // 历史：22a5dc39 改的设置项保留（深色 / 浅色 / 跟随系统三档仍可切换），
-                // 但这里**写死 .dark**，强制整套观感走深色，不让用户在浅色下看到白条。
-                .preferredColorScheme(.dark)
+                // 跟随用户主题设置（深/浅/跟随系统，默认跟随系统）—— 与 kumone 完全一致。
+                // ★ 白边真正的修法不在「强制某一种颜色」，而在**不要手动铺背景**：
+                //   页面全部交给 iOS 系统 Liquid Glass 渲染链自动融合（详见 MainTabView 注释）。
+                .preferredColorScheme(settingsManager.appTheme.colorScheme)
                 .task {
                     // 恢复已导入的自定义音源并重新激活
                     await WellLXSourceStore.shared.bootstrapIfNeeded()

@@ -53,7 +53,7 @@ struct DailyRecommendListView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .background(AppTheme.background.ignoresSafeArea())
+        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
         .navigationTitle("每日推荐")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

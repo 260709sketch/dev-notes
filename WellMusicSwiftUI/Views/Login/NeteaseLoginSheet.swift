@@ -49,6 +49,7 @@ struct NeteaseLoginSheet: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var session = NeteaseSession.shared
 
     @State private var mode: Mode = .qr
@@ -204,7 +205,14 @@ struct NeteaseLoginSheet: View {
     }
 
     private var sheetBackground: some View {
-        AppTheme.background.ignoresSafeArea()
+        // sheet 底色跟主页面同一套条件色（kumone 写法），避免与系统 sheet 融合时出现色差
+        Group {
+            if colorScheme == .dark {
+                Color.black.ignoresSafeArea()
+            } else {
+                Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+            }
+        }
     }
 
     // MARK: 扫码

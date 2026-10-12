@@ -80,7 +80,7 @@ struct SearchView: View {
             }
             .padding(.top, 8)
         }
-        .background(AppTheme.background.ignoresSafeArea())
+        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
         // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
         // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
         // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。

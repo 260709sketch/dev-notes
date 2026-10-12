@@ -13,6 +13,7 @@ struct WellLXSourceManageView: View {
     @State private var showFilePicker = false
     @State private var importError: String?
     @State private var testingIDs = Set<String>()
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Form {
@@ -20,9 +21,9 @@ struct WellLXSourceManageView: View {
             importSection
             sourceListSection
         }
-        // 与其它页面统一底色（同 SettingsView 的说明）
+        // 分组表单页照 kumone Playlist 的写法：底色按主题显式切换，与 nav bar 连续
         .scrollContentBackground(.hidden)
-        .background(AppTheme.background.ignoresSafeArea())
+        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
         .navigationTitle("自定义音源")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

@@ -264,13 +264,10 @@ struct DiscoverView: View {
             }
             .padding(.top, 6)
         }
-        // ignoresSafeArea：否则屏幕最上/最下的安全区会露出下层底色。
-        .background(AppTheme.background.ignoresSafeArea())
+        // ★ 不铺背景、不给 toolbar 上色（与 kumone HomeView 一致）——
+        //   全部交给系统 Liquid Glass 渲染链自动融合，颜色才连续。
+        //   之前手动铺 background + toolbarBackground 与系统底色打架 → 顶部/底部白边。
         .navigationTitle("主页")
-        // 导航栏显示（与其他页面一致），但底色与页面同色 —— 既保留标题栏，
-        // 又不会在滚动时露出一截白色断层。
-        .toolbarBackground(AppTheme.background, for: .navigationBar)
-        .toolbarBackground(AppTheme.background, for: .tabBar)
         .task { await model.loadIfNeeded() }
         .refreshable { await model.reload() }
     }

@@ -38,10 +38,9 @@ struct FavoritesView: View {
                 }
             }
             .listStyle(.plain)
-            // 用页面统一的背景，避免 `.plain` 列表在页面上下缘露出一条系统底色。
-            .scrollContentBackground(.hidden)
+            .scrollContentBackground(.hidden)   // 透明 List，透出系统底色（与系统渲染链连续）
         }
-        .background(AppTheme.background.ignoresSafeArea())
+        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
         .navigationTitle("音乐库")
     }
 

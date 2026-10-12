@@ -31,9 +31,13 @@ struct MainTabView: View {
 
     var body: some View {
         tabInterface
-            // 根背景：TabView / 全屏 cover 过渡、安全区这些「空隙」都落在这一层。
-            // 不显式指定的话会露出系统窗口底色，在切换/滑动时看起来像一块多余的纯色。
-            .background(AppTheme.background.ignoresSafeArea())
+            // ★ 不要在这里铺 `.background(...)`（与 kumone 一致的做法）。
+            //
+            // 之前这里手动铺了一层 AppTheme.background.ignoresSafeArea()，各页面也各铺一层，
+            // 结果这层手动背景垫在 iOS 26 系统 nav bar / tab bar 的液态玻璃**下面**，
+            // 与系统自己的底色对不上 → 顶部/底部各出现一条「白边/色差」。
+            // kumone 全程不手动铺背景，nav bar / tab bar / 内容三者的融合全部交给
+            // 系统渲染链自动处理，颜色天然连续。现在照做。
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })

@@ -8,6 +8,7 @@ import SwiftUI
 /// 本页里的 `NavigationLink` 依赖外层那个导航栈，去掉本层的栈后照常工作。
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingSettings = false
 
     var body: some View {
@@ -49,10 +50,11 @@ struct ProfileView: View {
                 }
             }
         }
-        // 用页面统一的背景：默认的分组列表背景在浅色下是「浅灰底 + 纯白行块」，
-        // 那一条条白块和 App 其它页面完全不是一套观感。
+        // 分组列表页照 kumone Playlist 的写法：底色按主题显式切换
+        // （浅色 = systemGroupedBackground 浅灰、深色 = 纯黑），行块由 List 自己渲染，
+        // 深浅两种模式下都与系统 nav bar / tab bar 的底色连续，不会出现色差断层。
         .scrollContentBackground(.hidden)
-        .background(AppTheme.background.ignoresSafeArea())
+        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
         .navigationTitle("我的")
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -219,6 +221,7 @@ struct NeteaseLikedSongsView: View {
 
 struct NeteasePlayRecordView: View {
     private var player: PlayerCore { PlayerCore.shared }
+    @Environment(\.colorScheme) private var colorScheme
 
     private enum Period: Int, CaseIterable, Identifiable {
         case week = 1   // 网易云约定：1 = 最近一周
@@ -293,7 +296,8 @@ struct NeteasePlayRecordView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(AppTheme.background)
+            // 与页面底色同一套条件色（kumone 写法），保证与 nav bar 连续
+            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
         }
         .task(id: period) { await load() }
     }
