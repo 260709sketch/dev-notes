@@ -40,6 +40,11 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 结束拖动的兜底任务（防止 seek 回调不返回时 isScrubbing 永久为 true）
     private var scrubTimeoutItem: DispatchWorkItem?
 
+    /// 拖动中「连续 seek」的最新目标（`nil` = 没有待补发的目标）
+    private var pendingSeekTarget: TimeInterval?
+    /// 是否已有一个 seek 在飞（保证同一时刻只发一个，见 `requestContinuousSeek`）
+    private var seekInFlight = false
+
     var currentItem: MusicItem? {
         guard let idx = currentIndex, queue.indices.contains(idx) else { return nil }
         return queue[idx]
@@ -237,15 +242,56 @@ final class PlayerCore: NSObject, ObservableObject {
         guard time.isFinite else { return }
         isScrubbing = true
         scrubTime = time
+        // 清掉上一轮残留的连续 seek 目标，免得松手瞬间补发一个陈旧位置
+        pendingSeekTarget = nil
     }
 
-    /// 拖动中更新预览时间（手指移动时持续调用）
+    /// 拖动中更新预览时间（手指移动时持续调用）。
+    ///
+    /// ★ 这里同时驱动**音频**跟手（`requestContinuousSeek`）—— 见那个方法的说明。
     func updateScrubbing(to time: TimeInterval) {
         guard isScrubbing, time.isFinite else { return }
         scrubTime = time
+        requestContinuousSeek(to: time)
     }
 
-    /// 结束拖动：精确 seek 到目标位置（tolerance .zero 保证精度）。
+    // MARK: 拖动中的连续 seek（对齐 Sollin 的 `_seekContinuously`）
+
+    /// 让**音频**在拖动过程中就跟到手指位置，而不是等松手才跳。
+    ///
+    /// ## 为什么必须这样（原版怎么做的）
+    /// Sollin（Flutter 版）用的 just_audio 例程里有个 `_Seeker.seek` / `_seekContinuously`：
+    /// 拖动时**持续**发 seek，但**同一时刻只允许一个在飞** —— 期间到达的新目标只覆盖
+    /// `pending`，等上一次完成后再补发**最新**那一次（旧的直接丢掉）。
+    ///
+    /// 我们之前是「拖动只改显示、松手才 seek 一次」，结果是**拖动全程音频都停在原位**：
+    /// 进度条已经指到 3:00，唱的还是 1:20 那句 —— 手感和听感都是脱开的，
+    /// 这正是「拖动进度条和音轨对不上」的直接原因。
+    ///
+    /// 用「单飞去重」而不是每次拖动都发 seek：无损 / Hi-Res 一次 seek 要重新解码，
+    /// 60Hz 地灌进去只会把播放器压垮（表现为拖动时爆音、抖动）。
+    private func requestContinuousSeek(to target: TimeInterval) {
+        pendingSeekTarget = max(0, target)
+        guard !seekInFlight else { return }
+        issuePendingSeek()
+    }
+
+    private func issuePendingSeek() {
+        guard let target = pendingSeekTarget else { return }
+        pendingSeekTarget = nil
+        seekInFlight = true
+        player.seek(to: CMTime(seconds: target, preferredTimescale: preferredTimescale),
+                    toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.seekInFlight = false
+                // 期间手指又移动过 → 补发最新那次；否则收工
+                if self.pendingSeekTarget != nil { self.issuePendingSeek() }
+            }
+        }
+    }
+
+    /// 结束拖动：收尾 seek 到手指落点。
     ///
     /// 关键设计（修复「拖动后歌词/人声不同步」）：
     /// 1. **乐观更新**：立刻把 `currentTime` 设为目标值，让进度条/歌词的 UI 立即对准，
@@ -253,10 +299,16 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 2. **兜底超时**：AVPlayer 在缓冲态下 seek 完成回调可能长时间不返回，
     ///    若不兜底，`isScrubbing` 会永久为 true，进度条从此卡死。这里 1.5s 后强制复位。
     /// 3. **完成校正**：回调里用播放器真实位置覆盖乐观值，保证长期精确。
+    /// 4. 容差用 `seekToleranceSeconds`（20ms，远低于人耳可感阈值）而非 `.zero`：
+    ///    样本级精确要求框架解码大量数据，无损文件上会让位置迟迟不落地，
+    ///    反而制造出「歌词与人声不同步」。
     func endScrubbing(to time: TimeInterval) {
         guard time.isFinite else { return }
         let target = max(0, time)
         scrubTime = target
+        // 收尾这一次 seek 由下面统一发，先清掉连续 seek 的待补发目标
+        // （否则它会和收尾 seek 抢，白跑一次）
+        pendingSeekTarget = nil
 
         // 1) 乐观更新：UI 立即对准目标位置
         currentTime = target
