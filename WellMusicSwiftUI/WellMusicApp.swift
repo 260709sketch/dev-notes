@@ -24,9 +24,8 @@ struct WellMusicApp: App {
                 .environmentObject(playerCore)
                 .environmentObject(playerService)
                 .environmentObject(settingsManager)
+                .tint(AppTheme.accent)   // 与 kumone root 同款：全局 tint 红
                 // 跟随用户主题设置（深/浅/跟随系统，默认跟随系统）—— 与 kumone 完全一致。
-                // ★ 白边真正的修法不在「强制某一种颜色」，而在**不要手动铺背景**：
-                //   页面全部交给 iOS 系统 Liquid Glass 渲染链自动融合（详见 MainTabView 注释）。
                 .preferredColorScheme(settingsManager.appTheme.colorScheme)
                 .task {
                     // 恢复已导入的自定义音源并重新激活
