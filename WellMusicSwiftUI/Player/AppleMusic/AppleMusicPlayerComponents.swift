@@ -793,6 +793,25 @@ struct LyricOffsetSheet: View {
                 }
                 .foregroundStyle(.secondary)
 
+                // 端到端同步判据：歌词页时钟 vs 播放器位置。Δ≈0 而听着不齐 → 内核问题；
+                // Δ 大 → 时钟链路问题。播放中打开本面板即可读数。
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    let s = LyricSyncProbe.shared.sample
+                    let fresh = Date().timeIntervalSinceReferenceDate - s.timestamp < 2
+                    Group {
+                        if !fresh {
+                            Text("同步判据：播放中自动采样…")
+                        } else if s.awaitingLanding {
+                            Text("同步判据：seek 落地中（时钟已冻结，等音频跟上）")
+                        } else {
+                            Text(String(format: "同步判据 Δ = %+.0f ms（歌词页相对播放器）", s.deltaMs))
+                        }
+                    }
+                    .font(.system(size: 11.5))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.secondary)
+                }
+
                 Text("正值表示歌词提前，负值表示歌词推迟。\n蓝牙 / 有线的输出延迟已自动补偿，这里只需微调残余偏差。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)

@@ -205,6 +205,15 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                     self.settleWork = work
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
                 }
+
+            // ★ seek 落地（音频真的从新位置开始渲染，由周期观察者判定）：
+            // 用真实渲染时间硬锚一次。这是「拖完进度条歌词永久脱节」修复的
+            // 另一半 —— 落地那一刻的 `playerPosition` 已经是真实音频位置。
+            landingObserver = NotificationCenter.default.addObserver(
+                forName: PlayerCore.seekDidLandNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.syncPrecisePosition() }
+            }
         }
 
         func detach() {
@@ -216,6 +225,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             scrubTimeObserver = nil
             settleWork?.cancel()
             settleWork = nil
+            if let landingObserver {
+                NotificationCenter.default.removeObserver(landingObserver)
+            }
+            landingObserver = nil
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
         }
 
@@ -339,6 +352,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 最近一次「位置确实在推进」的时刻（秒，`timeIntervalSinceReferenceDate`）。
         /// 用于以滑动窗口判定是否在走，见 `pushClock()`。
         private var lastMovementAt: TimeInterval = 0
+        /// seek 落地通知的订阅（见 `PlayerCore.beginSeekLandingMonitor`）
+        private var landingObserver: NSObjectProtocol?
 
         /// 把当前播放位置推给歌词页。
         ///
@@ -354,17 +369,14 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 只要最近 0.5 秒内位置推进过，就认为在走。真正的缓冲卡顿
         /// （位置连续 0.5 秒纹丝不动）依然会被正确识别。
         ///
-        /// 同时这里**不再**叠加 `isBuffering`：那个标志一旦因为别的原因卡住，
-        /// 会让页面时钟永久暂停，比偶尔多外推几十毫秒严重得多 ——
-        /// 而真正的卡顿已经被上面的窗口判定覆盖了。
-        /// 把当前位置推给歌词页。
+        /// ## `isRenderingAudio`（拖动后脱节的关键闸门）
         ///
-        /// - Parameter secondsOverride: 拖动中的「预览位置」。`@Published` 是 **willSet** 语义 ——
-        ///   订阅回调触发时属性本身还没写进去，所以那条路径必须把新值直接传进来，
-        ///   不能回头去读 `scrubTime`（那样永远慢一步）。
+        /// `AVPlayer.timeControlStatus == .playing` 是「音频此刻真的在渲染」的
+        /// 权威信号；`.waitingToPlayAtSpecifiedRate`（seek 后重新拉流 / 卡顿）期间
+        /// **耳朵听不到任何声音在走**，此时页面时钟必须冻结 —— 否则它会从
+        /// 「seek 目标」继续外推，把缓冲空窗的时长全部变成歌词的提前量。
         private func pushClock(secondsOverride: TimeInterval? = nil) {
             guard ready else { return }
-            let player = PlayerService.shared
             let scrubbing = PlayerCore.shared.isScrubbing
 
             let seconds: TimeInterval
@@ -386,7 +398,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             // ⚠️ 拖动中一律 `running = false`：这时位置由**手指**决定，页面必须停在推给它的
             // 那个值上。若还说「在播放」，页面会从该值继续向前外推 —— 歌词就跑到手指前面去了
             // （表现是「拖着歌词，歌词自己往前溜」）。
-            let running = !scrubbing && player.isPlaying && moving
+            // seek 落地前（`PlayerCore.seekLandingTarget` 持有目标）同理：位置钉在目标，
+            // 音频还没从新位置渲染，页面必须冻结等落地。
+            let rendering = PlayerCore.shared.isRenderingAudio && !PlayerCore.shared.isAwaitingSeekLanding
+            let running = !scrubbing && rendering && moving
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
@@ -421,8 +436,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             let ms = Int(((max(0, precise) + lyricTimeShift) * 1000).rounded())
             lastSampleMs = ms
             lastMovementAt = Date().timeIntervalSinceReferenceDate
-            let player = PlayerService.shared
-            let running = player.isPlaying
+            // 落地信号来的时候音频确实在渲染；但保守起见仍以权威信号为准。
+            let running = PlayerCore.shared.isRenderingAudio && !PlayerCore.shared.isAwaitingSeekLanding
             run("AMLLBridge.sync(\(ms), \(running), 1.0)")
         }
 
@@ -456,6 +471,16 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             case "fps":
                 let fps = (body["fps"] as? NSNumber)?.intValue ?? 0
                 print("[AMLL] 歌词页实测帧率: \(fps) fps（屏幕最高 \(UIScreen.main.maximumFramesPerSecond) Hz）")
+            case "clock":
+                // 歌词页回报自己的时钟（4Hz）：与播放器位置做端到端对照，
+                // 见 `LyricSyncProbe` 的说明 —— 这是「要不要换内核」的判据。
+                guard let page = (body["page"] as? NSNumber)?.doubleValue,
+                      let anchor = (body["anchor"] as? NSNumber)?.doubleValue else { return }
+                let running = (body["running"] as? NSNumber)?.intValue == 1
+                LyricSyncProbe.shared.ingest(
+                    pageMs: page, anchorMs: anchor, pageRunning: running,
+                    lyricShift: lyricTimeShift
+                )
             case "seek":
                 guard let milliseconds = (body["time"] as? NSNumber)?.doubleValue else { return }
                 // 页面给的是**歌词时间**（= 播放位置 + 净偏移）：反向减掉得到一个播放位置。

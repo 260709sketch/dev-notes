@@ -93,10 +93,11 @@ final class LyricsService {
         let resp = try await NetworkClient.shared.get(url, headers: ["Referer": "https://y.qq.com/"])
         guard let json = NetworkClient.jsonObject(resp.data) else { return nil }
         let lrcText = json["lyric"] as? String ?? ""
-        let lrc = LyricParser.parseLRC(lrcText)
-        if lrc.isEmpty { return nil }
+        // QQ 的 LRC 是两位小数（百分秒）且带 [offset:]，必须走 `parseLRCWithMeta`。
+        let parsedLRC = LyricParser.parseLRCWithMeta(lrcText)
+        guard !parsedLRC.lines.isEmpty else { return nil }
+        let lrc = parsedLRC.lines
         var word: [WordLyricLine]?
-        // 逐字歌词（卡拉OK）固定开启：有 YRC 就用，没有则退回逐行 LRC
         if let yrcText = json["yrc"] as? String, !yrcText.isEmpty {
             word = LyricParser.parseYRC(yrcText)
         }
@@ -107,18 +108,23 @@ final class LyricsService {
 
     private func fetchNetease(item: MusicItem) async throws -> LyricResult? {
         guard let id = item.neteaseId ?? item.platformId else { return nil }
-        let url = "https://music.163.com/api/song/lyric?id=\(id)&lv=1&kv=1&tv=-1"
+        // ⚠️ 必须带 `&yv=1` 才返回 `yrc`（逐字）—— 实测不带时该字段永远缺席，
+        //    于是网易云歌曲一直只有逐行高亮。`&rv=1` 顺带要 romalrc。
+        let url = "https://music.163.com/api/song/lyric?id=\(id)&lv=1&kv=1&tv=-1&yv=1&rv=1"
         let resp = try await NetworkClient.shared.get(url, headers: ["Referer": "https://music.163.com/"])
         guard let json = NetworkClient.jsonObject(resp.data) else { return nil }
         let lrcText = (json["lrc"] as? [String: Any])?["lyric"] as? String ?? ""
-        var lrc = LyricParser.parseLRC(lrcText)
+        let parsedLRC = LyricParser.parseLRCWithMeta(lrcText)
+        var lrc = parsedLRC.lines
         if lrc.isEmpty { return nil }
         if let tlyric = (json["tlyric"] as? [String: Any])?["lyric"] as? String,
            !tlyric.isEmpty {
-            LyricParser.mergeTranslation(&lrc, translation: tlyric)
+            LyricParser.mergeTranslation(&lrc, translation: tlyric, offsetMs: parsedLRC.offsetMs)
         }
         var word: [WordLyricLine]?
-        // 逐字歌词（卡拉OK）固定开启：有 YRC 就用，没有则退回逐行 LRC
+        // 逐字歌词（卡拉OK）固定开启：有 YRC 就用，没有则退回逐行 LRC。
+        // 实测 yrc 的时间戳是**绝对毫秒**、与 lrc 同一基准（同一句差 20~70ms），
+        // 且行头 start 恒等于首字 start —— 直接用行头做行时间即可。
         if let yrcText = (json["yrc"] as? [String: Any])?["lyric"] as? String,
            !yrcText.isEmpty {
             word = LyricParser.parseYRC(yrcText)
@@ -193,14 +199,53 @@ enum LyricParser {
 
     // MARK: 标准 LRC（[mm:ss.xx] 文本；支持多个时间戳）
 
-    static func parseLRC(_ text: String) -> [LrcLine] {
+    /// 一次 LRC 解析的完整产物：行 + 全局偏移元信息。
+    struct LRCResult {
+        var lines: [LrcLine]
+        /// `[offset:±ms]` 的原始值（毫秒）。缺失时为 0。
+        var offsetMs: Double
+    }
+
+    /// 把时间戳的**小数部分**换算成秒。
+    ///
+    /// ⚠️ 小数位的**位数**决定单位，必须按位数分支，绝不能一律 `/1000`：
+    /// * `[mm:ss.x]`   一位 → 十分之一秒
+    /// * `[mm:ss.xx]`  两位 → **百分秒**
+    /// * `[mm:ss.xxx]` 三位 → 毫秒
+    ///
+    /// 实测（直接打各家接口统计）：网易云 `lrc` 79/79 行全是三位；QQ `lyric` 63/63 行
+    /// 全是两位。早先一律按 `/1000` 处理，两位小数时每行都会**提前** `小数 × 9` 毫秒 ——
+    /// 平均 ~450ms、最大 891ms，听感就是「歌词整首抢在人声前面」。
+    private static func fractionToSeconds(_ raw: String) -> Double {
+        guard !raw.isEmpty, let value = Double(raw) else { return 0 }
+        switch raw.count {
+        case 1: return value / 10
+        case 2: return value / 100
+        default: return value / 1000
+        }
+    }
+
+    /// 解析 LRC：行 + `[offset:]` 元信息（`parseLRC` 是它的行-only 便捷入口）。
+    static func parseLRCWithMeta(_ text: String) -> LRCResult {
         var lines: [LrcLine] = []
         var timeIndex: [TimeInterval: Int] = [:]  // 去重用
+        var offsetMs: Double = 0
         let regex = try? NSRegularExpression(pattern: #"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]"#)
+        let offsetRegex = try? NSRegularExpression(pattern: #"\[offset:\s*([+-]?\d+)\s*\]"#)
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, let regex else { continue }
             let ns = line as NSString
+
+            // 全局偏移元信息 `[offset:±ms]`（QQ 歌词固定带这一行，部分歌曲非 0）。
+            // 以前整行被当「元信息」直接跳过 → 带偏移的歌词整首平移错位。
+            if let offsetRegex,
+               let m = offsetRegex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+               m.numberOfRanges >= 2 {
+                offsetMs = Double(ns.substring(with: m.range(at: 1))) ?? 0
+                continue
+            }
+
             let matches = regex.matches(in: line, range: NSRange(location: 0, length: ns.length))
             guard !matches.isEmpty else { continue }
             // 取最后一个时间戳之后的内容作为歌词文本（去掉元信息行）
@@ -212,20 +257,30 @@ enum LyricParser {
                 let minute = Double(ns.substring(with: m.range(at: 1))) ?? 0
                 let second = Double(ns.substring(with: m.range(at: 2))) ?? 0
                 let fracRaw = m.range(at: 3).location == NSNotFound ? "" : ns.substring(with: m.range(at: 3))
-                let frac = Double(fracRaw) ?? 0
-                let time = minute * 60 + second + frac / 1000.0
+                let time = minute * 60 + second + fractionToSeconds(fracRaw)
                 if timeIndex[time] == nil {
                     timeIndex[time] = lines.count
                     lines.append(LrcLine(time: time, text: content))
                 }
             }
         }
-        return lines.sorted { $0.time < $1.time }
+        var sorted = lines.sorted { $0.time < $1.time }
+        // 应用全局偏移。LRC 约定：正值 = 歌词**提前**，即显示时间 = 时间戳 − offset/1000。
+        if offsetMs != 0 {
+            for i in sorted.indices { sorted[i].time = max(0, sorted[i].time - offsetMs / 1000) }
+        }
+        return LRCResult(lines: sorted, offsetMs: offsetMs)
+    }
+
+    static func parseLRC(_ text: String) -> [LrcLine] {
+        parseLRCWithMeta(text).lines
     }
 
     // MARK: 翻译合并（网易 tlyric 按时间对齐挂到同一行）
 
-    static func mergeTranslation(_ lrc: inout [LrcLine], translation: String) {
+    /// - Parameter offsetMs: 与 `parseLRCWithMeta` 返回的**同一个** offset ——
+    ///   歌词行已经平移过，翻译行必须同样平移，否则字典的 key 对不上、翻译全部丢失。
+    static func mergeTranslation(_ lrc: inout [LrcLine], translation: String, offsetMs: Double = 0) {
         var map: [TimeInterval: String] = [:]
         let regex = try? NSRegularExpression(pattern: #"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\](.*)"#)
         for rawLine in translation.components(separatedBy: .newlines) {
@@ -235,8 +290,8 @@ enum LyricParser {
             guard let m = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { continue }
             let minute = Double(ns.substring(with: m.range(at: 1))) ?? 0
             let second = Double(ns.substring(with: m.range(at: 2))) ?? 0
-            let frac = Double(ns.substring(with: m.range(at: 3))) ?? 0
-            let time = minute * 60 + second + frac / 1000.0
+            let fracRaw = m.range(at: 3).location == NSNotFound ? "" : ns.substring(with: m.range(at: 3))
+            let time = max(0, minute * 60 + second + fractionToSeconds(fracRaw) - offsetMs / 1000)
             let text = ns.substring(with: m.range(at: 4)).trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { continue }
             map[time] = text
@@ -285,6 +340,7 @@ enum LyricParser {
             guard let head = lineRE.firstMatch(in: line, range: full),
                   head.numberOfRanges >= 3 else { continue }
             let lineStartMs = Double(ns.substring(with: head.range(at: 1))) ?? 0
+            let lineDurationMs = Double(ns.substring(with: head.range(at: 2))) ?? 0
 
             var words: [WordLyricLine.Word] = []
             var composed = ""
@@ -301,6 +357,10 @@ enum LyricParser {
                 composed += piece
             }
             guard !words.isEmpty, !composed.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+
+            // 过滤制作人员行：网易云 yrc 头部固定有一批 `[0,0](0,0,0) 作词 : xxx`
+            // （行时长 0、每个字时长 0）。不过滤的话它们全堆在 t=0 抢占第一句。
+            if lineDurationMs <= 0, words.allSatisfy({ ($0.end - $0.start) <= 0.001 }) { continue }
 
             result.append(WordLyricLine(
                 start: lineStartMs / 1000,

@@ -62,10 +62,41 @@ final class PlayerCore: NSObject, ObservableObject {
     /// `currentTime` 由周期回调更新，在无损 / Hi-Res 大文件上回调间隔会明显拉长，
     /// 松手瞬间可能滞后上百毫秒；而 `AVPlayer.currentTime()` 是同步即时值。
     /// 未加载曲目时回落到 0，避免 NaN 传进歌词页。
+    ///
+    /// ⚠️ **seek 落地前钉在目标位置**（见 `seekLandingTarget`）：seek 发出到音频
+    /// 真正从新位置渲染出来之间有一个「缓冲空窗」，这期间任何时间源都**不允许外推**，
+    /// 否则歌词会带着空窗时长一路跑在人声前面 —— 这正是「拖一次进度条就永久脱节」的根。
     var playerPosition: TimeInterval {
+        if let target = seekLandingTarget { return target }
         let seconds = player.currentTime().seconds
         return seconds.isFinite ? max(0, seconds) : 0
     }
+
+    /// 音频**此刻是否真的在渲染**（`AVPlayer.timeControlStatus == .playing`）。
+    ///
+    /// 这是「声音在流动」的权威信号：`.waitingToPlayAtSpecifiedRate` 表示
+    /// 正在缓冲（seek 后的重新拉流 / 卡顿），此时**音频没有在走**，
+    /// 歌词时钟必须冻结，而不是继续外推。
+    @Published private(set) var isRenderingAudio: Bool = false
+
+    /// 是否处在「seek 已发出、音频尚未从新位置渲染」的空窗期。
+    /// 歌词时钟在此期间必须冻结（见 `pushClock` / `playerPosition`）。
+    var isAwaitingSeekLanding: Bool { seekLandingTarget != nil }
+
+    /// 「seek 落地监测」：seek 发出后、音频真正从新位置渲染出来之前，保存目标位置。
+    /// 非 nil 期间 `playerPosition` 钉在该目标、歌词时钟禁止外推。
+    private var seekLandingTarget: TimeInterval?
+    /// 落地判定用的上一次采样（需要「连续两次在目标附近推进」才算真落地）。
+    private var landingProbe: TimeInterval?
+    /// 落地监测自身的兜底超时（防止周期观察者一直不回调时位置被永久钉死）。
+    private var landingTimeoutItem: DispatchWorkItem?
+
+    /// seek 落地（音频真的从新位置开始推进）时广播。歌词页收到后做硬校准。
+    static let seekDidLandNotification = Notification.Name("PlayerCore.seekDidLand")
+
+    /// 落地监测的兜底时长（秒）：正常落地只要 0.1~1s（缓冲空窗）；
+    /// 超过这个值视为信号丢失，放弃监测恢复常规时间源。
+    nonisolated static let seekLandingTimeoutSeconds: Double = 2.5
 
     /// 逐字歌词高亮最重视刷新率，波形/卡拉OK 用分数秒驱动
     private var preferredTimescale: CMTimeScale { 600 }
@@ -105,7 +136,16 @@ final class PlayerCore: NSObject, ObservableObject {
         setupTimeObserver()
         setupEndObserver()
         setupRemoteCommands()
+        // 「音频真的在渲染」的权威信号：缓冲等待期（seek 后重新拉流、卡顿）
+        // 值会变成 .waitingToPlayAtSpecifiedRate，此时音频没有在走。
+        timeControlObservation = player.observe(\.timeControlStatus) { [weak self] player, _ in
+            DispatchQueue.main.async {
+                self?.isRenderingAudio = (player.timeControlStatus == .playing)
+            }
+        }
     }
+
+    private var timeControlObservation: NSKeyValueObservation?
 
     // MARK: 对外控制
 
@@ -132,6 +172,9 @@ final class PlayerCore: NSObject, ObservableObject {
         guard let item = currentItem else { return }
         isLoading = true
         currentTime = time
+        // 换曲目/换音源：旧 seek 的落地监测立即作废，否则新歌的 playerPosition
+        // 会被旧目标钉住、歌词卡死
+        abandonSeekLandingMonitor()
         Task {
             do {
                 let resolved = try await MusicURLResolver.shared.resolvePlayback(
@@ -244,6 +287,8 @@ final class PlayerCore: NSObject, ObservableObject {
         scrubTime = time
         // 清掉上一轮残留的连续 seek 目标，免得松手瞬间补发一个陈旧位置
         pendingSeekTarget = nil
+        // 上一轮的落地监测同样作废（拖动中时间由手指决定）
+        abandonSeekLandingMonitor()
     }
 
     /// 拖动中更新预览时间（手指移动时持续调用）。
@@ -313,12 +358,17 @@ final class PlayerCore: NSObject, ObservableObject {
         // 1) 乐观更新：UI 立即对准目标位置
         currentTime = target
 
+        // ★ 进入 seek 落地监测：在音频真正从 target 渲染出来之前，
+        //   `playerPosition` 钉在 target、歌词时钟禁止外推。
+        beginSeekLandingMonitor(target: target)
+
         // 2) 兜底：若 seek 回调迟迟不返回，也要退出 scrubbing 态
         scrubTimeoutItem?.cancel()
         let timeout = DispatchWorkItem { [weak self] in
             Task { @MainActor in
                 guard let self, self.isScrubbing else { return }
                 self.isScrubbing = false
+                self.abandonSeekLandingMonitor()
             }
         }
         scrubTimeoutItem = timeout
@@ -335,6 +385,8 @@ final class PlayerCore: NSObject, ObservableObject {
                     self.currentTime = self.player.currentTime().seconds
                 }
                 self.isScrubbing = false
+                // 注意：这里**不**清 `seekLandingTarget` —— seek 回调返回只说明
+                // 「定位操作完成」，第一帧音频可能还没渲染出来。落地由周期观察者判定。
             }
         }
     }
@@ -346,6 +398,8 @@ final class PlayerCore: NSObject, ObservableObject {
             return
         }
         let target = max(0, time)
+        // 点歌词跳转 / 锁屏进度条 / 远程控制走这里，同样需要落地监测
+        beginSeekLandingMonitor(target: target)
         player.seek(to: CMTime(seconds: target, preferredTimescale: preferredTimescale),
                     toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self] _ in
             Task { @MainActor in
@@ -420,14 +474,76 @@ final class PlayerCore: NSObject, ObservableObject {
         queue.move(fromOffsets: from, toOffset: to)
     }
 
+    // MARK: seek 落地监测（「拖完进度条歌词永久脱节」的核心修复）
+
+    /// 开始监测一次 seek 的落地。
+    ///
+    /// ## 机制
+    ///
+    /// `AVPlayer.seek()` 发出后到音频**真正从新位置渲染出来**之间有一个空窗：
+    /// 远端无损要重新拉字节范围、重建解码器、再填充输出缓冲。这个空窗里
+    /// **进度条/`currentTime()` 可以已经在目标位置上走**，但耳朵听到的还是
+    /// 空窗前的内容（或无声）。若歌词时钟在这段时间跟着外推，它就会带上
+    /// 「空窗时长」的提前量，之后**永远**跑在人声前面 —— 与实测症状完全一致：
+    /// 不拖动时完全同步（无空窗），一拖动必然脱节（空窗越大越严重，无损最明显）。
+    ///
+    /// 落地信号用 `addPeriodicTimeObserver`：它**只在时间轴真实推进（即音频真实
+    /// 渲染）时回调**。连续两次在目标附近推进 = 新位置的音频真的在放了。
+    private func beginSeekLandingMonitor(target: TimeInterval) {
+        seekLandingTarget = max(0, target)
+        landingProbe = nil
+        // 自身的兜底：观察者迟迟不确认时放弃监测，绝不让位置被永久钉死。
+        landingTimeoutItem?.cancel()
+        let timeout = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.abandonSeekLandingMonitor()
+            }
+        }
+        landingTimeoutItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.seekLandingTimeoutSeconds, execute: timeout)
+    }
+
+    /// 周期观察者里调用：判定本次 seek 是否已落地。
+    private func updateSeekLanding(observerTime: TimeInterval) {
+        guard let target = seekLandingTarget else { return }
+        // 在目标附近（允许 seek 容差 + 少量余量；向后拖时旧位置会先被观察到，
+        // 距离目标太远的采样直接忽略）
+        guard observerTime >= target - 0.2, observerTime <= target + 1.0 else {
+            // 观察到的还是旧位置：不重置 probe，继续等
+            return
+        }
+        if let probe = landingProbe {
+            // 第二次采样且在推进 → 真落地
+            if observerTime > probe {
+                abandonSeekLandingMonitor()
+                NotificationCenter.default.post(name: Self.seekDidLandNotification, object: nil)
+            } else if observerTime < probe {
+                // 时间倒退（重复采样）→ 重置
+                landingProbe = observerTime
+            }
+        } else {
+            landingProbe = observerTime
+        }
+    }
+
+    /// 兜底：放弃监测（seek 回调迟迟不返回 / 落地信号丢失时）。
+    /// 由 `scrubTimeoutItem` 的超时和切歌路径调用。
+    private func abandonSeekLandingMonitor() {
+        landingTimeoutItem?.cancel()
+        landingTimeoutItem = nil
+        seekLandingTarget = nil
+        landingProbe = nil
+    }
     // MARK: 观察者
 
     private func setupTimeObserver() {
-        // 0.05s 粒度采样：逐字（卡拉OK）歌词高亮需要足够细的时间来源才能跟手
+        // 0.05s 粒度采样：逐字（卡拉OK）歌词高亮需要足够细的时间来源才能跟手。
+        // 注意：这个回调**只在音频真实渲染时触发** —— 它同时充当 seek 落地探测器。
         let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self else { return }
+            guard let self, time.seconds.isFinite else { return }
             self.currentTime = time.seconds
+            self.updateSeekLanding(observerTime: time.seconds)
         }
     }
 
