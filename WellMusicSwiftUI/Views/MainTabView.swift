@@ -1,11 +1,23 @@
+import Combine
 import SwiftUI
 
 /// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
 struct MainTabView: View {
-    @EnvironmentObject private var player: PlayerCore
     @EnvironmentObject private var settings: SettingsManager
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
+
+    /// ⚠️ **这一层绝不能 `@EnvironmentObject` 整个 `PlayerCore`**（踩过，整 App 都卡）。
+    ///
+    /// `PlayerCore` 每 0.05s 推一次 `currentTime`（逐字歌词需要这个采样率）。
+    /// SwiftUI 的 `@EnvironmentObject` 是「任何一个 `@Published` 变了就重算 body」，
+    /// 而这里是**所有 tab 页的父视图** —— 一旦订阅，四个 tab 页的 body 会跟着
+    /// 每秒重算 20 次，页面里有几十张封面卡时横向滑动直接卡死。
+    ///
+    /// 这一层真正需要的只是「有没有在播」这个**粗信号**，所以直接取单例引用（不订阅），
+    /// 再用 `onReceive` 只盯 `hasActiveTrack` 这一个字段。
+    private var player: PlayerCore { PlayerCore.shared }
+    @State private var hasActiveTrack = false
 
     /// 四个 Tab 各自的导航路径。
     ///
@@ -26,6 +38,10 @@ struct MainTabView: View {
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
+            .onReceive(player.$hasActiveTrack) { value in
+                if hasActiveTrack != value { hasActiveTrack = value }
+            }
+            .onAppear { hasActiveTrack = player.hasActiveTrack }
     }
 
     @ViewBuilder
@@ -48,10 +64,10 @@ struct MainTabView: View {
             // Apply the accessory through a ViewModifier so the TabView keeps a
             // single identity across the hasActiveTrack toggle.
             .modifier(MiniPlayerAccessoryModifier(
-                isActive: player.hasActiveTrack,
+                isActive: hasActiveTrack,
                 onOpenNowPlaying: { showingNowPlaying = true }
             ))
-            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.hasActiveTrack)
+            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
     @available(iOS 26.0, *)
@@ -97,7 +113,7 @@ struct MainTabView: View {
 
             // 底栏整体（迷你播放器 + Tab 胶囊）用固定 id，避免随 selectedTab 重建
             VStack(spacing: 8) {
-                if player.hasActiveTrack {
+                if hasActiveTrack {
                     MiniPlayerView()
                         .onTapGesture { showingNowPlaying = true }
                         .padding(.horizontal, 12)
@@ -110,7 +126,7 @@ struct MainTabView: View {
             .padding(.bottom, 6)
             .id("well.bottomDock")
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.hasActiveTrack)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
     /// 一个 Tab 的页面：导航容器 + 常驻切换。

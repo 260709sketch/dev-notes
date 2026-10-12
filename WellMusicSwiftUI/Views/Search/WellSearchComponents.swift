@@ -101,19 +101,9 @@ struct WellShelf<Content: View>: View {
                 }
                 .padding(.vertical, 4)
             }
-            .modifier(WellScrollClipModifier())
-        }
-    }
-}
-
-/// iOS 17+ 允许内容溢出滚动裁剪
-private struct WellScrollClipModifier: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 17.0, *) {
-            content.scrollClipDisabled()
-        } else {
-            content
+            // 刻意**不加** `.scrollClipDisabled()`：关掉裁剪会让滚动时画面外的内容
+            // 也参与渲染，横向滑动明显更吃性能；本项目的卡片没有外发光/外阴影，
+            // 不需要靠关裁剪来露出来。
         }
     }
 }

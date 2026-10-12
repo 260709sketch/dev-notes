@@ -7,7 +7,10 @@ import SwiftUI
 /// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct FavoritesView: View {
     @EnvironmentObject private var appState: AppState
-    @EnvironmentObject private var player: PlayerCore
+    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
+    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
+    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
+    private var player: PlayerCore { PlayerCore.shared }
     @State private var segment: Segment = .tracks
 
     enum Segment: String, CaseIterable {

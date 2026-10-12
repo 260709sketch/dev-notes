@@ -2,7 +2,10 @@ import SwiftUI
 
 /// 搜索结果卡片展开页：拉取歌手 / 专辑 / 歌单对应的歌曲列表。
 struct WellSearchDetailView: View {
-    @EnvironmentObject private var player: PlayerCore
+    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
+    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
+    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
+    private var player: PlayerCore { PlayerCore.shared }
     let source: WellSearchDetailSource
     var coverURL: String?
 
