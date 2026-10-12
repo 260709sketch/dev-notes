@@ -41,7 +41,7 @@ struct WellSearchDetailView: View {
                             ForEach(albums) { album in
                                 NavigationLink {
                                     WellSearchDetailView(
-                                        source: .album(album.id, album.platform, album.name, album.artistName),
+                                        source: .album(id: album.id, platform: album.platform, name: album.name, artist: album.artistName),
                                         coverURL: album.picURL)
                                 } label: {
                                     HStack(spacing: 12) {
