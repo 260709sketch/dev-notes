@@ -20,6 +20,9 @@ struct WellLXSourceManageView: View {
             importSection
             sourceListSection
         }
+        // 与其它页面统一底色（同 SettingsView 的说明）
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background.ignoresSafeArea())
         .navigationTitle("自定义音源")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

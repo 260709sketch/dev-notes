@@ -124,6 +124,10 @@ struct SettingsView: View {
                     }
                 }
             }
+            // 与其它页面统一底色：默认的分组列表是「灰底 + 白行块」，
+            // 页面上下缘会露出一条与 App 不一致的底色。
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background.ignoresSafeArea())
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
