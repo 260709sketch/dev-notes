@@ -56,22 +56,6 @@ final class OrientationManager {
 final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
-    ) -> Bool {
-        // ★ 白边终极兜底（UIKit 层）：iOS 26 液态玻璃 chrome（状态栏 / nav bar /
-        //   tab bar）的颜色取样自 **window 底色**。SwiftUI 页面里的 .background
-        //   延伸不进 chrome 区域，但 UIWindow 的底色直接决定 chrome 透出的颜色。
-        //   把它钉成 systemGroupedBackground（浅色 = 浅灰，深色 = 纯黑）：
-        //   - List/Form 页面：系统自带背景本来就是 systemGroupedBackground → 连续
-        //   - 裸 ScrollView 页面（主页/搜索）：页面透明，透出 window 浅灰 → 连续
-        //   - 深色模式：UIColor 动态色自动切黑 → 连续
-        //   与 kumone 的观感一致（kumone 页面全白 + chrome 白，同为「连续」）。
-        UIWindow.appearance().backgroundColor = .systemGroupedBackground
-        return true
-    }
-
-    func application(
-        _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         OrientationSnapshot.mask
