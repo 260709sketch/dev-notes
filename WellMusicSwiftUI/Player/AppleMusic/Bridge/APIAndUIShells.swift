@@ -77,7 +77,7 @@ struct CommentsView: View {
     @State private var failed = false
 
     private var songId: String { track.platformSongId ?? "" }
-    private var platform: String { track.sourcePlatform }
+    private var platform: String { track.sourcePlatform ?? "" }
 
     var body: some View {
         Group {
@@ -160,8 +160,8 @@ private struct CommentRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            if let avatar = comment.avatarURL, let url = URL(string: avatar) {
-                WellRemoteImage(url: url, displaySize: 36)
+            if let avatar = comment.avatarURL, !avatar.isEmpty {
+                WellRemoteImage(url: avatar, displaySize: 36)
                     .frame(width: 36, height: 36)
                     .clipShape(Circle())
             } else {

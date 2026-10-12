@@ -484,7 +484,7 @@ final class FluidGradientView: UIView {
                 let mask = 0.6 + vig * 0.4
 
                 // 抖动去色带（对齐 AMLL 的 gradientNoise）
-                let dn = fract(52.9829189 * fract(Float(x) * 0.06711056 + Float(y) * 0.00583715))
+                let dn = Self.fract(52.9829189 * Self.fract(Float(x) * 0.06711056 + Float(y) * 0.00583715))
                 let dither = dn / 255 - 0.5 / 255
 
                 let base = rowBase + x * 4
