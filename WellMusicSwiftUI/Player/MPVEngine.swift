@@ -31,8 +31,13 @@ final class MPVEngine: @unchecked Sendable {
     private var loopStarted = false
     private var loopRunning = false
 
-    /// 曲目自然播完（EOF）回调 —— 主线程
-    var onEndOfFile: (() -> Void)?
+    /// 曲目结束回调 —— 主线程。
+    ///
+    /// ⚠️ **EOF ≠ 自然播完**：网易云 CDN 会在 seek 重拉或长播放后掐断连接，
+    /// mpv 会把「流被断开」也报告成 END_FILE(EOF)。调用方必须结合当前位置
+    /// 判断是真播完还是断流（见 `PlayerCore.handleTrackEnded`）。
+    enum TrackEndReason { case eof, error, stop, other }
+    var onTrackEnded: ((TrackEndReason) -> Void)?
 
     // MARK: 生命周期
 
@@ -196,11 +201,19 @@ final class MPVEngine: @unchecked Sendable {
                 if id == MPV_EVENT_NONE { continue }
                 switch id {
                 case MPV_EVENT_END_FILE:
-                    // reason == EOF 才算自然播完（错误/重定向不算）
+                    // reason 语义：EOF=0（自然播完**或**流被 CDN 掐断，见 onTrackEnded）、
+                    // STOP=2（loadfile replace 换曲，忽略）、QUIT=3、ERROR=5（网络/解码错误）
                     guard let data = event.pointee.data else { break }
                     let p = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
-                    if p.reason == MPV_END_FILE_REASON_EOF {
-                        DispatchQueue.main.async { [weak self] in self?.onEndOfFile?() }
+                    let reason: TrackEndReason
+                    switch p.reason {
+                    case MPV_END_FILE_REASON_EOF: reason = .eof
+                    case MPV_END_FILE_REASON_STOP: reason = .stop
+                    case MPV_END_FILE_REASON_ERROR: reason = .error
+                    default: reason = .other
+                    }
+                    if reason != .stop {
+                        DispatchQueue.main.async { [weak self] in self?.onTrackEnded?(reason) }
                     }
                 case MPV_EVENT_SHUTDOWN:
                     self.loopRunning = false

@@ -109,8 +109,8 @@ final class PlayerCore: NSObject, ObservableObject {
         super.init()
         AudioSessionManager.configure()
         engine.start()
-        engine.onEndOfFile = { [weak self] in
-            Task { @MainActor in self?.next() }
+        engine.onTrackEnded = { [weak self] reason in
+            Task { @MainActor in self?.handleTrackEnded(reason) }
         }
         // 音量：读持久化值（含旧默认迁移，见 restoredVolume）
         applyVolume(Self.restoredVolume())
@@ -369,6 +369,42 @@ final class PlayerCore: NSObject, ObservableObject {
     // MARK: 0.05s tick（位置 / 时长 / 渲染态）
 
     private var tickTimer: Timer?
+
+    /// 上次断流自动恢复的时刻（冷却防死循环）
+    private var lastAutoReloadAt: TimeInterval = 0
+
+    /// 曲目结束处理。
+    ///
+    /// ## 为什么不能见 EOF 就切歌（「拖动/听一会就自动切歌」的根因）
+    ///
+    /// 网易云 CDN 会在 seek 重拉连接或长时间播放后**掐断音频流**，mpv 把
+    /// 「流被断开」同样报告成 END_FILE(EOF) —— 和真正播完无法从事件本身区分。
+    /// AVPlayer 时代遇到断流会自动重试缓冲，mpv 则直接判死并进 idle。
+    ///
+    /// 判据：EOF 时**播放位置必须接近时长**（差 5 秒内）才算自然播完；
+    /// 位置还早就是断流 —— 保持进度重载当前曲目（重新解析播放 URL）续播，
+    /// 并用 5 秒冷却防止网络持续恶化时的无限重载循环。
+    private func handleTrackEnded(_ reason: MPVEngine.TrackEndReason) {
+        // 换曲触发旧文件的 END_FILE(STOP) 已在引擎层过滤
+        let nearEnd = duration > 0 && currentTime >= duration - 5
+
+        if reason == .eof, (duration <= 0 || nearEnd) {
+            // 真·自然播完
+            next()
+            return
+        }
+
+        // 断流 / 播放错误：重载续播
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastAutoReloadAt >= 5 else {
+            PlayerDiag.log("断流恢复冷却中（\(String(format: "%.1f", now - lastAutoReloadAt))s），忽略本次")
+            return
+        }
+        lastAutoReloadAt = now
+        PlayerDiag.log("播放中断 reason=\(reason) pos=\(String(format: "%.1f", currentTime))/\(String(format: "%.1f", duration)) → 重载续播")
+        ToastCenter.shared.show("网络波动，已自动恢复播放")
+        playCurrentItem(seekTo: currentTime, autoPlay: true)
+    }
 
     private func setupTick() {
         let t = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
