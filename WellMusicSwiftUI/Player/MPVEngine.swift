@@ -50,12 +50,12 @@ final class MPVEngine: @unchecked Sendable {
         // 纯音频：关视频输出与视频解码，省 CPU/内存
         mpv_set_option_string(h, "vo", "null")
         mpv_set_option_string(h, "vid", "no")
-        // ⚠️ 网络流缓存：音频流用 demuxer 自带的流式预读即可，**不启用 mpv 的
-        // 磁盘 cache**。实测 `cache=yes` 对短音频流在缓存耗尽时会重新 open 流
-        // （从头重放），这正是「十几秒又重新播放」的机制之一。改成流式预读。
+        // ⚠️ 网络流缓存：预读要**足够大**。readahead 太小（15s）会让缓冲周期性
+        // 耗尽 → paused-for-cache 翻转 → 播放页 running 翻转 → AMLL 间奏点
+        // 反复重置（「一闪一闪」）甚至断流。给足 60s 预读让网络波动被缓冲吸收。
         mpv_set_option_string(h, "cache", "no")
-        mpv_set_option_string(h, "demuxer-max-bytes", "32MiB")
-        mpv_set_option_string(h, "demuxer-readahead-secs", "15")
+        mpv_set_option_string(h, "demuxer-max-bytes", "96MiB")
+        mpv_set_option_string(h, "demuxer-readahead-secs", "60")
         // 网络读超时：避免挂死（断流会以 END_FILE 报告，由上层恢复）
         mpv_set_option_string(h, "network-timeout", "15")
         // 播完自然结束（触发 END_FILE/EOF），不保留最后一帧
