@@ -1035,14 +1035,34 @@ struct PlayerSeekBar: View {
         max(max(player.duration, player.currentTrack?.duration ?? 0), 1)
     }
 
-    /// 拖拽中显示手指位置，否则显示播放位置——两者统一由 PlayerCore 提供。
+    /// 当前显示时间。
+    ///
+    /// ⚠️ 这里**直接向 AVPlayer 取位置**（`core.playerPosition`），**不用**
+    /// `PlayerCore.currentTime`。这正是「无损以上感觉不跟手」的一条真实原因：
+    /// `currentTime` 由 `addPeriodicTimeObserver` 维护，而传入的 0.05s 只是
+    /// 「**至少**这么频繁」—— 无损 / Hi-Res 大文件上解码压力大，实际回调会被明显拉长，
+    /// 进度条就会一格一格地跳（标准音质下看不出来）。
+    /// 拖动中仍用 `scrubTime`（手指位置）。
     private var displayTime: Double {
-        let time = core.displayTime
-        guard time.isFinite else { return 0 }
-        return min(max(time, 0), totalDuration)
+        let raw = core.isScrubbing ? core.scrubTime : core.playerPosition
+        guard raw.isFinite else { return 0 }
+        return min(max(raw, 0), totalDuration)
     }
 
     var body: some View {
+        // 逐帧（30fps）重绘：位置来源已经换成即时读值，但 SwiftUI 总得有个东西触发重绘。
+        // 只在「在播放 or 正在拖动」时跑，暂停时停摆，不白耗电。
+        //
+        // 为什么不靠 `@Published currentTime` 触发：它的节奏就是上面说的那个被拉长的周期回调，
+        // 无损文件上会让进度条一顿一顿。原版（Sollin）用的是逐帧 `_uiTicker`，同一个道理。
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0,
+                                paused: !player.isPlaying && !core.isScrubbing)) { _ in
+            barBody
+        }
+    }
+
+    @ViewBuilder
+    private var barBody: some View {
         let total = totalDuration
         let time = displayTime
 
