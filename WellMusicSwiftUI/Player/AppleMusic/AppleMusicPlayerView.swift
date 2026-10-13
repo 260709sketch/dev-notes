@@ -365,6 +365,13 @@ struct AppleMusicPlayerView: View {
                     // ⚠️ 关键：`.opacity(0)` 的视图**依然接收点击**。不加这行，
                     // 未展开的歌词页会盖在封面页上吃掉所有点击（表现为「什么都点不了」）。
                     .allowsHitTesting(!showLyrics)
+                    // ★ 大封面下滑关闭热区：整页可拖，不再只有顶部 180×82 小指示条
+                    //   （「大封面状态下下滑很难触发」的根源）。与 Apple Music
+                    //   全屏播放器「封面区域下滑即收起」一致。
+                    // 默认 `.subviews` mask：封面内的点击（开歌词页 / 喜欢 / 更多 /
+                    // 迷你歌词预览）仍由子视图优先，只有真正的拖拽才走关闭手势。
+                    .contentShape(Rectangle())
+                    .gesture(coverDismissGesture)
                 lyricsPage
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .opacity(showLyrics ? 1 : 0)
@@ -832,15 +839,21 @@ struct AppleMusicPlayerView: View {
     private static let dismissIndicatorHitWidth: CGFloat = 180
     private static let dismissIndicatorHitHeight: CGFloat = 82
     /// 松手时判定「要关闭」的位移阈值（点）。
-    private static let dismissDistance: CGFloat = 110
+    ///
+    /// ★ 从 110 放宽到 95：热区扩大后，用户的预期是「拖过一小段就关」，
+    ///   原来的 110 配小热区正是「难触发」体感的来源之一。
+    private static let dismissDistance: CGFloat = 95
     /// 松手时的**预测**位移阈值：快速轻扫的真实位移可能很小，用预测值补足手感。
-    private static let dismissPrediction: CGFloat = 190
+    ///
+    /// ★ 从 190 放宽到 130：轻扫（位移小、速度快）更容易触发关闭。
+    private static let dismissPrediction: CGFloat = 130
 
     /// 顶部的下滑关闭指示条。
     ///
-    /// 这个胶囊既是**视觉提示**（告诉用户这里可以往下拖），也是**唯一的热区**。
-    /// 热区做成 180×82 而不是整页：播放页里进度条、音量条、歌词滚动都在抢手势，
-    /// 把关闭手势限定在这块顶部区域才不会互相打架。
+    /// 这个胶囊是**视觉提示**（告诉用户这里可以往下拖）+ **精确热区**：
+    /// 拖它用 3pt 最小位移，最灵敏。整页热区见 `coverDismissGesture`
+    /// （挂在 `coverPage` 上，封面任意位置都能下滑关闭）——两者是同一套
+    /// 关闭逻辑，指示条只负责「看起来能拖」和「拖起来最灵敏」。
     ///
     /// ⚠️ 这里补的是 Kumone `IOSNowPlayingPresentation` 的缺失一环 ——
     /// 之前只移植了 `allowsNowPlayingDismiss` 这个环境键，但全项目没有任何地方
@@ -861,16 +874,22 @@ struct AppleMusicPlayerView: View {
         .accessibilityLabel("下滑关闭播放页")
     }
 
-    /// 下滑关闭手势。
+    /// 下滑关闭手势工厂。
     ///
     /// ⚠️ 必须用 `.global` 坐标系：指示条自己会跟着手指下移，
     /// 若用局部坐标，手指与「移动中的热区」会互相反馈震荡。
-    private var dismissDragGesture: some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .global)
+    ///
+    /// - Parameter minimumDistance: 触发拖拽所需的最小位移。顶部指示条是
+    ///   **精确目标**，用 3pt 保证灵敏；铺满大封面的整页热区用 8pt，
+    ///   避免点击/轻扫时误触发。
+    private func makeDismissDragGesture(minimumDistance: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
             .onChanged { value in
                 guard !showLyrics else { return }
                 isDismissDragging = true
-                // 只接受向下拖拽（正值）；向上拖不动页面
+                // 只接受向下拖拽（正值）；向上拖不动页面。
+                // 用 max 夹取：手指拖回起点上方时页面跟随回位到 0，
+                // 而不是停在最后一次的正位移上。
                 dismissDragOffset = max(value.translation.height, 0)
             }
             .onEnded { value in
@@ -882,12 +901,32 @@ struct AppleMusicPlayerView: View {
                     // 否则页面会先弹回原位再关闭，视觉上「弹一下」。
                     onDismiss()
                 } else {
-                    isDismissDragging = false
+                    // ★ 修复「松手瞬移 / 掉帧」：`isDismissDragging` 必须放进
+                    // `withAnimation` 块里一起改。之前的写法把它放在块外，
+                    // `.offset(y:)` 的表达式（`isDismissDragging ? dragOffset : 0`）
+                    // 在赋值那一帧就跳变成 0，弹簧动画作用在一个已经不参与
+                    // 渲染的值上 —— 视觉上就是「松手后页面瞬移回去」。
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        isDismissDragging = false
                         dismissDragOffset = 0
                     }
                 }
             }
+    }
+
+    /// 顶部指示条 / 隐藏指示条后的透明热区用的下滑关闭手势（精确目标，灵敏）。
+    private var dismissDragGesture: some Gesture {
+        makeDismissDragGesture(minimumDistance: 3)
+    }
+
+    /// 大封面整页热区用的下滑关闭手势。
+    ///
+    /// ★ 原来只有顶部 180×82 的指示条能下滑关闭，用户在封面上往下滑
+    /// 没有任何反应（「大封面状态下下滑很难触发」）。现在整张封面页
+    /// （控制栏以上全部）都是热区，与 Apple Music 全屏播放器
+    /// 「在封面区域下滑即收起」的手感一致。
+    private var coverDismissGesture: some Gesture {
+        makeDismissDragGesture(minimumDistance: 8)
     }
 
     // MARK: - 歌词页
@@ -906,9 +945,9 @@ struct AppleMusicPlayerView: View {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
                 guard showLyrics else { return }
-                guard value.translation.height > 0 else { return }
                 isDismissDragging = true
-                dismissDragOffset = value.translation.height
+                // 只接受向下拖拽；用 max 夹取，手指拖回起点上方时页面跟随回位。
+                dismissDragOffset = max(value.translation.height, 0)
             }
             .onEnded { value in
                 guard showLyrics else { return }
@@ -918,8 +957,9 @@ struct AppleMusicPlayerView: View {
                     // 与大封面一致：关闭时保持 `isDismissDragging = true`，避免弹回再关。
                     onDismiss()
                 } else {
-                    isDismissDragging = false
+                    // 同大封面：回弹必须带动画，否则 offset 表达式瞬移回 0。
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        isDismissDragging = false
                         dismissDragOffset = 0
                     }
                 }
@@ -928,18 +968,30 @@ struct AppleMusicPlayerView: View {
 
     private var lyricsPage: some View {
         VStack(spacing: 0) {
-            // 顶部热区：**不是歌词的位置**，在这里下滑即可关闭播放器。
+            // 顶部下滑关闭热区：视觉指示条 + 歌名/歌手行**整块**。
             //
-            // 热区高度取「安全区顶部 + 一段留白」，把状态栏/灵动岛下方的整条
-            // 顶部空白都纳入 —— 用户从屏幕顶端往下滑就能关掉播放器，不必精确
-            // 点在某个小横条上。歌词本体在下方 ScrollView 里，不受此处影响。
-            ZStack {
-                Color.clear
-                Capsule()
-                    .fill(.clear)
-                    .frame(width: 36, height: 5)
+            // ★ 原来只有 ~70pt 的指示条本身能下滑关闭，用户从头部文字、
+            //   缩略封面那一带往下滑没有任何反应 —— 「歌词页下滑很难触发」
+            //   的根源。现在把指示条 + `lyricsHeader` 包成一块热区：从屏幕
+            //   顶端一直到「喜欢 / 更多」这一条都能下滑关页。歌词本体留给
+            //   下方滚动区 / AMLL 层（Apple Music 歌词页同样只在顶部区域收）。
+            VStack(spacing: 0) {
+                ZStack {
+                    Color.clear
+                    Capsule()
+                        .fill(.clear)
+                        .frame(width: 36, height: 5)
+                }
+                .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))
+                .contentShape(Rectangle())
+
+                lyricsHeader
+                    .padding(.horizontal, ScreenAdapter.w(24))
+                    .padding(.top, ScreenAdapter.h(85))
+                    .padding(.bottom, ScreenAdapter.h(10))
+                    // 歌词页顶部整行整体位置（独立于大封面状态的 `.title`）
+                    .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.lyricsHeader)))
             }
-            .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))
             .contentShape(Rectangle())
             // ⚠️ 不要写 `showLyrics ? DragGesture… : nil`：`nil` 无法参与
             // `Gesture` 推断，`showLyrics == false` 时会在附件手势那一刻
@@ -947,14 +999,11 @@ struct AppleMusicPlayerView: View {
             // 在未展开歌词页时把它禁掉。
             //
             // ⚠️ `GestureMask` 只有 `.all` / `.subviews` / `.none` 三个成员。
+            //
+            // ★ `.all`：拖拽优先于块内的喜欢/更多/歌名链接按钮。这些按钮只响应
+            //   **点击**，而 DragGesture 要移动 ≥8pt 才会识别，所以点击不受影响；
+            //   真正拖动时由关闭手势接管 —— 正是想要的行为。
             .gesture(headerDismissGesture, including: showLyrics ? .all : .subviews)
-
-            lyricsHeader
-                .padding(.horizontal, ScreenAdapter.w(24))
-                .padding(.top, ScreenAdapter.h(85))
-                .padding(.bottom, ScreenAdapter.h(10))
-                // 歌词页顶部整行整体位置（独立于大封面状态的 `.title`）
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.lyricsHeader)))
 
             if settings.appleMusicUseAMLL {
                 // AMLL 已在底层渲染歌词，这里只保留头部，剩余空间透明
