@@ -117,7 +117,6 @@ struct SearchView: View {
                     searchBar
 
                     if hasQuery {
-                        platformPicker
                         typePicker
 
                         if model.isLoading && model.currentEmpty(for: model.type) {
@@ -152,17 +151,32 @@ struct SearchView: View {
 
     // MARK: 搜索框
 
+    /// 搜索框 + 红色 Cancel（对照 kumone 截图：有输入时才出现，点击清空并收起键盘）
     private var searchBar: some View {
-        WellSearchField(
-            text: $searchText,
-            isFocused: $focused,
-            onSubmit: { committedQuery = searchText },
-            onClear: {
-                searchText = ""
-                committedQuery = ""
+        HStack(spacing: 12) {
+            WellSearchField(
+                text: $searchText,
+                isFocused: $focused,
+                onSubmit: { committedQuery = searchText },
+                onClear: { searchText = "" }
+            )
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    committedQuery = ""
+                    focused = false
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 16))
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
             }
-        )
+        }
         .padding(.horizontal, WellSearchMetrics.contentInset)
+        .animation(.easeInOut(duration: 0.15), value: searchText.isEmpty)
         .onChange(of: searchText) { newValue in
             Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
@@ -172,13 +186,6 @@ struct SearchView: View {
     }
 
     // MARK: 分段选择
-
-    private var platformPicker: some View {
-        WellSegmentedControl(items: WellSearchPlatform.allCases,
-                             title: { $0.rawValue },
-                             selection: $model.platform)
-            .padding(.horizontal, WellSearchMetrics.contentInset)
-    }
 
     private var typePicker: some View {
         WellSegmentedControl(items: WellSearchType.allCases,
@@ -278,6 +285,7 @@ struct SearchView: View {
 
     // MARK: 歌曲列表
 
+    /// 歌曲列表（对照 kumone 截图：行间**无分隔线**，干净列表）
     private func songList(_ tracks: [MusicItem]) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, item in
@@ -288,9 +296,6 @@ struct SearchView: View {
                         .padding(.horizontal, WellSearchMetrics.contentInset)
                 }
                 .buttonStyle(.plain)
-                if index < tracks.count - 1 {
-                    Divider().padding(.leading, WellSearchMetrics.contentInset + WellSearchMetrics.trackArtwork + 12)
-                }
             }
         }
     }

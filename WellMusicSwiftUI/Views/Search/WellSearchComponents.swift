@@ -366,24 +366,26 @@ struct WellPlayCountBadge: View {
 
 // MARK: - 搜索歌曲行
 
-/// 搜索结果歌曲行（对照 kumone 截图）：
-/// `[封面 48] 歌名 + VIP徽章 / 歌手   ……   [红心] [时长]`
+/// 搜索结果歌曲行（严格对照 kumone 截图）：
+/// `[封面56] 歌名17 + VIP徽章 / 歌手13   ……   [红心·仅已收藏] [时长]`
 ///
-/// ⚠️ 收藏态单独抽成叶子视图 `WellSearchLikeButton`：它只订阅 `AccountStore`，
-///    避免整个列表随播放/收藏变化重算（性能铁律：列表行不订阅 PlayerCore）。
+/// 与 kumone 截图一致的三条硬规则：
+/// 1. **未收藏的行不显示红心**（只有已收藏才显示实心红心）；
+/// 2. 行与行之间**不画分隔线**（干净列表，分隔线由外层控制）；
+/// 3. 歌手名多歌手用「 / 」分隔、超长省略。
 struct WellSearchTrackRow: View {
     let item: MusicItem
 
     var body: some View {
         HStack(spacing: 12) {
-            WellRemoteImage(url: item.albumCoverURL, displaySize: WellSearchMetrics.trackArtwork)
-                .frame(width: WellSearchMetrics.trackArtwork, height: WellSearchMetrics.trackArtwork)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            WellRemoteImage(url: item.albumCoverURL, displaySize: 56)
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text(item.title)
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     if item.isVip {
@@ -397,20 +399,29 @@ struct WellSearchTrackRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            WellSearchLikeButton(item: item)
+            // 只在已收藏时显示红心（未收藏完全无红心，对照截图）
+            if appState.isFavorite(item) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color(red: 0.98, green: 0.30, blue: 0.35))
+                    .transition(.opacity)
+            }
 
             Text(item.durationText)
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(.tertiary)
-                .frame(width: 38, alignment: .trailing)
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
         }
-        .frame(height: WellSearchMetrics.trackRowHeight)
+        .frame(minHeight: 68)
         .contentShape(Rectangle())
     }
+
+    @ObservedObject private var appState = AppState.shared
 }
 
 /// 搜索行右侧收藏按钮（红心）。叶子视图，只订阅 `AppState`（原生吃 `MusicItem`，
 /// 不经过桥接层 `Track` 转换）。
+/// ⚠️ 保留给需要「始终可见红心」的场景；默认列表行已改为仅收藏态显示（对照 kumone 截图）。
 struct WellSearchLikeButton: View {
     let item: MusicItem
 

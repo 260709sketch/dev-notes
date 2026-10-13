@@ -104,9 +104,6 @@ struct DailyRecommendView: View {
                         .padding(.horizontal, WellSearchMetrics.contentInset)
                 }
                 .buttonStyle(.plain)
-                if index < tracks.count - 1 {
-                    Divider().padding(.leading, WellSearchMetrics.contentInset + WellSearchMetrics.trackArtwork + 12)
-                }
             }
         }
     }
