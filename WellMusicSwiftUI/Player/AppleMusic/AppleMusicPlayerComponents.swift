@@ -185,25 +185,50 @@ enum AppleMusicLayoutPart: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// 单个组件的自定义位置（相对默认位置的偏移）与缩放
+/// 播放器调整面板里可调的位置分组（2026-10-13 新增）。
+///
+/// 与 `AppleMusicLayoutPart` 的对应关系：
+/// * `.bigCover`   → 大封面整体位置（大封面状态的 `cover`）
+/// * `.trackInfo`  → 歌手/歌曲信息块（大封面与歌词页头部共用同一份偏移 + 字号）
+/// * `.progress`   → 进度条（复用 `AppleMusicLayoutPart.progress`）
+/// * `.controls`   → 上一首/播放/下一首**整体**（控制中心调整，复用三者的共同 y）
+/// * `.volume`     → 音量条
+/// * `.bottomActions` → 评论区/歌词入口/播放列表（复用 `actions`）
+enum PlayerAdjustGroup: String, CaseIterable, Identifiable {
+    case bigCover = "大封面位置"
+    case trackInfo = "歌手歌曲信息"
+    case progress = "播放进度条"
+    case controls = "控制中心"
+    case volume = "音量条"
+    case bottomActions = "底部按钮"
+
+    var id: String { rawValue }
+}
+
+/// 单个组件的自定义位置（相对默认位置的偏移）、缩放与字号。
 struct PlayerLayoutEntry: Codable, Equatable {
     var x: CGFloat = 0
     var y: CGFloat = 0
     /// 组件大小缩放（1 为原始大小）
     var scale: CGFloat = 1
+    /// 文本字号（pt）。仅对文本类组件（歌手/歌曲信息）有意义；
+    /// **0 表示「未设置」，使用默认值**（避免旧存档被强行改字号）。
+    var fontSize: CGFloat = 0
 
-    init(x: CGFloat = 0, y: CGFloat = 0, scale: CGFloat = 1) {
+    init(x: CGFloat = 0, y: CGFloat = 0, scale: CGFloat = 1, fontSize: CGFloat = 0) {
         self.x = x
         self.y = y
         self.scale = scale
+        self.fontSize = fontSize
     }
 
-    /// 兼容旧存档（老版本没有 scale 字段，缺省为 1）
+    /// 兼容旧存档（老版本没有 scale / fontSize 字段）
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         x = try c.decodeIfPresent(CGFloat.self, forKey: .x) ?? 0
         y = try c.decodeIfPresent(CGFloat.self, forKey: .y) ?? 0
         scale = try c.decodeIfPresent(CGFloat.self, forKey: .scale) ?? 1
+        fontSize = try c.decodeIfPresent(CGFloat.self, forKey: .fontSize) ?? 0
     }
 }
 
@@ -241,6 +266,22 @@ final class AppleMusicLayoutStore: ObservableObject {
 
     func set(_ entry: PlayerLayoutEntry, for part: AppleMusicLayoutPart) {
         entries[part.rawValue] = entry
+    }
+
+    /// 「控制中心调整」：把上一首 / 播放 / 下一首三个组件作为一个整体设置 y。
+    ///
+    /// 需求（2026-10-13）：三个按钮**不分开调整**，只提供整体上下位移。
+    func setControlsY(_ y: CGFloat) {
+        for part in [AppleMusicLayoutPart.previous, .play, .next] {
+            var entry = entry(for: part)
+            entry.y = y
+            entries[part.rawValue] = entry
+        }
+    }
+
+    /// 读取当前「控制中心」整体的 y（三者的共同值；不一致时取播放按钮的值）。
+    var controlsY: CGFloat {
+        entry(for: .play).y
     }
 
     func reset(_ part: AppleMusicLayoutPart) {
@@ -1163,10 +1204,14 @@ struct PlayerSeekBar: View {
             }
             .frame(height: 30)
 
-            HStack {
+            // 时间行：左「当前时间」/ 中「音质徽章」/ 右「-剩余时间」
+            // （需求 18：对齐 RN 版 WellMusicAppleMusicV2Player 的三栏布局）
+            HStack(spacing: 0) {
                 Text(wellamTimeString(time))
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                QualityBadgeView()
                 Text("-" + wellamTimeString(max(0, total - time)))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .font(.system(size: 11, weight: .regular, design: .monospaced))
             .foregroundStyle(.white.opacity(0.52))
@@ -1179,14 +1224,14 @@ struct PlayerSeekBar: View {
 
 // MARK: - 收藏按钮（叶子视图）
 
-/// 播放页的收藏（心形）按钮。
+/// 播放页的收藏按钮（**五角星**，需求 13）。
 ///
 /// **为什么要单独抽成一个视图**：收藏状态只驱动这一个图标，但它来源于
 /// `AccountStore`。如果把 `@ObservedObject AccountStore.shared` 挂在
 /// `AppleMusicPlayerView` 顶层，任何收藏变化都会让**整页**重算 —— 页里有
 /// `WKWebView`（474KB 页面 + WebGL 流动背景），一次全量重算就要重新测量
 /// `UIScreen`、遍历 window scene、并向下发一轮 `evaluateJavaScript`。
-/// 抽成叶子后，重算范围收敛到这一个 38pt 的按钮，开销可忽略。
+/// 抽成叶子后，重算范围收敛到这一个按钮，开销可忽略。
 struct PlayerLikeButton: View {
     let track: Track?
     var primaryColor: Color = .white
@@ -1205,10 +1250,10 @@ struct PlayerLikeButton: View {
             guard let track else { return }
             Task { await AccountStore.shared.toggleLike(trackID: track.id, track: track) }
         } label: {
-            Image(systemName: isLiked ? "heart.fill" : "heart")
-                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+            Image(systemName: isLiked ? "star.fill" : "star")
+                .font(.system(size: ScreenAdapter.h(20), weight: .semibold))
                 .foregroundStyle(isLiked ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(38), height: ScreenAdapter.h(38))
+                .frame(width: ScreenAdapter.h(40), height: ScreenAdapter.h(40))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1595,5 +1640,30 @@ struct PlaybackModeSheet: View {
             }
         }
         .presentationDetentsSafe()
+    }
+}
+
+// MARK: - 音质徽章（进度条中央）
+
+/// 进度条时间行中央的音质徽章（需求 18）。
+///
+/// 对齐 RN 版 `WellMusicAppleMusicV2Player` 的 `qualityBadge`：
+/// 波形图标 + 当前音质简称，胶囊底。点击暂不展开（音质切换在设置页的
+/// 「播放音质」弹窗里），这里只做**状态显示**。
+struct QualityBadgeView: View {
+    @ObservedObject private var appState = AppState.shared
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "waveform")
+                .font(.system(size: 10, weight: .medium))
+            Text(appState.audioQuality.badgeText)
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+        .foregroundStyle(.white.opacity(0.72))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        .background(.white.opacity(0.10), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.06), lineWidth: 0.5))
     }
 }

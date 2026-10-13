@@ -80,6 +80,18 @@ struct AppleMusicPlayerView: View {
     @AppStorage("wellmusic.appleMusic.amllLyricTopPx") private var amllTopPx: Int = 140
     @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") private var amllBottomPx: Int = 305
     @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = 10
+    /// 歌名 / 歌手信息字号（需求 12；0 表示未设置，用默认值）
+    @AppStorage("wellmusic.appleMusic.trackTitleFontSize") private var trackTitleFontSizeRaw: Double = 0
+    @AppStorage("wellmusic.appleMusic.trackArtistFontSize") private var trackArtistFontSizeRaw: Double = 0
+
+    /// 歌名字号（默认 22）
+    private var trackTitleFontSize: CGFloat {
+        trackTitleFontSizeRaw > 0 ? CGFloat(trackTitleFontSizeRaw) : 22
+    }
+    /// 歌手信息字号（默认 13.5）
+    private var trackArtistFontSize: CGFloat {
+        trackArtistFontSizeRaw > 0 ? CGFloat(trackArtistFontSizeRaw) : 13.5
+    }
 
     /// 整页下滑关闭时，页面跟随手指下移的距离。
     ///
@@ -117,10 +129,17 @@ struct AppleMusicPlayerView: View {
             // 下滑关闭时**露出来的底色**。
             //
             // 播放页是 `fullScreenCover` 呈现的，下面的 tab 页并没有跟着缩小/变暗；
-            // 一旦把播放器整体往下平移，顶上空出来的那块就会直接露出下层页面 ——
-            // 浅色模式下就是一大片刺眼的白，看起来像「有块白色的东西粘着播放器一起滑」。
-            // 这里先铺一层不参与位移的深色底，位移露出来的是它。
-            Color.black.ignoresSafeArea()
+            // 一旦把播放器整体往下平移，顶上空出来的那块就会直接露出下层页面。
+            //
+            // ⚠️ 这里**不用纯黑**：用户反馈「慢慢下滑会看到一整个屏幕黑色的东西
+            //    跟着一起下滑」。纯黑固定底会与位移中的内容形成一整块黑色视觉。
+            //    改为**随位移淡出的深色遮罩** —— 拖得越远越透明，露出下层页面，
+            //    既避免纯黑块、又保留了下滑关闭的视觉反馈。
+            Color.black
+                .ignoresSafeArea()
+                .opacity(isDismissDragging
+                         ? max(0, 1 - Double(dismissDragOffset) / 420.0)
+                         : 0)
 
             ZStack {
                 // 底层：playerBackground 内部已集成 AMLL（开启时）或原版背景
@@ -140,8 +159,20 @@ struct AppleMusicPlayerView: View {
                 //
                 // ⚠️ 只在**大封面**状态出现。歌词页展开后要留给歌词自己的滚动/拖拽，
                 // 而且那里顶部已经有自己的下滑手势（`headerDismissGesture`）。
-                if !showLyrics && !isLandscape {
+                // 用户可在「播放器调整 → 顶部」里隐藏这条指示器（手势仍可用）。
+                if !showLyrics && !isLandscape && !settings.appleMusicHideTopIndicator {
                     dismissIndicator
+                        .padding(.top, Self.safeAreaTopInset + 1)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .zIndex(1)
+                }
+                // 隐藏指示条后，手势热区单独挂一层透明视图，保证仍能下滑关闭。
+                if !showLyrics && !isLandscape && settings.appleMusicHideTopIndicator {
+                    Color.clear
+                        .frame(height: Self.dismissIndicatorHitHeight)
+                        .frame(maxWidth: Self.dismissIndicatorHitWidth)
+                        .contentShape(Rectangle())
+                        .gesture(dismissDragGesture)
                         .padding(.top, Self.safeAreaTopInset + 1)
                         .frame(maxHeight: .infinity, alignment: .top)
                         .zIndex(1)
@@ -375,6 +406,10 @@ struct AppleMusicPlayerView: View {
     private func artworkLayerContent(targetFrame: CGRect) -> some View {
         let cornerRadius: CGFloat = showLyrics ? 10 : 18
         let side = targetFrame.width
+        // ★ 需求 11：大封面位置调整（仅大封面状态生效；歌词页迷你封面跟随占位锚点，不叠加偏移）
+        let coverEntry = layoutEntry(.cover)
+        let coverOffsetX = showLyrics ? 0 : coverEntry.x
+        let coverOffsetY = showLyrics ? 0 : coverEntry.y
 
         return ZStack {
             // 封面图片始终作为底层
@@ -397,8 +432,8 @@ struct AppleMusicPlayerView: View {
         .shadow(color: .black.opacity(showLyrics ? 0.26 : 0.46),
                 radius: showLyrics ? 9 : 36,
                 y: showLyrics ? 4 : 18)
-        .scaleEffect(showLyrics ? 1 : (player.isPlaying ? 1 : 0.965))
-        .position(x: targetFrame.midX, y: targetFrame.midY)
+        .scaleEffect(showLyrics ? 1 : (player.isPlaying ? 1 : 0.965) * coverEntry.scale)
+        .position(x: targetFrame.midX + coverOffsetX, y: targetFrame.midY + coverOffsetY)
         .allowsHitTesting(false)
     }
 
@@ -660,13 +695,25 @@ struct AppleMusicPlayerView: View {
     private func coverPage(size: CGSize) -> some View {
         let contentWidth = max(size.width - ScreenAdapter.w(64), 0)
         let artworkSize = min(contentWidth, min(size.height * 0.50, ScreenAdapter.h(390)))
+        let titleSize = trackTitleFontSize
+        let artistSize = trackArtistFontSize
+        let infoEntry = layoutEntry(.title)
 
         return VStack(spacing: 0) {
             Color.clear.frame(height: ScreenAdapter.h(160))
 
             // 大封面占位符（记录位置）
+            //
+            // ★ 需求 17：点击大封面打开歌词页。这里给占位符挂点击手势
+            //   （真正的封面绘制层是 `allowsHitTesting(false)` 的，不吃点击）。
             Color.clear
                 .frame(width: artworkSize, height: artworkSize)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !lyrics.isEmpty else { return }
+                    WellHaptics.tap()
+                    showLyrics = true
+                }
                 .anchorPreference(
                     key: AppleMusicArtworkFrameKey.self,
                     value: .bounds
@@ -677,7 +724,7 @@ struct AppleMusicPlayerView: View {
                     VStack(alignment: .leading, spacing: ScreenAdapter.h(5)) {
                         HStack(spacing: ScreenAdapter.w(9)) {
                             Text(track?.name ?? "未在播放")
-                                .font(.system(size: ScreenAdapter.h(22), weight: .bold))
+                                .font(.system(size: ScreenAdapter.h(titleSize), weight: .bold))
                                 .foregroundStyle(primaryColor)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
@@ -686,13 +733,13 @@ struct AppleMusicPlayerView: View {
                             if let t = track {
                                 NowPlayingTrackDestinationLinks(
                                     track: t,
-                                    font: .system(size: ScreenAdapter.h(13.5), weight: .medium),
+                                    font: .system(size: ScreenAdapter.h(artistSize), weight: .medium),
                                     color: secondaryColor,
                                     onOpenDestination: onOpenDestination
                                 )
                             } else {
                                 Text(subtitle)
-                                    .font(.system(size: ScreenAdapter.h(13.5), weight: .medium))
+                                    .font(.system(size: ScreenAdapter.h(artistSize), weight: .medium))
                                     .foregroundStyle(secondaryColor)
                             }
                         }
@@ -709,7 +756,7 @@ struct AppleMusicPlayerView: View {
                 }
                 .frame(maxWidth: ScreenAdapter.w(420))
                 .padding(.top, ScreenAdapter.h(22))
-                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.title)))
+                .offset(x: infoEntry.x, y: infoEntry.y)
 
                 MiniLyricsPreview {
                     guard !lyrics.isEmpty else { return }
@@ -721,6 +768,7 @@ struct AppleMusicPlayerView: View {
             } else {
                 compactTrackHeader
                     .padding(.top, ScreenAdapter.h(40))
+                    .offset(x: infoEntry.x, y: infoEntry.y)
             }
 
             Spacer(minLength: 0).frame(height: ScreenAdapter.h(24))
@@ -854,14 +902,18 @@ struct AppleMusicPlayerView: View {
 
     private var lyricsPage: some View {
         VStack(spacing: 0) {
-            // 顶部小横条区域：只有在这里下滑才能关闭播放器（透明不可见）
+            // 顶部热区：**不是歌词的位置**，在这里下滑即可关闭播放器（需求 19）。
+            //
+            // 热区高度取「安全区顶部 + 一段留白」，把状态栏/灵动岛下方的整条
+            // 顶部空白都纳入 —— 用户从屏幕顶端往下滑就能关掉播放器，不必精确
+            // 点在某个小横条上。歌词本体在下方 ScrollView 里，不受此处影响。
             ZStack {
                 Color.clear
                 Capsule()
                     .fill(.clear)
                     .frame(width: 36, height: 5)
             }
-            .frame(height: ScreenAdapter.h(30))
+            .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))
             .contentShape(Rectangle())
             .offset(y: showLyrics ? headerDragOffset : 0)
             // ⚠️ 不要写 `showLyrics ? DragGesture… : nil`：`nil` 无法参与
@@ -941,8 +993,15 @@ struct AppleMusicPlayerView: View {
     private var lyricsHeader: some View {
         HStack(spacing: ScreenAdapter.w(12)) {
             // 小封面占位符（记录位置）
+            //
+            // ★ 需求 17：点击小封面返回大封面状态（收起歌词页）。
             Color.clear
                 .frame(width: ScreenAdapter.h(48), height: ScreenAdapter.h(48))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    WellHaptics.tap()
+                    showLyrics = false
+                }
                 .anchorPreference(
                     key: AppleMusicArtworkFrameKey.self,
                     value: .bounds
@@ -951,7 +1010,7 @@ struct AppleMusicPlayerView: View {
             VStack(alignment: .leading, spacing: ScreenAdapter.h(3)) {
                 HStack(spacing: ScreenAdapter.w(7)) {
                     Text(track?.name ?? "未在播放")
-                        .font(.system(size: ScreenAdapter.h(15), weight: .semibold))
+                        .font(.system(size: ScreenAdapter.h(trackTitleFontSize * 0.68), weight: .semibold))
                         .foregroundStyle(primaryColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -960,13 +1019,13 @@ struct AppleMusicPlayerView: View {
                     if let t = track {
                         NowPlayingTrackDestinationLinks(
                             track: t,
-                            font: .system(size: ScreenAdapter.h(12), weight: .medium),
+                            font: .system(size: ScreenAdapter.h(trackArtistFontSize * 0.89), weight: .medium),
                             color: secondaryColor,
                             onOpenDestination: onOpenDestination
                         )
                     } else {
                         Text(subtitle)
-                            .font(.system(size: ScreenAdapter.h(12), weight: .medium))
+                            .font(.system(size: ScreenAdapter.h(trackArtistFontSize * 0.89), weight: .medium))
                             .foregroundStyle(secondaryColor)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -1073,9 +1132,9 @@ struct AppleMusicPlayerView: View {
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+                .font(.system(size: ScreenAdapter.h(20), weight: .semibold))
                 .foregroundStyle(active ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(38), height: ScreenAdapter.h(38))
+                .frame(width: ScreenAdapter.h(40), height: ScreenAdapter.h(40))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

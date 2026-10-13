@@ -3,19 +3,27 @@ import SwiftUI
 /// 播放器调整：集中放 Apple Music 播放页的观感微调。
 ///
 /// 入口在播放页「三个点」菜单里的「播放器调整」，点开以 sheet 呈现。
-/// 所有改动都是**即时生效**的 —— 直接写 `SettingsManager` 的 @AppStorage，
-/// 拖滑块的同时背后的播放页就已经变了，不需要「应用」按钮。
+/// 所有改动都是**即时生效**的 —— 位置类直接写 `AppleMusicLayoutStore`，
+/// 其它写 `SettingsManager` 的 @AppStorage，拖滑块的同时背后的播放页就已经变了。
 ///
-/// 参数语义与取值区间对齐 Kumone 的对应设置组（顶部 50…400 / 底部 100…500 /
-/// 左右 -200…200，单位均为**点**）。
+/// 分组（2026-10-13 扩展，对齐 RN `PlayerLayoutScreen.tsx`）：
+///  * 位置调整：大封面 / 歌手歌曲信息（含字号）/ 播放进度条 / 控制中心（整体）/
+///    音量条 / 底部按钮，全部支持上下（歌手信息另支持左右）；
+///  * 外观：背景（流体渐变 / 模式 / 暗度）、顶部小横条隐藏；
+///  * 歌词：AMLL 位置 + 字体，另含歌词页歌曲名/歌手字号。
 struct PlayerAdjustSheet: View {
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
 
+    @ObservedObject private var layout = AppleMusicLayoutStore.shared
+
     var body: some View {
         NavigationStack {
             Form {
+                positionSection
+                trackInfoFontSection
                 backgroundSection
+                topBarSection
                 amllLyricSection
                 amllFontSection
             }
@@ -27,6 +35,111 @@ struct PlayerAdjustSheet: View {
                         .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    // MARK: - 位置调整（上下，单位 pt）
+
+    private var positionSection: some View {
+        Section {
+            // 大封面位置（上下）
+            layoutSlider(
+                title: "大封面位置",
+                part: .cover,
+                axis: .vertical,
+                range: -200...200,
+                note: "调整大封面整体上下位置"
+            )
+            // 播放进度条（上下）
+            layoutSlider(
+                title: "播放进度条位置",
+                part: .progress,
+                axis: .vertical,
+                range: -100...200,
+                note: "调整进度条整体上下位置"
+            )
+            // 控制中心（上一首/播放/下一首 整体，上下）
+            controlsSlider
+            // 音量条（上下）
+            layoutSlider(
+                title: "音量条位置",
+                part: .volume,
+                axis: .vertical,
+                range: -100...200,
+                note: "调整音量条整体上下位置"
+            )
+            // 评论区 / 歌词入口 / 播放列表（上下）
+            layoutSlider(
+                title: "底部按钮位置",
+                part: .actions,
+                axis: .vertical,
+                range: -100...200,
+                note: "评论区、歌词入口、播放列表整体上下位置"
+            )
+        } header: {
+            Text("位置调整")
+        } footer: {
+            Text("单位为点（pt），改动即时生效。负值向上、正值向下。")
+        }
+    }
+
+    /// 歌手歌曲信息：上下左右 + 字号（需求 11/12）
+    private var trackInfoFontSection: some View {
+        Section {
+            layoutSlider(
+                title: "歌手歌曲信息 上下",
+                part: .title,
+                axis: .vertical,
+                range: -200...200,
+                note: "歌曲名/歌手信息整体上下位置"
+            )
+            layoutSlider(
+                title: "歌手歌曲信息 左右",
+                part: .title,
+                axis: .horizontal,
+                range: -200...200,
+                note: "正值向右、负值向左"
+            )
+            fontSizeSlider(
+                title: "歌曲名字号",
+                key: "wellmusic.appleMusic.trackTitleFontSize",
+                defaultValue: 22,
+                range: 12...40
+            )
+            fontSizeSlider(
+                title: "歌手信息字号",
+                key: "wellmusic.appleMusic.trackArtistFontSize",
+                defaultValue: 13.5,
+                range: 9...28
+            )
+        } header: {
+            Text("歌手歌曲信息")
+        } footer: {
+            Text("字号同时作用于大封面状态与歌词页顶部的歌曲名 / 歌手信息。")
+        }
+    }
+
+    /// 「控制中心」：上一首 / 播放 / 下一首整体上下（需求 15，不分开调整）
+    private var controlsSlider: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("控制中心位置")
+                Spacer()
+                Text("\(Int(layout.controlsY.rounded()))pt")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(layout.controlsY) },
+                    set: { layout.setControlsY(CGFloat($0.rounded())) }
+                ),
+                in: -100...200,
+                step: 1
+            )
+            Text("上一首 / 播放 / 下一首三个按钮整体上下位置")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -44,8 +157,6 @@ struct PlayerAdjustSheet: View {
             .pickerStyle(.segmented)
 
             // 背景暗度：调的是盖在背景层之上的那块遮罩。
-            // 暗色模式下 0 = 不压暗（背景最亮），1 = 几乎全黑；
-            // 浅色模式下则是提亮遮罩的强度。
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("背景暗度")
@@ -58,8 +169,18 @@ struct PlayerAdjustSheet: View {
             }
         } header: {
             Text("背景")
+        }
+    }
+
+    // MARK: - 顶部小横条
+
+    private var topBarSection: some View {
+        Section {
+            Toggle("隐藏顶部小横条", isOn: hideTopIndicatorBinding)
+        } header: {
+            Text("顶部")
         } footer: {
-            Text("流体渐变按 AMLL 最新版的效果实现：封面取色 + 四色流体，极低分辨率渲染、省电；关闭则退回封面模糊。觉得背景太亮就把暗度调高。")
+            Text("隐藏大封面状态顶部用于下滑关闭的横条指示器（手势仍可用）。")
         }
     }
 
@@ -129,6 +250,8 @@ struct PlayerAdjustSheet: View {
         }
     }
 
+    // MARK: - 绑定
+
     private var fontSizeBinding: Binding<Double> {
         Binding(
             get: { settings.appleMusicAmllFontSize },
@@ -142,13 +265,6 @@ struct PlayerAdjustSheet: View {
             set: { settings.appleMusicAmllFontWeight = $0 }
         )
     }
-
-    // MARK: - 绑定
-    //
-    // 一律走显式的 `Binding(get:set:)`，不用 `$settings.xxx`。
-    // `SettingsManager` 上这些是 `@AppStorage`，直接取 `$settings.xxx` 依赖
-    // 属性包装器的 keypath 推断，在部分 Xcode 版本上会报「无法推断类型」。
-    // 显式构造没有这个风险，且写入行为完全一致（都落到同一处 UserDefaults）。
 
     private var backgroundModeBinding: Binding<AppleMusicBackgroundMode> {
         Binding(
@@ -168,6 +284,14 @@ struct PlayerAdjustSheet: View {
         Binding(
             get: { settings.appleMusicBackgroundDim },
             set: { settings.appleMusicBackgroundDim = $0 }
+        )
+    }
+
+    /// 顶部小横条隐藏开关（存 SettingsManager 的 @AppStorage）
+    private var hideTopIndicatorBinding: Binding<Bool> {
+        Binding(
+            get: { settings.appleMusicHideTopIndicator },
+            set: { settings.appleMusicHideTopIndicator = $0 }
         )
     }
 
@@ -194,10 +318,74 @@ struct PlayerAdjustSheet: View {
 
     // MARK: - 组件
 
-    /// 整数点位滑块。
-    ///
-    /// `@AppStorage` 里位置是 `Int`，而 `Slider` 只接受 `Double`，
-    /// 所以这里做一层往返绑定；`step` 用 5 让点位落在 5 的倍数上好记。
+    /// 布局偏移滑块（上下 / 左右），作用于 `AppleMusicLayoutStore`。
+    private enum Axis { case vertical, horizontal }
+
+    private func layoutSlider(
+        title: String,
+        part: AppleMusicLayoutPart,
+        axis: Axis,
+        range: ClosedRange<Int>,
+        note: String
+    ) -> some View {
+        let current: CGFloat = axis == .vertical ? layout.entry(for: part).y : layout.entry(for: part).x
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(current.rounded()))pt")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(current) },
+                    set: { newValue in
+                        var entry = layout.entry(for: part)
+                        if axis == .vertical {
+                            entry.y = CGFloat(newValue.rounded())
+                        } else {
+                            entry.x = CGFloat(newValue.rounded())
+                        }
+                        layout.set(entry, for: part)
+                    }
+                ),
+                in: Double(range.lowerBound)...Double(range.upperBound),
+                step: 1
+            )
+            Text(note)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    /// 字号滑块：直接写 UserDefaults（播放页用 @AppStorage 镜像实时刷新）。
+    private func fontSizeSlider(
+        title: String,
+        key: String,
+        defaultValue: Double,
+        range: ClosedRange<Double>
+    ) -> some View {
+        let binding = Binding<Double>(
+            get: {
+                let v = UserDefaults.standard.double(forKey: key)
+                return v == 0 ? defaultValue : v
+            },
+            set: { UserDefaults.standard.set($0, forKey: key) }
+        )
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(binding.wrappedValue.rounded()))pt")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: binding, in: range, step: 1)
+        }
+    }
+
+    /// 整数点位滑块（作用于 SettingsManager 的 Int @AppStorage）。
     private func pixelSlider(
         title: String,
         value: Binding<Int>,

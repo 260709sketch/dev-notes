@@ -10,18 +10,20 @@ struct ResolvedPlayback {
     var isFallbackSource: Bool
 }
 
-/// 播放地址解析器：本地文件直连，自定义音源优先，其次各平台 API
+/// 播放地址解析器：本地文件直连 → 已缓存地址 → LX 自定义音源。
+///
+/// ## 设计原则（2026-10-13 定案）
+///
+/// **所有播放一律走 LX 自定义音源解析**，不再回退官方平台通道。
+/// LX 音源不存在「试听片段」概念（试听是旧官方通道的产物），所以解析到
+/// 什么就播什么。LX 未激活或解析失败时直接抛错，由播放器提示用户，
+/// 绝不静默回退官方 —— 避免用户听到与预期不符的音源。
 final class MusicURLResolver {
     static let shared = MusicURLResolver()
 
     /// 解析播放信息（含请求头）。
-    /// 顺序：本地文件 → 已缓存地址 → 自定义音源（激活时）→ 官方平台通道。
-    /// 自定义音源取链失败会自动回退官方通道，保证仍能听歌。
-    ///
-    /// - Parameter preferOfficial: 跳过自定义音源、强制走官方平台通道。
-    ///   用于「试听片段检测」：自定义源返回 15~30s 试听链接时重播完整版。
-    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality,
-                         preferOfficial: Bool = false) async throws -> ResolvedPlayback {
+    /// 顺序：本地文件 → 已缓存地址 → LX 自定义音源（必须激活）。
+    func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
         if let local = item.localFilePath, !local.isEmpty {
             return ResolvedPlayback(url: URL(fileURLWithPath: local).absoluteString,
                                     headers: [:], fromCustomSource: nil, isFallbackSource: false)
@@ -36,16 +38,17 @@ final class MusicURLResolver {
                                     fromCustomSource: nil,
                                     isFallbackSource: false)
         }
-        let hasActiveLXSource = await WellLXSourceStore.shared.hasActiveSource
-        if hasActiveLXSource, !preferOfficial,
-           let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) {
-            return ResolvedPlayback(url: lx.url,
-                                    headers: lx.headers,
-                                    fromCustomSource: lx.sourceName,
-                                    isFallbackSource: lx.isFallback)
+        // ★ 强制走 LX 音源：激活且有可用脚本时必须解析成功，否则报错。
+        guard await WellLXSourceStore.shared.hasActiveSource else {
+            throw MusicURLResolverError.lxSourceUnavailable
         }
-        let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
-        return ResolvedPlayback(url: url, headers: [:], fromCustomSource: nil, isFallbackSource: false)
+        guard let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) else {
+            throw MusicURLResolverError.lxResolveFailed
+        }
+        return ResolvedPlayback(url: lx.url,
+                                headers: lx.headers,
+                                fromCustomSource: lx.sourceName,
+                                isFallbackSource: lx.isFallback)
     }
 
     /// 兼容旧签名：仅返回地址。
@@ -95,10 +98,16 @@ final class PlatformSongResolver {
 
 enum MusicURLResolverError: LocalizedError {
     case notResolved(MusicSource)
+    /// LX 自定义音源未激活（所有播放必须走 LX，未激活即为不可播）
+    case lxSourceUnavailable
+    /// LX 自定义音源解析失败（限流 / 脚本返回空 / 该曲目无资源）
+    case lxResolveFailed
 
     var errorDescription: String? {
         switch self {
         case .notResolved(let src): return "无法解析 \(src.displayName) 的播放地址"
+        case .lxSourceUnavailable: return "请先在设置中启用自定义音源"
+        case .lxResolveFailed: return "自定义音源解析失败，请稍后重试"
         }
     }
 }

@@ -296,6 +296,9 @@ final class SettingsManager: ObservableObject {
     /// 1 = 几乎全黑；浅色模式下则是提亮遮罩的强度。默认 0.48，与旧版硬编码一致。
     @AppStorage("wellmusic.appleMusic.backgroundDim") var appleMusicBackgroundDim: Double = 0.48
 
+    /// 是否隐藏大封面状态顶部的小横条指示器（下滑关闭手势仍然可用）。
+    @AppStorage("wellmusic.appleMusic.hideTopIndicator") var appleMusicHideTopIndicator: Bool = false
+
     // MARK: - Apple Music 播放器（回迁自 Kumone / wellam）
 
     /// 当前「正在播放」页形态

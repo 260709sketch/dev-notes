@@ -188,15 +188,16 @@ private struct MiniPlayerAccessory: View {
     }
 }
 
-/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 上一首/播放/下一首）
+/// 屏下迷你播放条（浮动胶囊：54pt 高胶囊 + 42pt 封面 + 播放/下一首）
 ///
 /// ⚠️ 性能约定：本视图**不订阅 PlayerCore**。订阅会让整只胶囊（文字/按钮/阴影）
 /// 随 20Hz 的 currentTime 广播每秒重算 20 次——而它挂在 iOS 26 的系统
 /// bottom accessory 上，每次重算都可能触发系统 chrome 重新布局，直接拖垮滚动帧率。
 ///
-/// 拆分方案：
-/// * 歌名/封面/播放态 —— 低频信号（currentIndex/queue/isPlaying 投影）落 @State；
-/// * 2pt 进度细线 —— 拆进 `MiniPlayerProgressLine`，只有那一个小视图高频更新。
+/// 结构（按用户要求）：
+/// * **不显示播放进度** —— 顶部不再有 2pt 进度细线；
+/// * **不显示上一首** —— 只保留「播放/暂停 + 下一首」，图标统一 18px；
+/// * 歌名/封面/播放态 —— 低频信号（currentIndex/queue/isPlaying/hasActiveTrack 投影）落 @State。
 struct MiniPlayerView: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -204,6 +205,8 @@ struct MiniPlayerView: View {
     @State private var isPlaying = false
 
     private let capsuleHeight: CGFloat = 54
+    /// 控制图标字号（18px）
+    private let controlIconSize: CGFloat = 18
 
     var body: some View {
         HStack(spacing: 0) {
@@ -223,21 +226,13 @@ struct MiniPlayerView: View {
             }
             .padding(.leading, 7)
 
-            // 右：上一首 / 播放暂停 / 下一首
-            HStack(spacing: 12) {
-                Button {
-                    PlayerCore.shared.previous()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
-                }
+            // 右：播放暂停 / 下一首（**不含上一首**）
+            HStack(spacing: 14) {
                 Button {
                     PlayerCore.shared.togglePlayPause()
                 } label: {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: controlIconSize, weight: .semibold))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
@@ -245,7 +240,7 @@ struct MiniPlayerView: View {
                     PlayerCore.shared.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: controlIconSize, weight: .semibold))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
@@ -263,11 +258,14 @@ struct MiniPlayerView: View {
             Capsule().strokeBorder(.white.opacity(colorScheme == .dark ? 0.08 : 0.22), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 12, y: 4)
-        // 底部进度细线（独立小视图：只有它订阅 20Hz 的播放时间）
-        .overlay(alignment: .bottom) { MiniPlayerProgressLine() }
         // 低频信号 → @State（投影 publisher 只在对应属性变化时才发，与 currentTime 无关）
+        //
+        // ⚠️ 换歌时必须能刷新：同队列内切 index → 只有 `currentIndex` 变；
+        //    换整队列 → `queue` 变；开始/停止播放 → `hasActiveTrack` 变。
+        //    三者都监听才能保证「切到下一首后标题立即更新」。
         .onReceive(PlayerCore.shared.$currentIndex) { _ in syncTrack() }
         .onReceive(PlayerCore.shared.$queue) { _ in syncTrack() }
+        .onReceive(PlayerCore.shared.$hasActiveTrack) { _ in syncTrack() }
         .onReceive(PlayerCore.shared.$isPlaying) { isPlaying = $0 }
         .onAppear {
             syncTrack()
@@ -276,28 +274,10 @@ struct MiniPlayerView: View {
     }
 
     private func syncTrack() {
-        track = PlayerCore.shared.currentItem
-    }
-}
-
-/// MiniPlayer 底部的 2pt 进度细线。
-///
-/// 这是整个迷你播放条里**唯一**允许高频订阅播放时间的视图 —— 固定 2pt 高、
-/// 宽度随进度变化，重算/重绘面积被压到最小。
-private struct MiniPlayerProgressLine: View {
-    @ObservedObject private var player = PlayerCore.shared
-
-    var body: some View {
-        GeometryReader { geo in
-            Capsule()
-                .fill(AppTheme.accent)
-                .frame(width: geo.size.width * min(player.duration > 0 ? player.currentTime / player.duration : 0, 1), height: 2)
+        let next = PlayerCore.shared.currentItem
+        if next?.keyOf != track?.keyOf {
+            track = next
         }
-        .frame(height: 2)
-        .frame(maxHeight: .infinity, alignment: .bottom)
-        .padding(.horizontal, 14)
-        .padding(.bottom, 3)
-        .allowsHitTesting(false)
     }
 }
 
