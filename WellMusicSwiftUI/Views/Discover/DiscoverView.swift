@@ -259,11 +259,15 @@ struct DiscoverView: View {
                     loadedBody
                 }
 
-                // 底栏留白：iOS 26 系统已自动扩展 safe area（见 WellBottomClearance）
-                WellBottomClearance()
+                // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
+                Color.clear.frame(height: 150)
             }
             .padding(.top, 6)
         }
+        // ★ 沉浸式底部（与 kumone 一致，用户 2026-10-13 指令）：
+        //   内容延伸到底部安全区域，液态玻璃 TabBar 浮在内容上透出模糊倒影。
+        //   底部 150pt 留白确保最后一条内容不被 TabBar 永久遮挡。
+        .ignoresSafeArea(edges: .bottom)
         // ★ 不铺背景、不给 toolbar 上色（与 kumone HomeView 一致）——
         //   全部交给系统 Liquid Glass 渲染链自动融合，颜色才连续。
         //   之前手动铺 background + toolbarBackground 与系统底色打架 → 顶部/底部白边。

@@ -45,13 +45,12 @@ targets:
         #   「empty UILaunchScreen opts the app into native full-screen rendering」。
         #   ⚠️ 不要加 UIColorName 指向色集 —— 用户实测 78fa838f（UIColorName 版）
         #   白条依旧；kumone 的空字典方案是经过验证的唯一可靠写法。
-        # ★ 不再设置 UIDesignRequiresCompatibility。
-        #   它曾用于「回退 iOS 18 渲染」，但实测（kumone 对照）：
-        #   compat 渲染下 nav bar / tab bar 退回 iOS 18 毛玻璃材质 —— 在浅色下
-        #   渲染得又白又实，内容滚到 bar 下面时被近乎纯白的毛玻璃挡住
-        #   （用户说的「顶部导航下面的白色矩形」）。
-        #   kumone 无此 key → 纯 iOS 26 液态玻璃 → 内容从 bar 下掠过隐约可见。
-        #   现已移除，与 kumone 完全同渲染。
+        # ★ 顶部/底部白边的根治开关：UIDesignRequiresCompatibility。
+        #   iOS 26 只对「iOS 26 SDK 构建的 app」启用液态玻璃 chrome（状态栏/nav bar/
+        #   tab bar 的白色玻璃底座）——这就是白边的来源。最初版本（iOS 18.2 SDK 构建）
+        #   在 iOS 26 上自动沿用旧版渲染，所以从未有白边。
+        #   此 key 声明本 app 保持 iOS 18 的 chrome 渲染行为，与最初版本一致。
+        UIDesignRequiresCompatibility: true
         UILaunchScreen: {}
         UIBackgroundModes:
           - audio
