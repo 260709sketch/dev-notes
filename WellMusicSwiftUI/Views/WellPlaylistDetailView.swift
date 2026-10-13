@@ -19,6 +19,8 @@ struct WellPlaylistDetailView: View {
     /// ★ 每日推荐模式：数据走 `dailyRecommendSongs()`，header 封面用首曲封面
     var dailyMode: Bool = false
 
+    @EnvironmentObject private var appState: AppState
+
     /// 歌单内排序方式（Beans 同款）
     enum SortMode: String, CaseIterable, Identifiable {
         case original = "默认"
@@ -39,13 +41,36 @@ struct WellPlaylistDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                header
-                songsSection
-                Color.clear.frame(height: 170)
+        // ⚠️ iOS 26 Apple Music 专辑/歌单页样式（用户指定一比一）：
+        // 封面主色模糊渐变铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
+        // → 搜索行 → 无分隔线歌曲列表。
+        ZStack(alignment: .top) {
+            // ★ 封面模糊延伸背景：同一张封面拉满全屏 + 大半径模糊，
+            //   从封面下缘开始渐变过渡到系统背景色 —— Apple Music 标志性效果。
+            //   固定不随滚动（滚动跟随需要 scrollClipDisabled，性能铁律禁用）。
+            GeometryReader { geo in
+                WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                    .frame(width: geo.size.width, height: geo.size.width * 1.9)
+                    .clipped()
+                    .blur(radius: 55)
+                    .overlay(
+                        LinearGradient(colors: [.clear, bgFadeColor.opacity(0.55), bgFadeColor],
+                                       startPoint: .top, endPoint: .bottom)
+                    )
+                    .ignoresSafeArea(edges: .top)
             }
-            .padding(.top, 12)
+            .allowsHitTesting(false)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    heroCover
+                    titleBlock
+                    controlsRow
+                    searchRow
+                    songsSection
+                    Color.clear.frame(height: 170)
+                }
+            }
         }
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -63,113 +88,128 @@ struct WellPlaylistDetailView: View {
         }
     }
 
-    // MARK: - Header（Beans 同款布局）
+    /// 模糊背景向下渐变的目标色（跟随系统深浅色）
+    private var bgFadeColor: Color { Color(uiColor: .systemBackground) }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                WellRemoteImage(url: headerCoverURL, displaySize: 96)
-                    .frame(width: 96, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    // MARK: - 全宽大封面
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(source.title)
-                        .font(.system(size: 18, weight: .bold))
-                        .lineLimit(2)
-                    if let creatorName, !creatorName.isEmpty {
-                        Text(creatorName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("\(tracks.count) 首")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    if playCount > 0 {
-                        Text("播放 \(playCountText)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
+    private var heroCover: some View {
+        WellRemoteImage(url: headerCoverURL, displaySize: 720)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+            .clipped()
+    }
+
+    // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
+
+    private var titleBlock: some View {
+        VStack(spacing: 6) {
+            Text(source.title)
+                .font(.system(size: 22, weight: .bold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .padding(.horizontal, 20)
+            if let creatorName, !creatorName.isEmpty {
+                Text(creatorName)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
             }
+            Text("\(tracks.count) 首")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+    }
 
-            // 播放全部 / 随机播放（Beans 双按钮）
-            HStack(spacing: 10) {
-                Button {
-                    guard !orderedTracks.isEmpty else { return }
-                    PlayerCore.shared.play(queue: orderedTracks, startIndex: 0)
-                } label: {
-                    Label("播放全部", systemImage: "play.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(AppTheme.accent, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(orderedTracks.isEmpty)
+    // MARK: - 控制行：shuffle 圆钮 / 白色播放胶囊 / 收藏圆钮
 
-                Button {
-                    guard !orderedTracks.isEmpty else { return }
-                    PlayerCore.shared.play(queue: orderedTracks,
-                                           startIndex: Int.random(in: 0..<orderedTracks.count))
-                } label: {
-                    Label("随机播放", systemImage: "shuffle")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(AppTheme.secondaryBackground, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(orderedTracks.isEmpty)
+    private var controlsRow: some View {
+        HStack(spacing: 12) {
+            // 随机播放（圆形）
+            Button {
+                guard !orderedTracks.isEmpty else { return }
+                PlayerCore.shared.play(queue: orderedTracks,
+                                       startIndex: Int.random(in: 0..<orderedTracks.count))
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .background(.ultraThinMaterial, in: Circle())
             }
+            .buttonStyle(.plain)
+            .disabled(orderedTracks.isEmpty)
 
-            // 歌单内搜索 + 排序（ Beans 同款：只过滤显示，不改播放队列）
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                    TextField("搜索歌单内歌曲", text: $searchText)
-                        .font(.system(size: 14))
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
+            // 播放（白色大胶囊，黑字）
+            Button {
+                guard !orderedTracks.isEmpty else { return }
+                PlayerCore.shared.play(queue: orderedTracks, startIndex: 0)
+            } label: {
+                Label("播放", systemImage: "play.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Color.white, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(orderedTracks.isEmpty)
+
+            // 收藏到本地歌单（圆形）
+            Button {
+                saveToLocalPlaylist()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 19, weight: .semibold))
+                    .frame(width: 48, height: 48)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(tracks.isEmpty)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+    }
+
+    // MARK: - 搜索行（胶囊 + 右侧排序菜单「…」）
+
+    private var searchRow: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                TextField("搜索歌单内歌曲", text: $searchText)
+                    .font(.system(size: 14))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(AppTheme.secondaryBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            // 排序菜单（…）
+            Menu {
+                Picker("排序", selection: $sortMode) {
+                    ForEach(SortMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(AppTheme.secondaryBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                Menu {
-                    Picker("排序", selection: $sortMode) {
-                        ForEach(SortMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 38, height: 38)
-                        .background(AppTheme.secondaryBackground, in: Circle())
-                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42, height: 42)
+                    .background(AppTheme.secondaryBackground, in: Circle())
             }
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 14)
+        .padding(.bottom, 10)
     }
 
-    // MARK: - 歌曲列表
+    // MARK: - 歌曲列表（Apple Music 行：44 封面 + 名/歌手 + 右时长，无分隔线）
 
     @ViewBuilder
     private var songsSection: some View {
@@ -187,15 +227,16 @@ struct WellPlaylistDetailView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 240)
         } else {
-            // ⚠️ 无分隔线（Beans 同款干净列表）
-            VStack(spacing: 0) {
-                ForEach(Array(displayedTracks.enumerated()), id: \.element.id) { _, item in
+            LazyVStack(spacing: 0) {
+                ForEach(Array(displayedTracks.enumerated()), id: \.element.id) { index, item in
                     Button {
                         PlayerCore.shared.play(queue: orderedTracks,
                                                startIndex: playbackIndex(for: item))
                     } label: {
-                        WellDetailSongRow(item: item)
+                        appleMusicSongRow(index: index, item: item)
                             .padding(.horizontal, 20)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -203,63 +244,39 @@ struct WellPlaylistDetailView: View {
         }
     }
 
-    private var retryState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.system(size: 38, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text("内容加载失败")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button {
-                Task { await load() }
-            } label: {
-                Text("重新加载")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 9)
-                    .background(AppTheme.accent, in: Capsule())
+    private func appleMusicSongRow(index: Int, item: MusicItem) -> some View {
+        HStack(spacing: 12) {
+            WellRemoteImage(url: item.albumCoverURL, displaySize: 44)
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(item.artist ?? "未知歌手")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-    // MARK: - 数据逻辑（Beans 同款：排序作用于队列，搜索只过滤显示）
-
-    /// 排序后的完整顺序 = 播放队列
-    private var orderedTracks: [MusicItem] {
-        var list = tracks
-        switch sortMode {
-        case .original: break
-        case .name:
-            list.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        case .duration:
-            list.sort { $0.duration < $1.duration }
-        }
-        return list
-    }
-
-    /// 搜索只改可见列表
-    private var displayedTracks: [MusicItem] {
-        let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !kw.isEmpty else { return orderedTracks }
-        return orderedTracks.filter { item in
-            item.title.lowercased().contains(kw)
-                || (item.artist ?? "").lowercased().contains(kw)
-                || (item.album ?? "").lowercased().contains(kw)
+            Text(item.durationText)
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
         }
     }
 
-    private func playbackIndex(for item: MusicItem) -> Int {
-        orderedTracks.firstIndex { $0.id == item.id } ?? 0
-    }
-
-    private var playCountText: String {
-        if playCount >= 100_000_000 { return String(format: "%.1f亿", Double(playCount) / 100_000_000) }
-        if playCount >= 10_000 { return String(format: "%.1f万", Double(playCount) / 10_000) }
-        return "\(playCount)"
+    /// 收藏到本地歌单（与「我的歌单」共用存储）
+    private func saveToLocalPlaylist() {
+        let name = source.title
+        guard !appState.playlists.contains(where: { $0.name == name && $0.tracks.count == tracks.count }) else {
+            ToastCenter.shared.show("已收藏过该内容")
+            return
+        }
+        appState.playlists.insert(Playlist(name: name, coverURL: headerCoverURL, tracks: tracks), at: 0)
+        ToastCenter.shared.show("已收藏「\(name)」")
     }
 
     private func load() async {
