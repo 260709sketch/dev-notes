@@ -55,6 +55,14 @@ struct DiscoverView: View {
 
     // MARK: - 加载
 
+    /// 登录网易云 → 关注歌手；未登录 → 热门歌手
+    private func loadArtists() async -> [WellArtistSummary] {
+        if NeteaseSession.shared.isLoggedIn {
+            return (try? await NeteaseMusicAPI.shared.followedArtists(limit: 30)) ?? []
+        }
+        return (try? await NeteaseMusicAPI.shared.topArtists(limit: 30)) ?? []
+    }
+
     private func load(force: Bool = false) async {
         if isLoading == false && !force { return }
         isLoading = true
@@ -64,7 +72,7 @@ struct DiscoverView: View {
         async let recsTask = try? NeteaseMusicAPI.shared.personalizedPlaylists(limit: 30)
         async let albumsTask = try? NeteaseMusicAPI.shared.newAlbums(limit: 20)
         async let topsTask = try? NeteaseMusicAPI.shared.toplists()
-        async let artistsTask = try? NeteaseMusicAPI.shared.topArtists(limit: 30)
+        async let artistsTask = loadArtists()
 
         let (daily, recs, albums, tops, arts) = await (dailyTask, recsTask, albumsTask, topsTask, artistsTask)
         dailySongs = daily ?? []
@@ -84,8 +92,8 @@ struct DiscoverView: View {
     @ViewBuilder
     private var recommendedSection: some View {
         if !recommendedPlaylists.isEmpty {
-            WellShelf(title: "推荐歌单") {
-                ForEach(recommendedPlaylists) { pl in
+            WellShelf(title: "推荐歌单", rowHeight: 220) {
+                ForEach(Array(recommendedPlaylists.enumerated()), id: \.element.id) { index, pl in
                     NavigationLink {
                         WellPlaylistDetailView(
                             source: .playlist(id: pl.id, platform: .netease, name: pl.name),
@@ -97,6 +105,7 @@ struct DiscoverView: View {
                                       subtitle: pl.creatorName, playCount: pl.playCount)
                     }
                     .buttonStyle(.plain)
+                    .modifier(WellCardEntrance(index: index, itemID: "rec-\(pl.id)"))
                 }
             }
         }
@@ -110,7 +119,7 @@ struct DiscoverView: View {
                 .padding(.horizontal, WellSearchMetrics.contentInset)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 14) {
+                LazyHStack(alignment: .top, spacing: 14) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
 
                     // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
@@ -121,49 +130,45 @@ struct DiscoverView: View {
                             coverURL: nil,
                             dailyMode: true)
                     } label: {
-                        WellFeatureCard(
+                        WellActionCard(
                             title: "每日推荐",
-                            subtitle: dailySubtitle,
                             icon: "calendar",
                             coverURL: dailySongs.first?.albumCoverURL,
                             gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
-                                       Color(red: 0.96, green: 0.68, blue: 0.30)]
-                        )
+                                       Color(red: 0.96, green: 0.68, blue: 0.30)])
                     }
                     .buttonStyle(.plain)
 
-                    WellFeatureCard(
-                        title: "私人漫游",
-                        subtitle: "从喜欢的歌开始漫游",
-                        icon: "wave.3.right.circle.fill",
-                        coverURL: nil,
-                        gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
-                                   Color(red: 0.41, green: 0.28, blue: 0.65)]
-                    ) {
+                    Button {
                         Task { await startPersonalFM() }
+                    } label: {
+                        WellActionCard(
+                            title: "私人漫游",
+                            subtitle: "从喜欢的歌开始漫游",
+                            icon: "wave.3.right.circle.fill",
+                            gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                       Color(red: 0.41, green: 0.28, blue: 0.65)])
                     }
+                    .buttonStyle(.plain)
 
-                    WellFeatureCard(
-                        title: "心动模式",
-                        subtitle: "你的红心歌曲和相似推荐",
-                        icon: "heart.circle.fill",
-                        coverURL: nil,
-                        gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
-                                   Color(red: 0.98, green: 0.43, blue: 0.35)]
-                    ) {
+                    Button {
                         Task { await startHeartbeat() }
+                    } label: {
+                        WellActionCard(
+                            title: "心动模式",
+                            subtitle: "你的红心歌曲和相似推荐",
+                            icon: "heart.circle.fill",
+                            gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                                       Color(red: 0.98, green: 0.43, blue: 0.35)])
                     }
+                    .buttonStyle(.plain)
 
                     Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
                 }
+                .frame(height: 112)
                 .padding(.vertical, 4)
             }
-            .modifier(WellHorizontalClipModifier())
         }
-    }
-
-    private var dailySubtitle: String {
-        dailySongs.isEmpty ? "每天 6:00 更新" : "\(dailySongs.count) 首 · 每天 6:00 更新"
     }
 
     /// 私人漫游：连续批次灌入队列（Beans 同款行为 —— 先起播再持续 append）。
@@ -241,8 +246,8 @@ struct DiscoverView: View {
     @ViewBuilder
     private var newAlbumsSection: some View {
         if !newAlbums.isEmpty {
-            WellShelf(title: "新碟上架") {
-                ForEach(newAlbums) { album in
+            WellShelf(title: "新碟上架", rowHeight: 220) {
+                ForEach(Array(newAlbums.enumerated()), id: \.element.id) { index, album in
                     NavigationLink {
                         WellPlaylistDetailView(
                             source: .album(id: album.id, platform: album.platform,
@@ -254,6 +259,7 @@ struct DiscoverView: View {
                                       subtitle: album.artistName)
                     }
                     .buttonStyle(.plain)
+                    .modifier(WellCardEntrance(index: index, itemID: "album-\(album.id)"))
                 }
             }
         }
@@ -271,10 +277,10 @@ struct DiscoverView: View {
                 // ⚠️ 项目铁律：横向货架用 HStack 绝不用 LazyHStack
                 //（LazyHStack 交叉轴测不出高 → 卡片全叠 y=0）
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 14) {
+                    LazyHStack(alignment: .top, spacing: 14) {
                         Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
 
-                        ForEach(toplists.prefix(10)) { top in
+                        ForEach(Array(toplists.prefix(10).enumerated()), id: \.element.id) { index, top in
                             NavigationLink {
                                 WellPlaylistDetailView(
                                     source: .playlist(id: top.id, platform: .netease, name: top.name),
@@ -283,10 +289,12 @@ struct DiscoverView: View {
                                 WellToplistCard(item: top)
                             }
                             .buttonStyle(.plain)
+                            .modifier(WellCardEntrance(index: index, itemID: "top-\(top.id)"))
                         }
 
                         Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
                     }
+                    .frame(height: 200)
                     .padding(.vertical, 4)
                 }
             }
@@ -298,8 +306,9 @@ struct DiscoverView: View {
     @ViewBuilder
     private var artistsSection: some View {
         if !artists.isEmpty {
-            WellShelf(title: "热门歌手") {
-                ForEach(artists) { artist in
+            // 登录网易云 → 关注歌手；未登录 → 热门歌手（kumone 同款逻辑）
+            WellShelf(title: artistSectionTitle, rowHeight: 170) {
+                ForEach(Array(artists.enumerated()), id: \.element.id) { index, artist in
                     NavigationLink {
                         WellPlaylistDetailView(
                             source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
@@ -308,9 +317,14 @@ struct DiscoverView: View {
                         WellArtistCard(artist: artist)
                     }
                     .buttonStyle(.plain)
+                    .modifier(WellCardEntrance(index: index, itemID: "artist-\(artist.id)"))
                 }
             }
         }
+    }
+
+    private var artistSectionTitle: String {
+        NeteaseSession.shared.isLoggedIn ? "关注歌手" : "热门歌手"
     }
 
     // MARK: - 状态视图
@@ -351,80 +365,65 @@ struct DiscoverView: View {
 
 // MARK: - 功能入口卡（每日推荐 / 私人漫游 / 心动模式）
 
-/// 大号入口卡：有封面用封面 + 底部渐变，无封面用品牌渐变 + 图标水印。
-/// `destination` 非空时整卡是 NavigationLink（如每日推荐进列表页），
-/// 否则点按执行 `action`（如私人漫游/心动模式直接起播）。
-struct WellFeatureCard: View {
+/// 横长入口卡（原创设计，与 Beans 的全彩竖卡刻意区分）：
+/// `[64pt 圆角图标块] 标题 / 副标题`，浅色底 + 细描边，与应用整体风格一致。
+/// **纯视觉视图**（不含 Button）：点击行为由外层 NavigationLink / Button 提供，
+/// 避免 label 内嵌 Button 吞掉 NavigationLink 的点击（踩过：每日推荐点不进去）。
+struct WellActionCard: View {
     let title: String
-    let subtitle: String
+    var subtitle: String?
     let icon: String
     var coverURL: String?
     let gradient: [Color]
-    var isLoading: Bool = false
-    var action: () -> Void = {}
-
-    private let width: CGFloat = 160
-    private let height: CGFloat = 160
 
     var body: some View {
-        Button(action: action) { cardBody }
-            .buttonStyle(WellPressButtonStyle())
-            .disabled(isLoading)
-    }
+        HStack(spacing: 14) {
+            iconBlock
 
-    private var cardBody: some View {
-            ZStack(alignment: .bottomLeading) {
-                background
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Image(systemName: icon)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.92))
-
-                    Spacer(minLength: 0)
-
-                    Text(title)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .padding(14)
             }
-            .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .frame(width: 264, height: 88)
+        .background(AppTheme.secondaryBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
+    /// 左侧 64pt 图标块：有封面用封面图，无封面用渐变 + 居中白图标
     @ViewBuilder
-    private var background: some View {
+    private var iconBlock: some View {
+        let base = RoundedRectangle(cornerRadius: 14, style: .continuous)
         if let coverURL, !coverURL.isEmpty {
-            WellRemoteImage(url: coverURL, displaySize: height)
-                .frame(width: width, height: height)
-                .overlay(
-                    LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.62)],
-                                   startPoint: .top, endPoint: .bottom)
-                )
+            WellRemoteImage(url: coverURL, displaySize: 64)
+                .frame(width: 64, height: 64)
+                .clipShape(base)
         } else {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            base
                 .fill(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay(alignment: .topTrailing) {
-                    Circle()
-                        .fill(.white.opacity(0.16))
-                        .frame(width: 92, height: 92)
-                        .blur(radius: 3)
-                        .offset(x: 24, y: -26)
-                }
-                .overlay(alignment: .center) {
+                .frame(width: 64, height: 64)
+                .overlay {
                     Image(systemName: icon)
-                        .font(.system(size: 46, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.28))
-                        .offset(x: 34, y: -18)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
         }
     }

@@ -77,6 +77,9 @@ struct WellShelf<Content: View>: View {
     /// 可选副标题（发现页的编辑式说明），透传给分区标题。
     var subtitle: String?
     var action: (() -> Void)?
+    /// 提供时用 `LazyHStack` + 固定行高（kumone Shelf 同款：卡片懒创建，
+    /// 竖向滚动时只实例化可视卡片）。nil 时退回普通 `HStack`。
+    var rowHeight: CGFloat?
     @ViewBuilder var content: () -> Content
 
     private let spacing: CGFloat = 14
@@ -86,25 +89,79 @@ struct WellShelf<Content: View>: View {
             WellSectionHeader(title: title, subtitle: subtitle, action: action)
                 .padding(.horizontal, WellSearchMetrics.contentInset)
             ScrollView(.horizontal, showsIndicators: false) {
-                // ⚠️ 这里**必须用 `HStack`，不能换成 `LazyHStack`**。
-                //
-                // 横向 ScrollView 里放 Lazy 栈时，栈在「交叉轴」（高度）上不是立刻可测的，
-                // 外层竖向布局拿不到货架高度 → 每个货架都被算成 0 高，四个货架**全部叠在
-                // 同一个 y 位置上**（封面、歌手圆头像糊成一团）。这是实测踩过的坑。
-                //
-                // 首屏图太多的性能问题不靠懒加载解决：真正的解法是按显示尺寸向图床要缩图
-                // （见 `WellArtworkURL`），一张封面从 4 MB 降到 0.56 MB。
-                HStack(alignment: .top, spacing: spacing) {
-                    Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
-                    content()
-                    Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
-                }
-                .padding(.vertical, 4)
+                cards
+                    .padding(.vertical, 4)
             }
             // 刻意**不加** `.scrollClipDisabled()`：关掉裁剪会让滚动时画面外的内容
             // 也参与渲染，横向滑动明显更吃性能；本项目的卡片没有外发光/外阴影，
             // 不需要靠关裁剪来露出来。
         }
+    }
+
+    // ⚠️ Lazy 栈只有在**外层给了固定行高**时才能安全使用（交叉轴可测）；
+    // 这正是 kumone Shelf 传 rowHeight 的原因 —— 懒加载与不塌陷兼得。
+    @ViewBuilder
+    private var cards: some View {
+        if let rowHeight {
+            LazyHStack(alignment: .top, spacing: spacing) {
+                edgeInset
+                content()
+                edgeInset
+            }
+            .frame(height: rowHeight)
+        } else {
+            HStack(alignment: .top, spacing: spacing) {
+                edgeInset
+                content()
+                edgeInset
+            }
+        }
+    }
+
+    private var edgeInset: some View {
+        Color.clear.frame(width: max(0, WellSearchMetrics.contentInset - spacing), height: 1)
+    }
+}
+
+// MARK: - 卡片上浮进场动画（kumone StaggeredAppearance 同款行为，代码原创）
+
+/// 卡片首次滚入可视区时从下方 16pt 上浮 + 淡入；同一张卡只播一次
+/// （`AnimationCache` 按 itemID 去重，防止来回滚动反复动画）。
+private enum WellCardEntranceCache {
+    nonisolated(unsafe) static var animated = Set<String>()
+
+    static func hasAnimated(_ key: String) -> Bool { animated.contains(key) }
+
+    static func markAnimated(_ key: String) {
+        if animated.count > 600 { animated.removeAll() }
+        animated.insert(key)
+    }
+}
+
+struct WellCardEntrance: ViewModifier {
+    let index: Int
+    let itemID: String
+
+    @State private var isVisible = false
+
+    private static let staggerDelay = 0.04
+    private static let maxStaggerDelay = 0.4
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(y: isVisible ? 0 : 16)
+            .onAppear {
+                guard !WellCardEntranceCache.hasAnimated(itemID) else {
+                    isVisible = true
+                    return
+                }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)
+                    .delay(min(Double(index) * Self.staggerDelay, Self.maxStaggerDelay))) {
+                    isVisible = true
+                }
+                WellCardEntranceCache.markAnimated(itemID)
+            }
     }
 }
 
@@ -143,7 +200,7 @@ struct WellCoverCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .bottomTrailing) {
                 artwork
                 if playCount > 0 {
                     WellPlayCountBadge(count: playCount)

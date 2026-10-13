@@ -229,6 +229,18 @@ final class NeteaseMusicAPI {
         var songs: [Song]?
     }
 
+    /// `api/artist/sublist`（关注歌手）响应
+    private struct FollowedArtistsResponse: Decodable {
+        var code: Int?
+        var count: Int?
+        var data: [FollowedArtist]?
+        struct FollowedArtist: Decodable {
+            var id: Int?
+            var name: String?
+            var picUrl: String?
+        }
+    }
+
     private struct ToplistItem: Decodable {
         var id: Int?
         var name: String?
@@ -678,6 +690,18 @@ final class NeteaseMusicAPI {
         let resp: TopArtistsResponse = try await Self.apiRequest(
             "api/toplist/artist", params: params, type: TopArtistsResponse.self)
         return (resp.list?.artists ?? []).compactMap(Self.mapArtist)
+    }
+
+    /// 关注的歌手（需登录，`api/artist/sublist` 明文可用）
+    func followedArtists(limit: Int = 30) async throws -> [WellArtistSummary] {
+        let params: [String: Any] = ["limit": limit, "offset": 0, "csrf_token": ""]
+        let resp: FollowedArtistsResponse = try await Self.apiRequest(
+            "api/artist/sublist", params: params, type: FollowedArtistsResponse.self)
+        return (resp.data ?? []).compactMap { item in
+            guard let id = item.id, let name = item.name else { return nil }
+            return WellArtistSummary(id: String(id), name: name, picURL: item.picUrl,
+                                     platform: .netease, mid: nil, subtitle: nil)
+        }
     }
 
     // MARK: 每日推荐 / 私人漫游 / 心动模式
