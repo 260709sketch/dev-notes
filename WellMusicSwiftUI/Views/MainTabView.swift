@@ -64,7 +64,17 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabInterface: some View {
         iOS26TabView
-            .tabBarMinimizeBehavior(.onScrollDown)
+            // ★ 稳定身份（用户 2026-10-13 指令：「Dock 切换抖动」修复之一）：
+            //   播放状态切换时 MiniPlayerAccessoryModifier 的 if/else 会改 modifier 链，
+            //   系统 TabView 若因此被当成新视图重建，底栏会出现白块/抖动。
+            //   固定 id 让 TabView 实例身份恒定，modifier 链变化不再触发重建。
+            .id("well.iOS26Tab")
+            // ⚠️ 刻意**不启用** `.tabBarMinimizeBehavior(.onScrollDown)`：
+            //   它是系统路径下唯一的「滚动 → 底栏形态切换」通道 —— 布局重排若被
+            //   系统误判为滚动，底栏会在【完整 ↔ 最小化】之间抖动重建，底栏区域
+            //   出现白色矩形/闪烁。用户 2026-10-13 指令：所有页面底部白块与
+            //   「Dock 切换抖动」有关——最直接的防御就是不让这个联动存在
+            //   （底栏保持常驻，代价仅为不随滚动收起）。
             // Apply the accessory through a ViewModifier so the TabView keeps a
             // single identity across the hasActiveTrack toggle.
             .modifier(MiniPlayerAccessoryModifier(
@@ -152,8 +162,11 @@ struct MainTabView: View {
         NavigationStack(path: path(for: tab)) {
             content()
         }
-        // ⚠️ 不要加 `.id(tab)` / `.zIndex(...)`：ZStack 里的子视图靠**位置**确定身份，
-        // 四个 page 的位置固定不变，加 `zIndex` 反而会在排序变化时触发子树重建。
+        // ★ 稳定身份（用户 2026-10-13 指令：「补稳定 .id」）。
+        //   跨 opacity 切换保持每个 page 的视图身份恒定，防止任何
+        //   `selectedTab` 变化 / 布局重排把子树当成新视图重建
+        //   （旧注释「不要加 .id」已被此指令取代）。
+        .id(tab)
         .opacity(selectedTab == tab ? 1 : 0)
         .allowsHitTesting(selectedTab == tab)
     }
