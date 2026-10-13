@@ -88,16 +88,20 @@ struct DiscoverView: View {
                 HStack(alignment: .top, spacing: 14) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
 
-                    WellFeatureCard(
-                        title: "每日推荐",
-                        subtitle: dailySubtitle,
-                        icon: "calendar",
-                        coverURL: dailySongs.first?.albumCoverURL,
-                        gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
-                                   Color(red: 0.96, green: 0.68, blue: 0.30)],
-                        useNavigation: true,
-                        destination: { DailyRecommendView() }
-                    )
+                    // 每日推荐：整卡 NavigationLink 进列表页（对齐 kumone DailySongsView）
+                    NavigationLink {
+                        DailyRecommendView()
+                    } label: {
+                        WellFeatureCard(
+                            title: "每日推荐",
+                            subtitle: dailySubtitle,
+                            icon: "calendar",
+                            coverURL: dailySongs.first?.albumCoverURL,
+                            gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
+                                       Color(red: 0.96, green: 0.68, blue: 0.30)]
+                        )
+                    }
+                    .buttonStyle(.plain)
 
                     WellFeatureCard(
                         title: "私人漫游",
@@ -312,22 +316,14 @@ struct WellFeatureCard: View {
     let gradient: [Color]
     var isLoading: Bool = false
     var action: () -> Void = {}
-    /// true = 整卡 NavigationLink 进 `destination`（每日推荐列表页）；false = 点按执行 `action`
-    var useNavigation: Bool = false
-    var destination: () -> some View = { EmptyView() }
 
     private let width: CGFloat = 160
     private let height: CGFloat = 160
 
     var body: some View {
-        if useNavigation {
-            NavigationLink { destination() } label: { cardBody }
-                .buttonStyle(WellPressButtonStyle())
-        } else {
-            Button(action: action) { cardBody }
-                .buttonStyle(WellPressButtonStyle())
-                .disabled(isLoading)
-        }
+        Button(action: action) { cardBody }
+            .buttonStyle(WellPressButtonStyle())
+            .disabled(isLoading)
     }
 
     private var cardBody: some View {

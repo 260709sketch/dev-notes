@@ -100,10 +100,18 @@ struct MyPlaylistsView: View {
         .navigationTitle("我的歌单")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingCreate = true
-                } label: {
-                    Image(systemName: "plus")
+                HStack(spacing: 14) {
+                    // 导入歌单（网易云 / QQ 音乐链接 → 本地歌单）
+                    NavigationLink {
+                        PlaylistImportView()
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    Button {
+                        showingCreate = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
         }
