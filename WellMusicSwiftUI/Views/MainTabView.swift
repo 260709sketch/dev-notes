@@ -19,6 +19,9 @@ struct MainTabView: View {
     private var player: PlayerCore { PlayerCore.shared }
     @State private var hasActiveTrack = false
 
+    /// 启动动画（对应 kumone `hasAppeared`）：首帧后从底部上浮 + 淡入
+    @State private var hasAppeared = false
+
     /// 四个 Tab 各自的导航路径。
     ///
     /// 每个 tab 一条独立路径，互不干扰：在「发现」里 push 的详情页不会影响
@@ -30,22 +33,35 @@ struct MainTabView: View {
     @State private var profilePath: [Destination] = []
 
     var body: some View {
-        tabInterface
-            // ⚠️ 这里**不要**挂任何 toolbar/chrome 相关的 SwiftUI modifier：
-            //   实测 `toolbarBackgroundVisibility(.hidden, for: .automatic)`
-            //   会把导航栏样式弄坏（标题漂浮）且**修不掉**白边（对系统 TabView 的
-            //   UITabBar/UINavigationBar 背景层无效）。
-            //   白边的真正移除在 UIKit 层 —— WellMusicAppDelegate
-            //   `removeChromeBackgrounds()`（UINavigationBar/UITabBarAppearance
-            //   全状态 configureWithTransparentBackground）。
+        appContent
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
+            // 启动动画：从底部上浮 + 淡入（与 kumone IOSMainWindow.body 同款结构）
+            .offset(y: hasAppeared ? 0 : 24)
+            .opacity(hasAppeared ? 1 : 0)
+            .onAppear {
+                // 延迟 50ms，等视图布局完成后再触发，避免和其他动画冲突
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.easeOut(duration: 0.45)) {
+                        hasAppeared = true
+                    }
+                }
+                hasActiveTrack = player.hasActiveTrack
+            }
             .onReceive(player.$hasActiveTrack) { value in
                 if hasActiveTrack != value { hasActiveTrack = value }
             }
-            .onAppear { hasActiveTrack = player.hasActiveTrack }
+    }
+
+    /// 主内容（对应 kumone 的 `appContent`）：Tab 界面本体。
+    ///
+    /// ⚠️ 这里**不要**挂任何 toolbar/chrome 相关的 SwiftUI modifier：
+    /// 实测 `toolbarBackgroundVisibility(.hidden, for: .automatic)` 会把导航栏
+    /// 样式弄坏（标题漂浮）且修不掉白边（对系统 TabView 的 bar 背景层无效）。
+    private var appContent: some View {
+        tabInterface
     }
 
     @ViewBuilder
@@ -87,21 +103,20 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
+            // 与 kumone 同构：每个 Tab 内容 = `tabStack(页面)`（NavigationStack 在 tabStack 里）
             Tab("主页", systemImage: "house.fill", value: WellTab.radio) {
-                // 原生 TabView 不提供导航容器，这里同样由我们补上
-                // （页面自身已不带 NavigationStack，见 `page(_:_:)`）。
-                NavigationStack(path: $radioPath) { DiscoverView() }
+                tabStack(.radio) { DiscoverView() }
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                NavigationStack(path: $favoritesPath) { FavoritesView() }
+                tabStack(.favorites) { FavoritesView() }
             }
             Tab(value: WellTab.search, role: .search) {
-                NavigationStack(path: $searchPath) { SearchView() }
+                tabStack(.search) { SearchView() }
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                NavigationStack(path: $profilePath) { ProfileView() }
+                tabStack(.profile) { ProfileView() }
             }
         }
     }
@@ -115,10 +130,12 @@ struct MainTabView: View {
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                page(.favorites) { FavoritesView() }
-                page(.profile) { ProfileView() }
-                page(.radio) { DiscoverView() }
-                page(.search) { SearchView() }
+                // 与 kumone 同构：page(容器) { tabStack(页面) }，
+                // NavigationStack 在 tabStack 里、page 只管透明度与层级。
+                page(.favorites) { tabStack(.favorites) { FavoritesView() } }
+                page(.profile) { tabStack(.profile) { ProfileView() } }
+                page(.radio) { tabStack(.radio) { DiscoverView() } }
+                page(.search) { tabStack(.search) { SearchView() } }
             }
             // 内层 ZStack 撑满可用空间，把每个页面约束到同一尺寸，
             // 避免切换时因各页内容高度不同而让整棵树上下位移。
@@ -143,32 +160,24 @@ struct MainTabView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
-    /// 一个 Tab 的页面：导航容器 + 常驻切换。
-    ///
-    /// ⚠️ 这里是「切页时大标题与整页跳一下」的修复点。
-    ///
-    /// 原先的写法是每个页面（`RadioView` / `FavoritesView` / `ProfileView` /
-    /// `SearchView`）**各自**在 `body` 里包一个 `NavigationStack` 并设 `navigationTitle`，
-    /// 再由 `page()` 用 `opacity` 在 `ZStack` 里切换可见性。问题在于：
-    /// 四个 `NavigationStack` 同时存在于视图树中，每个都要独立维护自己的导航栏几何
-    /// （大标题的展开/收起、安全区、滚动内容偏移）。切换可见性时，四个导航栏一起
-    /// 重新测量，于是标题和整页都会跳一下。
-    ///
-    /// 正确结构是：**导航容器在切换层之外稳定存在**，页面只作为其内容。
-    /// 这样切 tab 只改 `opacity`，完全不触碰导航栏结构。每个 tab 配一条独立的
-    /// `NavigationPath`，各自的 push 记录互不干扰。
+    /// 一个 Tab 的导航容器（与 kumone `tabStack` 同构）。
     @ViewBuilder
-    private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
+    private func tabStack<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
         NavigationStack(path: path(for: tab)) {
             content()
         }
-        // ★ 稳定身份（用户 2026-10-13 指令：「补稳定 .id」）。
-        //   跨 opacity 切换保持每个 page 的视图身份恒定，防止任何
-        //   `selectedTab` 变化 / 布局重排把子树当成新视图重建
-        //   （旧注释「不要加 .id」已被此指令取代）。
-        .id(tab)
-        .opacity(selectedTab == tab ? 1 : 0)
-        .allowsHitTesting(selectedTab == tab)
+    }
+
+    /// 一个 Tab 的页面容器（与 kumone `page` 同构）：
+    /// **只做透明度 + 命中测试 + 层级**，导航容器已由 `tabStack` 提供。
+    @ViewBuilder
+    private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            // ★ 稳定身份（用户 2026-10-13 指令：「补稳定 .id」）
+            .id(tab)
+            .opacity(selectedTab == tab ? 1 : 0)
+            .allowsHitTesting(selectedTab == tab)
+            .zIndex(selectedTab == tab ? 1 : 0)
     }
 
     /// 每个 Tab 独立的导航路径。
