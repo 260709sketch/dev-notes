@@ -7,7 +7,8 @@ import SwiftUI
 ///   * **每个 Tab 直接挂页面** —— 导航容器（NavigationStack）由各页面自己携带，
 ///     MainTabView 不做任何包裹（此结构为用户实机验证「无白边」的原始形态）。
 ///   * `.tabBarMinimizeBehavior(.onScrollDown)` 开启（与无白边版一致）。
-///   * 无启动动画、无任何 chrome appearance 干预、无任何自加边距。
+///   * 启动动画保留（用户 2026-10-13 指令「这个加上」）；导航栏全透明（用户指令「导航栏保留」）；
+///     无任何自加边距。
 ///   * iOS 16-25 退回自绘毛玻璃胶囊栏 `WellTabBar`（与无白边版一致）。
 ///
 /// 功能注记：页面本体（Discover/Favorites/Search/Profile）、MiniPlayer、
@@ -23,13 +24,27 @@ struct MainTabView: View {
     private var player: PlayerCore { PlayerCore.shared }
     @State private var hasActiveTrack = false
 
+    /// 启动动画状态（对应 kumone `hasAppeared`）：首帧后从底部上浮 + 淡入
+    @State private var hasAppeared = false
+
     var body: some View {
         tabInterface
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
-            .onAppear { hasActiveTrack = player.hasActiveTrack }
+            // 启动动画：从底部上浮 + 淡入（用户 2026-10-13 指令「这个加上」）
+            .offset(y: hasAppeared ? 0 : 24)
+            .opacity(hasAppeared ? 1 : 0)
+            .onAppear {
+                // 延迟 50ms，等视图布局完成后再触发，避免和其他动画冲突
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.easeOut(duration: 0.45)) {
+                        hasAppeared = true
+                    }
+                }
+                hasActiveTrack = player.hasActiveTrack
+            }
             .onReceive(player.$hasActiveTrack) { value in
                 if hasActiveTrack != value { hasActiveTrack = value }
             }
