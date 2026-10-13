@@ -136,7 +136,12 @@ final class NeteaseMusicAPI {
         var picUrl: String?
         var size: Int?
         /// 专辑类型（「专辑 / EP / 单曲」；歌手专辑接口返回，搜索接口可能缺省）
+        ///
+        /// ⚠️ 中英混合：「专辑」是中文，「Single / EP」是英文（周杰伦《即兴曲》
+        /// type="Single"）—— 判 EP/单曲时必须同时匹配英文，见 `WellAlbumSummary.isEPOrSingle`。
         var type: String?
+        /// 发行时间（**毫秒**时间戳；歌手专辑接口返回，搜索接口可能缺省）
+        var publishTime: Int?
         var artist: Artist?
         struct Artist: Decodable { var name: String? }
     }
@@ -174,6 +179,14 @@ final class NeteaseMusicAPI {
     private struct ArtistAlbumsResponse: Decodable {
         var code: Int?
         var hotAlbums: [AlbumItem]?
+        /// 是否还有下一页。该接口**没有 total 字段**，offset 分页只能靠它 + 空页判断。
+        var more: Bool?
+        /// 平台侧歌手信息：`albumSize` 是平台展示的真实专辑总数（周杰伦 = 44）。
+        var artist: AlbumsArtist?
+        struct AlbumsArtist: Decodable {
+            var albumSize: Int?
+            var musicSize: Int?
+        }
     }
 
     private struct PlaylistDetailResponse: Decodable {
@@ -472,18 +485,46 @@ final class NeteaseMusicAPI {
         return merged
     }
 
-    /// 歌手专辑列表（歌手详情页用）。
-    func artistAlbums(id: String, limit: Int = 50) async throws -> [WellAlbumSummary] {
-        let resp: ArtistAlbumsResponse = try await Self.apiRequest(
-            "api/artist/albums/\(id)", params: ["limit": limit, "offset": 0, "total": true, "csrf_token": ""],
-            type: ArtistAlbumsResponse.self)
-        return (resp.hotAlbums ?? []).compactMap { al in
-            guard let id = al.id, let name = al.name else { return nil }
-            return WellAlbumSummary(
-                id: "\(id)", name: name, picURL: al.picUrl,
-                artistName: al.artist?.name ?? "未知歌手", platform: .netease, albumMid: nil,
-                albumType: al.type)
+    /// 歌手专辑列表（歌手主页 / 歌手搜索详情页用）。
+    ///
+    /// ## 为什么必须翻页（2026-10-14 用户反馈「专辑和平台不对、少很多」）
+    ///
+    /// `api/artist/albums/<id>` 单页最多 50 条，且**响应里没有 total 字段** ——
+    /// 旧实现只取第一页，周杰伦（44 张）刚好够，但刘德华 / 张学友这类
+    /// 超过 50 张的歌手直接少一半。只能靠 `offset` 推进 + `more` 布尔判断结尾
+    /// （实测：周杰伦 44 张、more=false 收尾；类型中英混合 专辑26/Single16/EP2）。
+    ///
+    /// - Returns: 全量专辑 + 平台侧专辑总数（`artist.albumSize`，头部统计行用；
+    ///   接口没给时为 nil，调用方应回落到 `albums.count`）。
+    func artistAlbums(id: String) async throws -> (albums: [WellAlbumSummary], platformAlbumCount: Int?) {
+        let pageSize = 50
+        // 兜底上限 20 页（1000 张）：防止接口异常（more=true 但一直返空页）导致死循环
+        let maxPages = 20
+        var offset = 0
+        var seen = Set<Int>()
+        var summaries: [WellAlbumSummary] = []
+        var platformAlbumCount: Int?
+
+        for _ in 0..<maxPages {
+            let resp: ArtistAlbumsResponse = try await Self.apiRequest(
+                "api/artist/albums/\(id)",
+                params: ["limit": pageSize, "offset": offset, "total": true, "csrf_token": ""],
+                type: ArtistAlbumsResponse.self)
+            if platformAlbumCount == nil { platformAlbumCount = resp.artist?.albumSize }
+            let page = resp.hotAlbums ?? []
+            for al in page {
+                guard let aid = al.id, let name = al.name, !seen.contains(aid) else { continue }
+                seen.insert(aid)
+                summaries.append(WellAlbumSummary(
+                    id: "\(aid)", name: name, picURL: al.picUrl,
+                    artistName: al.artist?.name ?? "未知歌手", platform: .netease, albumMid: nil,
+                    albumType: al.type, publishTime: al.publishTime))
+            }
+            // 没有更多 或 空页（防御：more 缺失时按「页不满」推断结束）
+            if !(resp.more ?? (page.count >= pageSize)) || page.isEmpty { break }
+            offset += page.count
         }
+        return (summaries, platformAlbumCount)
     }
 
     /// 兼容旧调用：仅搜索单曲

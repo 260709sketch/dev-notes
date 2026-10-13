@@ -54,13 +54,46 @@ struct WellAlbumSummary: Identifiable, Hashable {
     /// QQ / 酷狗专辑 mid（部分接口需要）
     var albumMid: String?
     /// 专辑类型（「专辑 / EP / 单曲」；歌手专辑接口返回）。nil 视作「专辑」。
+    ///
+    /// ⚠️ 网易云该字段**中英混合**：「专辑」是中文，「Single / EP」是英文
+    /// （实测周杰伦《即兴曲》type="Single"）。
     var albumType: String?
+    /// 发行时间（**毫秒**时间戳；歌手专辑接口返回，搜索接口缺省时为 nil）
+    var publishTime: Int?
 
-    /// 是否 EP / 单曲（歌手主页分货架用）
+    /// 是否 EP / 单曲（歌手主页分货架用）。
+    ///
+    /// ⚠️ 必须同时匹配英文：网易云 `type` 可能是「Single / EP」（英文），
+    /// 早期只匹配「单曲」把 16 首 Single 错划进了专辑货架（2026-10-14 修复）。
     var isEPOrSingle: Bool {
         guard let albumType else { return false }
-        return albumType.contains("EP") || albumType.contains("单曲")
+        let t = albumType.lowercased()
+        return t.contains("ep") || t.contains("单曲") || t.contains("single")
     }
+
+    /// 专辑类型的中文展示（「专辑 / EP / 单曲」）。
+    var albumTypeText: String {
+        guard let albumType else { return "专辑" }
+        let t = albumType.lowercased()
+        if t.contains("ep") { return "EP" }
+        if t.contains("single") || t.contains("单曲") { return "单曲" }
+        return "专辑"
+    }
+
+    /// 中文发行日期（「2025年6月5日」）；`publishTime` 缺失或 <= 0 时为 nil。
+    var publishDateText: String? {
+        guard let publishTime, publishTime > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(publishTime) / 1000)
+        return Self.publishDateFormatter.string(from: date)
+    }
+
+    private static let publishDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy年M月d日"
+        return formatter
+    }()
 }
 
 /// 搜索结果里的歌单条目。

@@ -80,14 +80,19 @@ struct WellShelf<Content: View>: View {
     /// 提供时用 `LazyHStack` + 固定行高（kumone Shelf 同款：卡片懒创建，
     /// 竖向滚动时只实例化可视卡片）。nil 时退回普通 `HStack`。
     var rowHeight: CGFloat?
+    /// false 时不渲染分区标题（发现页「每日推荐 / 私人漫游 / 心动模式」货架
+    /// 按用户要求去掉「推荐」标题，2026-10-14）。
+    var showsHeader: Bool = true
     @ViewBuilder var content: () -> Content
 
     private let spacing: CGFloat = 14
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            WellSectionHeader(title: title, subtitle: subtitle, action: action)
-                .padding(.horizontal, WellSearchMetrics.contentInset)
+            if showsHeader {
+                WellSectionHeader(title: title, subtitle: subtitle, action: action)
+                    .padding(.horizontal, WellSearchMetrics.contentInset)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 cards
                     .padding(.vertical, 4)

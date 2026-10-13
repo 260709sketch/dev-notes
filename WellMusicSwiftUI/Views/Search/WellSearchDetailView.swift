@@ -115,9 +115,9 @@ struct WellSearchDetailView: View {
         isLoading = true
         tracks = await SearchService.shared.detailTracks(for: source)
 
-        // 歌手主页补充专辑货架（网易云：api/artist/albums 明文可用）
+        // 歌手主页补充专辑货架（网易云：api/artist/albums 明文可用，内部 offset 翻页拉全量）
         if case .artist(let artistId, let platform, _) = source, platform == .netease {
-            albums = (try? await NeteaseMusicAPI.shared.artistAlbums(id: artistId)) ?? []
+            albums = (try? await NeteaseMusicAPI.shared.artistAlbums(id: artistId))?.albums ?? []
         }
 
         isLoading = false

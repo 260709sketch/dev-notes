@@ -2,18 +2,53 @@ import AVFoundation
 import MediaPlayer
 import SwiftUI
 
-/// 音频会话配置（后台播放 + 锁屏控制 + 无损输出的蓝牙/隔空播放策略）
+/// 音频会话配置（后台播放 + 锁屏控制）。
+///
+/// ⚠️ 2026-10-14 修「控制中心不显示正在播放的歌曲」：`.playback` **不传任何
+/// category options**。旧代码带过 `.allowBluetoothA2DP` + `.allowAirPlay`：
+///   * `allowAirPlay`：Apple 文档明确「只能显式用于 PlayAndRecord 类别」，
+///     对 playback 系统本就隐式开启；显式传入在部分 iOS 版本上直接让
+///     `setCategory` 抛错；
+///   * `allowBluetoothA2DP`：文档明确 ambient/soloAmbient/playback 三类
+///     **自动**路由 A2DP，该选项只为 playAndRecord 准备。
+/// 抛出的错误被 `try?` 吞掉后，类别停留在默认 `.soloAmbient` —— 歌照样能放
+/// （铃声开关开着时），但系统不认「正在播放媒体」，控制中心 / 锁屏 / 灵动岛
+/// 什么都没有。这正是用户反馈的症状。
 enum AudioSessionManager {
     static func configure() {
         let session = AVAudioSession.sharedInstance()
-        // allowBluetoothA2DP / allowAirPlay：保证无损音频在蓝牙耳机与隔空播放下不被强制降级
-        try? session.setCategory(.playback, mode: .default,
-                                 options: [.allowBluetoothA2DP, .allowAirPlay])
-        try? session.setActive(true)
+        do {
+            try session.setCategory(.playback, mode: .default)
+        } catch {
+            PlayerDiag.log("音频会话类别设置失败：\(error.localizedDescription)")
+        }
+        do {
+            try session.setActive(true)
+        } catch {
+            PlayerDiag.log("音频会话激活失败：\(error.localizedDescription)")
+        }
     }
 
+    /// 激活会话（每次起播前调用）。
+    ///
+    /// 顺手自愈：类别若被其他组件（如 MPV 音频输出初始化）改跑，拉回 `.playback`，
+    /// 避免「某次之后控制中心突然不显示」的幽灵问题。
     static func activate() {
-        try? AVAudioSession.sharedInstance().setActive(true)
+        let session = AVAudioSession.sharedInstance()
+        if session.category != .playback {
+            let previous = session.category
+            do {
+                try session.setCategory(.playback, mode: .default)
+                PlayerDiag.log("音频会话类别自 \(previous.rawValue) 拉回 playback")
+            } catch {
+                PlayerDiag.log("音频会话类别修复失败：\(error.localizedDescription)")
+            }
+        }
+        do {
+            try session.setActive(true)
+        } catch {
+            PlayerDiag.log("音频会话激活失败：\(error.localizedDescription)")
+        }
     }
 }
 
@@ -116,6 +151,45 @@ final class PlayerCore: NSObject, ObservableObject {
         applyVolume(Self.restoredVolume())
         setupTick()
         setupRemoteCommands()
+        setupAudioSessionObservers()
+    }
+
+    // MARK: 音频会话事件（打断结束 / 媒体服务重置）
+
+    /// 系统事件（来电、闹钟、媒体服务重置）后重新激活音频会话并补写 NowPlaying。
+    ///
+    /// 不自动恢复播放（是否续播由用户决定），只保证「控制中心 / 锁屏链路就绪」——
+    /// 打断结束后系统会把会话挂起，若不重新激活，控制中心里我们的播放卡片会消失。
+    private func setupAudioSessionObservers() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated { self?.handleInterruptionEnded(note) }
+        }
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleMediaServicesReset() }
+        }
+    }
+
+    private func handleInterruptionEnded(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw),
+              type == .ended else { return }
+        PlayerDiag.log("音频会话打断结束 → 重新激活并补写 NowPlaying")
+        AudioSessionManager.activate()
+        updateNowPlaying()
+    }
+
+    private func handleMediaServicesReset() {
+        PlayerDiag.log("媒体服务被重置 → 重新配置音频会话并补写 NowPlaying")
+        AudioSessionManager.configure()
+        updateNowPlaying()
     }
 
     /// 读取持久化音量。
@@ -393,6 +467,9 @@ final class PlayerCore: NSObject, ObservableObject {
 
     private var tickTimer: Timer?
 
+    /// 上一 tick 的渲染态（检测「刚开始渲染」的上升沿，见 tick()）
+    private var wasRenderingAudio = false
+
     /// 上次断流自动恢复的时刻（冷却防死循环）
     private var lastAutoReloadAt: TimeInterval = 0
 
@@ -483,6 +560,15 @@ final class PlayerCore: NSObject, ObservableObject {
         if rendering != isRenderingAudio {
             isRenderingAudio = rendering
         }
+        // ★ 音频真正开始渲染的那一刻（上升沿）重新激活会话并补写 NowPlaying：
+        //   mpv 的音频输出链路可能在 updateNowPlaying 之后才异步初始化（甚至
+        //   重置会话类别），而「有声音可闻」才是控制中心认账的时刻 —— 在这里
+        //   补一刀，保证链路一定挂着我们的播放信息。
+        if rendering, !wasRenderingAudio {
+            AudioSessionManager.activate()
+            updateNowPlaying()
+        }
+        wasRenderingAudio = rendering
         // isPlaying 以引擎真实状态校正（例如系统打断 / 音频路由变化导致的暂停）
         let enginePlaying = !engine.isPaused && !engine.isCoreIdle
         if hasActiveTrack, !isScrubbing, enginePlaying != isPlaying {
@@ -609,7 +695,7 @@ final class PlayerCore: NSObject, ObservableObject {
         } else {
             center.playbackState = .stopped
         }
-        PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration)) state=\(center.playbackState.rawValue)")
+        PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration)) state=\(center.playbackState.rawValue) cat=\(AVAudioSession.sharedInstance().category.rawValue)")
 
         // ③ 封面图：每首歌只异步拉一次（走 WellImageCache 的缩图缓存，与列表/播放页
         //    共用同一份解码结果），到图后补写同一条信息；失败则保持无封面，不影响显示。

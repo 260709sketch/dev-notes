@@ -3,10 +3,11 @@ import SwiftUI
 /// 歌手主页 —— 界面结构对齐 Beans `ArtistHomeSheet`，代码按本项目架构重写。
 ///
 /// 结构：Header（72pt 圆形头像 + 名字 + 统计）
-/// → 热门歌曲（序号前 3 高亮 / 40pt 封面 / 歌名 + VIP / 专辑名，播放全部按钮，页内搜索过滤）
-/// → 专辑 / EP 与单曲 两个横滑货架（160pt 封面 + 名称 + 类型注记）。
+/// → 热门歌曲（序号前 3 高亮 / 40pt 封面 / 歌名 + 专辑名，播放全部按钮，页内搜索过滤）
+/// → 专辑 / EP 与单曲 两个横滑货架（160pt 封面 + 名称 + 中文发行日期）。
 ///
-/// 数据：`artistTopSongs`（热门歌曲）+ `artistAlbums`（专辑，带类型）。
+/// 数据：`artistTopSongs`（热门歌曲，平台返回多少显示多少，不人为截断）
+/// + `artistAlbums`（专辑，offset 翻页拉全量；类型中英混合需一并识别）。
 /// 专辑点击 → 歌单页样式详情（WellPlaylistDetailView）。
 struct WellArtistHomeView: View {
     let artistId: String
@@ -17,6 +18,9 @@ struct WellArtistHomeView: View {
     @State private var resolvedCover: String?
     @State private var hotSongs: [MusicItem] = []
     @State private var albums: [WellAlbumSummary] = []
+    /// 平台侧专辑总数（`artist.albumSize`，如周杰伦 = 44）。
+    /// 头部统计行优先显示它；接口没给时回落到 `albums.count`。
+    @State private var platformAlbumCount: Int?
     @State private var isLoading = true
     @State private var failed = false
     @State private var searchText = ""
@@ -81,7 +85,10 @@ struct WellArtistHomeView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                Text("热门歌曲 \(hotSongs.count) 首 · 专辑 \(albums.count) 张")
+                // 统计行：按平台实际显示（2026-10-14 用户要求）——
+                // 热门歌曲数 = 接口返回条数（网易云固定 50）；
+                // 专辑数 = artist.albumSize（平台真实总数，周杰伦 44）。
+                Text("热门歌曲 \(hotSongs.count) 首 · 专辑 \(platformAlbumCount ?? albums.count) 张")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -144,7 +151,8 @@ struct WellArtistHomeView: View {
         }
     }
 
-    /// 热门歌曲行：`[序号(前3高亮)] [封面40] 歌名+VIP / 专辑名`
+    /// 热门歌曲行：`[序号(前3高亮)] [封面40] 歌名 / 专辑名`
+    /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求）
     private func hotSongRow(index: Int, item: MusicItem) -> some View {
         HStack(spacing: 12) {
             Text("\(index + 1)")
@@ -160,18 +168,12 @@ struct WellArtistHomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(item.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .layoutPriority(1)
-                    if item.isVip {
-                        WellVipBadge()
-                    }
-                }
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                Text(item.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
                 Text(item.album ?? "")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -215,7 +217,9 @@ struct WellArtistHomeView: View {
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                                 .frame(width: 160, alignment: .leading)
-                            Text(album.albumType ?? "专辑")
+                            // 发行日期中文化（「2025年6月5日」）；老数据没有
+                            // publishTime 时回落类型文案（2026-10-14 用户要求）。
+                            Text(album.publishDateText ?? album.albumTypeText)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -259,15 +263,18 @@ struct WellArtistHomeView: View {
         isLoading = true
         failed = false
 
-        // 并发拉热门歌曲 + 专辑（真实接口）；热门歌曲只取前 50 首
+        // 并发拉热门歌曲 + 专辑（真实接口）。
+        // 热门歌曲：平台返回多少就显示多少（网易云固定 50 首），**不再人为截断**。
+        // 专辑：API 内部 offset 翻页拉全量，并带回平台专辑总数。
         async let songsTask = try? NeteaseMusicAPI.shared.artistTopSongs(id: artistId)
-        async let albumsTask = try? NeteaseMusicAPI.shared.artistAlbums(id: artistId, limit: 50)
+        async let albumsTask = try? NeteaseMusicAPI.shared.artistAlbums(id: artistId)
 
         let songs = await songsTask ?? []
-        let fetchedAlbums = await albumsTask ?? []
+        let albumsResult = await albumsTask
 
-        hotSongs = Array(songs.prefix(50))
-        albums = fetchedAlbums
+        hotSongs = songs
+        albums = albumsResult?.albums ?? []
+        platformAlbumCount = albumsResult?.platformAlbumCount
         if resolvedName.isEmpty { resolvedName = artistName }
         if resolvedCover == nil { resolvedCover = coverURL ?? songs.first?.albumCoverURL }
 

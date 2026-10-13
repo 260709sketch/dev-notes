@@ -103,20 +103,26 @@ struct WellPlaylistDetailView: View {
         // 封面主色模糊渐变铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
         // → 搜索行 → 无分隔线歌曲列表。
         ZStack(alignment: .top) {
-            // ★ 封面模糊延伸背景：同一张封面拉满全屏 + 大半径模糊，
-            //   从封面下缘开始渐变过渡到系统背景色 —— Apple Music 标志性效果。
-            //   固定不随滚动（滚动跟随需要 scrollClipDisabled，性能铁律禁用）。
+            // ★ 封面高斯模糊背景（Apple Music「每日推荐」同款融底效果）：
+            //   同一张封面铺满**全屏** + 大半径高斯模糊，渐隐从**大封面下缘**
+            //   开始、屏高 80% 前收到底色 —— dock / mini player 落在纯色上。
+            //   ⚠️ 旧版图层只有 1.9 倍屏宽高，会在底栏上方戛然截止，
+            //   截图表现为「dock 周围一块模糊断带」（2026-10-14 用户反馈）。
+            //   模糊层垫在最底（ZStack 第一层），固定不随滚动（滚动跟随需要
+            //   scrollClipDisabled，性能铁律禁用）。
             GeometryReader { geo in
                 WellRemoteImage(url: headerCoverURL, displaySize: 720)
-                    .frame(width: geo.size.width, height: geo.size.width * 1.9)
+                    .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
-                    .blur(radius: 55)
+                    .blur(radius: 80)
                     .overlay(
-                        LinearGradient(colors: [.clear, bgFadeColor.opacity(0.55), bgFadeColor],
-                                       startPoint: .top, endPoint: .bottom)
+                        LinearGradient(
+                            stops: backdropStops(width: geo.size.width, height: geo.size.height),
+                            startPoint: .top,
+                            endPoint: .bottom)
                     )
-                    .ignoresSafeArea(edges: .top)
             }
+            .ignoresSafeArea()
             .allowsHitTesting(false)
 
             ScrollView {
@@ -149,6 +155,25 @@ struct WellPlaylistDetailView: View {
 
     /// 模糊背景向下渐变的目标色（跟随系统深浅色）
     private var bgFadeColor: Color { Color(uiColor: .systemBackground) }
+
+    /// 背景渐隐断点：大封面是全宽**方图**，下缘在 y = 屏宽处（占屏高 width/height）。
+    ///
+    /// * `clear` 保持到封面下缘 —— 封面上方区域被封面本身盖住（滚动时才露出），
+    ///   下缘处模糊 artwork 与封面同源同位置，只有清晰度突变，颜色连续；
+    /// * 之后经 ~45% 底纹过渡，**屏高 80% 前收到纯底色** —— dock / mini player
+    ///   区域落在纯色上，不会再出现「模糊层在底栏上方截止」的断带；
+    /// * 小屏（封面占屏高比例大）时自动夹取，保证渐隐区间不塌缩。
+    private func backdropStops(width: CGFloat, height: CGFloat) -> [Gradient.Stop] {
+        let edge = height > 0 ? min(max(width / height, 0.25), 0.6) : 0.45
+        let fadeEnd = min(edge + 0.34, 0.80)
+        let mid = edge + (fadeEnd - edge) * 0.45
+        return [
+            .init(color: .clear, location: 0),
+            .init(color: .clear, location: edge),
+            .init(color: bgFadeColor.opacity(0.45), location: mid),
+            .init(color: bgFadeColor, location: fadeEnd),
+        ]
+    }
 
     // MARK: - 全宽大封面
 

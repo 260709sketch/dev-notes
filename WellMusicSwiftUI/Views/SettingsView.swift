@@ -60,6 +60,14 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
+
+                    // 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡样式（2026-10-14）
+                    Picker("发现页入口卡", selection: $settings.dailyCardStyle) {
+                        ForEach(WellDailyCardStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
                 }
 
                 Section("关于") {

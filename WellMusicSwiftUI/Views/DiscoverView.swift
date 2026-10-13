@@ -3,7 +3,9 @@ import SwiftUI
 /// 发现页（首页）—— 对齐 Beans 的发现页板块，代码按本项目架构重写。
 ///
 /// 板块（自上而下）：
-/// 1. `dailySection`  每日推荐：横滑入口卡（每日推荐 / 私人漫游 / 心动模式）
+/// 1. `dailySection`  每日推荐：横滑入口卡（每日推荐 / 私人漫游 / 心动模式），
+///    两种样式按设置「发现页入口卡」切换（封面方卡 156pt / 经典横卡 264×88），
+///    均无分区标题
 /// 2. `newAlbumsSection` 新碟上架：横滑专辑卡
 /// 3. `toplistsSection` 排行榜：竖排榜单行
 /// 4. `artistsSection` 热门歌手：圆形横滑
@@ -113,61 +115,122 @@ struct DiscoverView: View {
 
     // MARK: - 每日推荐（含私人漫游 / 心动模式入口）
 
+    /// 两种卡片样式按设置切换（用户 2026-10-14：两种都保留、设置里可换）：
+    /// - `.cover`：与「推荐歌单」货架同尺寸的 156pt 方图卡（`WellFeatureCard`）
+    /// - `.action`：经典 264×88 横卡（`WellActionCard`）
+    ///
+    /// 两种样式都**不渲染分区标题**（「推荐」标题按用户要求去除）。
+    @AppStorage("wellmusic.discover.dailyCardStyle") private var dailyCardStyle: WellDailyCardStyle = .cover
+
+    @ViewBuilder
     private var dailySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            WellSectionHeader(title: "推荐")
-                .padding(.horizontal, WellSearchMetrics.contentInset)
+        if dailyCardStyle == .cover {
+            dailyCoverSection
+        } else {
+            dailyActionSection
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 14) {
-                    Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
-
-                    // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
-                    // 数据走 dailyRecommendSongs），不是直接播放
-                    NavigationLink {
-                        WellPlaylistDetailView(
-                            source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
-                            coverURL: nil,
-                            dailyMode: true)
-                    } label: {
-                        WellActionCard(
-                            title: "每日推荐",
-                            icon: "calendar",
-                            coverURL: dailySongs.first?.albumCoverURL,
-                            gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
-                                       Color(red: 0.96, green: 0.68, blue: 0.30)])
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        Task { await startPersonalFM() }
-                    } label: {
-                        WellActionCard(
-                            title: "私人漫游",
-                            subtitle: "从喜欢的歌开始漫游",
-                            icon: "wave.3.right.circle.fill",
-                            gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
-                                       Color(red: 0.41, green: 0.28, blue: 0.65)])
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        Task { await startHeartbeat() }
-                    } label: {
-                        WellActionCard(
-                            title: "心动模式",
-                            subtitle: "你的红心歌曲和相似推荐",
-                            icon: "heart.circle.fill",
-                            gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
-                                       Color(red: 0.98, green: 0.43, blue: 0.35)])
-                    }
-                    .buttonStyle(.plain)
-
-                    Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
-                }
-                .frame(height: 112)
-                .padding(.vertical, 4)
+    /// 封面方卡样式：`WellShelf` 统一边缘内衬与懒加载，行高与推荐歌单一致（220）。
+    private var dailyCoverSection: some View {
+        WellShelf(title: "推荐", showsHeader: false, rowHeight: 220) {
+            // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
+            // 数据走 dailyRecommendSongs），不是直接播放
+            NavigationLink {
+                WellPlaylistDetailView(
+                    source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
+                    coverURL: nil,
+                    dailyMode: true)
+            } label: {
+                WellFeatureCard(
+                    title: "每日推荐",
+                    icon: "calendar",
+                    coverURL: dailySongs.first?.albumCoverURL,
+                    gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
+                               Color(red: 0.96, green: 0.68, blue: 0.30)])
             }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 0, itemID: "daily-rec"))
+
+            Button {
+                Task { await startPersonalFM() }
+            } label: {
+                WellFeatureCard(
+                    title: "私人漫游",
+                    subtitle: "从喜欢的歌开始漫游",
+                    icon: "wave.3.right.circle.fill",
+                    gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                               Color(red: 0.41, green: 0.28, blue: 0.65)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 1, itemID: "daily-fm"))
+
+            Button {
+                Task { await startHeartbeat() }
+            } label: {
+                WellFeatureCard(
+                    title: "心动模式",
+                    subtitle: "你的红心歌曲和相似推荐",
+                    icon: "heart.circle.fill",
+                    gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                               Color(red: 0.98, green: 0.43, blue: 0.35)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 2, itemID: "daily-heartbeat"))
+        }
+    }
+
+    /// 经典横卡样式：264×88 入口卡（`WellActionCard`），同样不带「推荐」标题。
+    private var dailyActionSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 14) {
+                Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
+
+                // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
+                // 数据走 dailyRecommendSongs），不是直接播放
+                NavigationLink {
+                    WellPlaylistDetailView(
+                        source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
+                        coverURL: nil,
+                        dailyMode: true)
+                } label: {
+                    WellActionCard(
+                        title: "每日推荐",
+                        icon: "calendar",
+                        coverURL: dailySongs.first?.albumCoverURL,
+                        gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
+                                   Color(red: 0.96, green: 0.68, blue: 0.30)])
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Task { await startPersonalFM() }
+                } label: {
+                    WellActionCard(
+                        title: "私人漫游",
+                        subtitle: "从喜欢的歌开始漫游",
+                        icon: "wave.3.right.circle.fill",
+                        gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                   Color(red: 0.41, green: 0.28, blue: 0.65)])
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Task { await startHeartbeat() }
+                } label: {
+                    WellActionCard(
+                        title: "心动模式",
+                        subtitle: "你的红心歌曲和相似推荐",
+                        icon: "heart.circle.fill",
+                        gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                                   Color(red: 0.98, green: 0.43, blue: 0.35)])
+                }
+                .buttonStyle(.plain)
+
+                Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
+            }
+            .frame(height: 112)
+            .padding(.vertical, 4)
         }
     }
 
@@ -364,8 +427,11 @@ struct DiscoverView: View {
 
 // MARK: - 功能入口卡（每日推荐 / 私人漫游 / 心动模式）
 
-/// 横长入口卡（原创设计，与 Beans 的全彩竖卡刻意区分）：
-/// `[64pt 圆角图标块] 标题 / 副标题`，浅色底 + 细描边，与应用整体风格一致。
+/// 经典横长入口卡（264×88）：`[64pt 圆角图标块] 标题 / 副标题`，
+/// 浅色底 + 细描边，与应用整体风格一致。
+///
+/// 与 `WellFeatureCard`（封面方卡）并存，按设置项「发现页入口卡」切换
+/// （用户 2026-10-14：两种样式都保留）。
 /// **纯视觉视图**（不含 Button）：点击行为由外层 NavigationLink / Button 提供，
 /// 避免 label 内嵌 Button 吞掉 NavigationLink 的点击（踩过：每日推荐点不进去）。
 struct WellActionCard: View {
@@ -422,6 +488,68 @@ struct WellActionCard: View {
                 .overlay {
                     Image(systemName: icon)
                         .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+        }
+    }
+}
+
+/// 方图入口卡，与「推荐歌单」货架的 `WellCoverCard` **同尺寸**
+/// （`WellSearchMetrics.cardSize` = 156pt 方图 + 图下标题/副标题）——
+/// 用户 2026-10-14 明确要求这三张卡和推荐歌单一样的长度宽度。
+///
+/// 有封面用封面图（每日推荐取当日首曲封面），无封面用渐变底 + 居中
+/// 白色 SF Symbol（Apple Music 同类入口的观感）。
+/// **纯视觉视图**（不含 Button）：点击行为由外层 NavigationLink / Button 提供，
+/// 避免 label 内嵌 Button 吞掉 NavigationLink 的点击（踩过：每日推荐点不进去）。
+struct WellFeatureCard: View {
+    let title: String
+    var subtitle: String?
+    let icon: String
+    var coverURL: String?
+    let gradient: [Color]
+
+    private let size: CGFloat = WellSearchMetrics.cardSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            artwork
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                )
+
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: size)
+        .contentShape(Rectangle())
+    }
+
+    /// 156pt 方图：有封面用封面图，无封面用渐变 + 居中白图标（44pt）。
+    @ViewBuilder
+    private var artwork: some View {
+        let base = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        if let coverURL, !coverURL.isEmpty {
+            WellRemoteImage(url: coverURL, displaySize: size)
+                .frame(width: size, height: size)
+                .clipShape(base)
+        } else {
+            base
+                .fill(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: size, height: size)
+                .overlay {
+                    Image(systemName: icon)
+                        .font(.system(size: 44, weight: .medium))
                         .foregroundStyle(.white)
                 }
         }

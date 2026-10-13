@@ -181,6 +181,28 @@ enum WellAppTheme: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - WellDailyCardStyle
+/// 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡的样式。
+///
+/// 两种样式都保留、设置里可切换（用户 2026-10-14 要求：
+/// 「每日推荐和心动模式卡片样式先别清理留着在设置可以切换」）。
+enum WellDailyCardStyle: String, CaseIterable, Identifiable {
+    /// 封面方卡：与「推荐歌单」货架同尺寸（156pt 方图 + 图下标题），
+    /// 有封面用封面图，无封面用渐变 + 居中白图标。
+    case cover
+    /// 经典横卡：`[64pt 圆角图标块] 标题 / 副标题`（264×88）。
+    case action
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .cover: return "封面方卡"
+        case .action: return "经典横卡"
+        }
+    }
+}
+
 // MARK: - NowPlayingMode
 /// 「正在播放」页的形态。回迁自 Kumone / wellam 的 NowPlayingMode。
 ///
@@ -240,6 +262,11 @@ final class SettingsManager: ObservableObject {
 
     /// 应用外观主题（深色 / 浅色 / 跟随系统）
     @AppStorage("wellmusic.appTheme") var appTheme: WellAppTheme = .system
+
+    // MARK: - 发现页
+
+    /// 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡样式（封面方卡 / 经典横卡）
+    @AppStorage("wellmusic.discover.dailyCardStyle") var dailyCardStyle: WellDailyCardStyle = .cover
 
     // MARK: - Lyrics
 
