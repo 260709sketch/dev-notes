@@ -56,6 +56,49 @@ final class OrientationManager {
 final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        Self.removeChromeBackgrounds()
+        return true
+    }
+
+    /// ★★★ 移除顶部 / 底部「白色遮挡块」的最终手段（UIKit 层）。
+    ///
+    /// 现象（用户真机实测）：播放页外的主界面，顶部 nav bar 区域与底部
+    /// tab bar 区域各有一块**不透明白色**，把滚动到这些区域的内容硬挡住。
+    /// SwiftUI 的 `toolbarBackground(.hidden)` / `toolbarBackgroundVisibility(.hidden)`
+    /// 对「系统 TabView + NavigationStack」组合下的 bar 背景无效。
+    ///
+    /// 这里直接把 `UINavigationBar` / `UITabBar` 的全部 appearance 换成
+    /// **完全透明背景**（configureWithTransparentBackground），bar 上的标题与
+    /// 图标保持可见，背景层整体移除 —— 内容滚动到状态栏 / Home 指示条区域时
+    /// 直接透出，不再被白块遮挡（沉浸式，与 kumone 观感一致）。
+    private static func removeChromeBackgrounds() {
+        // nav bar：全状态（standard / scrollEdge / compact）透明
+        let nav = UINavigationBarAppearance()
+        nav.configureWithTransparentBackground()
+        nav.backgroundColor = .clear
+        nav.backgroundEffect = nil
+        nav.shadowColor = .clear
+        let navBar = UINavigationBar.appearance()
+        navBar.standardAppearance = nav
+        navBar.scrollEdgeAppearance = nav
+        navBar.compactAppearance = nav
+        navBar.compactScrollEdgeAppearance = nav
+
+        // tab bar：全状态（standard / scrollEdge）透明
+        let tab = UITabBarAppearance()
+        tab.configureWithTransparentBackground()
+        tab.backgroundColor = .clear
+        tab.backgroundEffect = nil
+        tab.shadowColor = .clear
+        let tabBar = UITabBar.appearance()
+        tabBar.standardAppearance = tab
+        tabBar.scrollEdgeAppearance = tab
+    }
+
+    func application(
+        _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         OrientationSnapshot.mask

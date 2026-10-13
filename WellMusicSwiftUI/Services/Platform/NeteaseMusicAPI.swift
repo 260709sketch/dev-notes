@@ -550,6 +550,50 @@ final class NeteaseMusicAPI {
         }
     }
 
+    /// 云端「最近播放」（`/api/play-record/song/list`，与 RN 版 v90 同款接口）。
+    ///
+    /// 每条记录的歌曲在 `entry.data`（标准 song 对象 ar/al/dt），另带 `playTime`；
+    /// 接口按播放时间倒序返回。响应结构做了双通道兼容：
+    /// `data.list`（包一层）或 `data` 直接是数组，两种都吃。
+    /// 需要登录 Cookie（apiRequest 自动携带）。
+    func recentSongs(limit: Int = 50) async throws -> [MusicItem] {
+        struct Entry: Decodable {
+            var data: Song?
+            var song: Song?
+            var playTime: Double?
+        }
+        struct ListWrapResp: Decodable {
+            var code: Int?
+            var data: Wrapper?
+            struct Wrapper: Decodable { var list: [Entry]? }
+        }
+        struct ArrayResp: Decodable {
+            var code: Int?
+            var data: [Entry]?
+        }
+        let params: [String: Any] = ["limit": limit, "csrf_token": ""]
+
+        // 通道 1：data.list 包裹结构（RN 版实测的主结构）
+        if let resp: ListWrapResp = try? await Self.apiRequest(
+            "api/play-record/song/list", params: params, type: ListWrapResp.self),
+           let entries = resp.data?.list, !entries.isEmpty {
+            return entries.compactMap { entry -> MusicItem? in
+                guard let song = entry.data ?? entry.song else { return nil }
+                return Self.mapSong(song)
+            }
+        }
+        // 通道 2：data 直接是数组
+        if let resp: ArrayResp = try? await Self.apiRequest(
+            "api/play-record/song/list", params: params, type: ArrayResp.self),
+           let entries = resp.data, !entries.isEmpty {
+            return entries.compactMap { entry -> MusicItem? in
+                guard let song = entry.data ?? entry.song else { return nil }
+                return Self.mapSong(song)
+            }
+        }
+        throw NetworkClient.NetworkError.noData
+    }
+
     // MARK: 发现页（推荐歌单 / 排行榜 / 新碟上架 / 热门歌手）
     //
     // 这几个接口都**不需要登录**，所以发现页在未登录状态下也能有内容 ——

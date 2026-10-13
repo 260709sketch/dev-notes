@@ -320,16 +320,27 @@ struct NeteasePlayRecordView: View {
     }
 }
 
-// MARK: - 最近播放（本地播放历史）
+// MARK: - 最近播放（网易云云端优先，本地历史兜底）
 
 struct RecentPlaysView: View {
     /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
     private var player: PlayerCore { PlayerCore.shared }
     @EnvironmentObject private var appState: AppState
 
+    /// 网易云云端最近播放（登录时拉取；与 RN 版 v90 同款接口）
+    @State private var cloudTracks: [MusicItem] = []
+    @State private var isLoading = true
+
+    /// 展示列表：云端优先（登录且有数据），否则本地播放历史
+    private var displayTracks: [MusicItem] {
+        cloudTracks.isEmpty ? appState.playHistory : cloudTracks
+    }
+
     var body: some View {
         Group {
-            if appState.playHistory.isEmpty {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if displayTracks.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 40))
@@ -338,12 +349,12 @@ struct RecentPlaysView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(appState.playHistory) { item in
+                List(displayTracks) { item in
                     TrackRow(item: item)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            player.play(queue: appState.playHistory,
-                                        startIndex: appState.playHistory.firstIndex(of: item) ?? 0)
+                            player.play(queue: displayTracks,
+                                        startIndex: displayTracks.firstIndex(of: item) ?? 0)
                         }
                 }
                 .listStyle(.plain)
@@ -351,5 +362,18 @@ struct RecentPlaysView: View {
         }
         .navigationTitle("最近播放")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        // 登录时优先拉网易云云端最近播放（RN 版 v90 同款 /api/play-record/song/list）；
+        // 未登录或拉取失败 → 回退到本地播放历史，页面永远不空手。
+        if NeteaseSession.shared.isLoggedIn,
+           let cloud = try? await NeteaseMusicAPI.shared.recentSongs(limit: 100),
+           !cloud.isEmpty {
+            cloudTracks = cloud
+        }
+        isLoading = false
     }
 }

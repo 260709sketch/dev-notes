@@ -154,6 +154,9 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
         if let data = try? JSONEncoder().encode(fetched) {
             UserDefaults.standard.set(data, forKey: Keys.account)
         }
+        // ★ 登录成功（或冷启动校验成功）后自动导入「我喜欢的音乐」为本地歌单。
+        //   与 RN 版行为一致；同账号只导入一次（helper 内部有 uid 标记防重）。
+        Task { await NeteaseLikedAutoImporter.importIfNeeded() }
         return true
     }
 
