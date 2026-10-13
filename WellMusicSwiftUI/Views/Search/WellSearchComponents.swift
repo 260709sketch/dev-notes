@@ -14,12 +14,10 @@ enum WellSearchMetrics {
 struct WellRemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
-    /// 卡片在屏幕上的点尺寸。给了就向图床要对应尺寸的缩图 ——
-    /// 原图 1024×1024 解码就是 4 MB，货架里铺十几张足以把滚动拖垮。
-    var displaySize: CGFloat?
 
     private var resolvedURL: URL? {
-        WellArtworkURL.resolved(url, pixelSize: displaySize.map(WellArtworkURL.pixelSize(forPoints:)))
+        guard let url, !url.isEmpty else { return nil }
+        return URL(string: url)
     }
 
     var body: some View {
@@ -38,21 +36,12 @@ struct WellRemoteImage: View {
 
 struct WellSectionHeader: View {
     let title: String
-    /// 可选的副标题：发现页用它做「编辑精选」式的说明（如「根据你的口味」）。
-    var subtitle: String?
     var action: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 19, weight: .bold))
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            Text(title)
+                .font(.system(size: 19, weight: .bold))
             Spacer()
             if let action {
                 Button(action: action) {
@@ -74,8 +63,6 @@ struct WellSectionHeader: View {
 
 struct WellShelf<Content: View>: View {
     let title: String
-    /// 可选副标题（发现页的编辑式说明），透传给分区标题。
-    var subtitle: String?
     var action: (() -> Void)?
     @ViewBuilder var content: () -> Content
 
@@ -83,17 +70,9 @@ struct WellShelf<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            WellSectionHeader(title: title, subtitle: subtitle, action: action)
+            WellSectionHeader(title: title, action: action)
                 .padding(.horizontal, WellSearchMetrics.contentInset)
             ScrollView(.horizontal, showsIndicators: false) {
-                // ⚠️ 这里**必须用 `HStack`，不能换成 `LazyHStack`**。
-                //
-                // 横向 ScrollView 里放 Lazy 栈时，栈在「交叉轴」（高度）上不是立刻可测的，
-                // 外层竖向布局拿不到货架高度 → 每个货架都被算成 0 高，四个货架**全部叠在
-                // 同一个 y 位置上**（封面、歌手圆头像糊成一团）。这是实测踩过的坑。
-                //
-                // 首屏图太多的性能问题不靠懒加载解决：真正的解法是按显示尺寸向图床要缩图
-                // （见 `WellArtworkURL`），一张封面从 4 MB 降到 0.56 MB。
                 HStack(alignment: .top, spacing: spacing) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - spacing, height: 1)
                     content()
@@ -101,9 +80,19 @@ struct WellShelf<Content: View>: View {
                 }
                 .padding(.vertical, 4)
             }
-            // 刻意**不加** `.scrollClipDisabled()`：关掉裁剪会让滚动时画面外的内容
-            // 也参与渲染，横向滑动明显更吃性能；本项目的卡片没有外发光/外阴影，
-            // 不需要靠关裁剪来露出来。
+            .modifier(WellScrollClipModifier())
+        }
+    }
+}
+
+/// iOS 17+ 允许内容溢出滚动裁剪
+private struct WellScrollClipModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.scrollClipDisabled()
+        } else {
+            content
         }
     }
 }
@@ -170,7 +159,7 @@ struct WellCoverCard: View {
 
     @ViewBuilder
     private var artwork: some View {
-        let base = WellRemoteImage(url: coverURL, displaySize: size)
+        let base = WellRemoteImage(url: coverURL)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -211,7 +200,7 @@ struct WellArtistCard: View {
 
     @ViewBuilder
     private var artwork: some View {
-        let base = WellRemoteImage(url: artist.picURL, displaySize: size)
+        let base = WellRemoteImage(url: artist.picURL)
             .clipShape(Circle())
             .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
         if fillWidth {

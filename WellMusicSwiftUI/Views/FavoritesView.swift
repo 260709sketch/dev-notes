@@ -1,16 +1,9 @@
 import SwiftUI
 
 /// 收藏 Tab：顶部切换 收藏歌曲 / 收藏歌单 / 播放历史，入口自建歌单
-///
-/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
-/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈在视图树里同时存在时，
-/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct FavoritesView: View {
     @EnvironmentObject private var appState: AppState
-    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
-    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
-    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
-    private var player: PlayerCore { PlayerCore.shared }
+    @EnvironmentObject private var player: PlayerCore
     @State private var segment: Segment = .tracks
 
     enum Segment: String, CaseIterable {
@@ -20,28 +13,28 @@ struct FavoritesView: View {
     }
 
     var body: some View {
-        // 导航容器由 MainTabView 的 tabStack() 统一提供（用户 2026-10-13 指令：四页「挪回去」）。
-        VStack(alignment: .leading, spacing: 0) {
-            Picker("", selection: $segment) {
-                ForEach(Segment.allCases, id: \.self) { s in
-                    Text(s.rawValue).tag(s)
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 0) {
+                Picker("", selection: $segment) {
+                    ForEach(Segment.allCases, id: \.self) { s in
+                        Text(s.rawValue).tag(s)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
 
-            List {
-                switch segment {
-                case .tracks: trackRows(appState.favoriteTracks)
-                case .history: trackRows(appState.playHistory)
-                case .playlists: playlistRows
+                List {
+                    switch segment {
+                    case .tracks: trackRows(appState.favoriteTracks)
+                    case .history: trackRows(appState.playHistory)
+                    case .playlists: playlistRows
+                    }
                 }
+                .listStyle(.plain)
             }
-            .listStyle(.plain)
-            // ★ 系统 plain List 背景自动延伸到 chrome 区域下面，不手动干预。
+            .navigationTitle("收藏")
         }
-        .navigationTitle("音乐库")
     }
 
     @ViewBuilder

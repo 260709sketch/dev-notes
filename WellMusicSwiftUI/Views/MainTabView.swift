@@ -1,41 +1,11 @@
-import Combine
 import SwiftUI
 
-/// 主框架（2026-10-13 重写：以用户 10-11 无白边版 `5d7dc59f` 为骨架，功能全套迁入）。
-///
-/// 骨架要点（与无白边版逐字对齐）：
-///   * 每个 Tab = `tabStack()`（NavigationStack 由主框架统一提供）——
-///     用户 2026-10-13 16:20 指令：四个 dock 页「挪回去」，导航容器不放进页面里。
-///   * `.tabBarMinimizeBehavior(.onScrollDown)` 开启（与无白边版一致）。
-///   * 启动动画保留（用户 2026-10-13 指令「这个加上」）；导航栏全透明（用户指令「导航栏保留」）；
-///     无任何自加边距。
-///   * iOS 16-25 退回自绘毛玻璃胶囊栏 `WellTabBar`（与无白边版一致）。
-///
-/// 功能注记：页面本体（Discover/Favorites/Search/Profile）、MiniPlayer、
-/// 播放页路由等全部为当前最新实现（MPV 内核 / 缩图封面 / 新版迷你条），原样迁入。
-///
-/// ⚠️ 性能铁律（踩过，整 App 卡死）：
-/// **这一层绝不能 `@EnvironmentObject` 整个 `PlayerCore`**（currentTime 每 0.05s 推一次）。
-/// 这里只取单例引用（不订阅），用 `onReceive` 只盯 `hasActiveTrack` 这一个粗信号。
+/// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
 struct MainTabView: View {
+    @EnvironmentObject private var player: PlayerCore
+    @EnvironmentObject private var settings: SettingsManager
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
-
-    private var player: PlayerCore { PlayerCore.shared }
-    @State private var hasActiveTrack = false
-
-    /// 启动动画状态（对应 kumone `hasAppeared`）：首帧后从底部上浮 + 淡入
-    @State private var hasAppeared = false
-
-    /// 四个 Tab 各自的导航路径。
-    ///
-    /// 每个 tab 一条独立路径，互不干扰：在「主页」里 push 的详情页不会影响
-    /// 「音乐库」的导航深度。路径由 `MainTabView` 持有（而不是页面自己），
-    /// 这样导航容器可以在 tab 切换时稳定存在。
-    @State private var radioPath: [Destination] = []
-    @State private var favoritesPath: [Destination] = []
-    @State private var searchPath: [Destination] = []
-    @State private var profilePath: [Destination] = []
 
     var body: some View {
         tabInterface
@@ -43,26 +13,12 @@ struct MainTabView: View {
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
-            // 启动动画：从底部上浮 + 淡入（用户 2026-10-13 指令「这个加上」）
-            .offset(y: hasAppeared ? 0 : 24)
-            .opacity(hasAppeared ? 1 : 0)
-            .onAppear {
-                // 延迟 50ms，等视图布局完成后再触发，避免和其他动画冲突
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeOut(duration: 0.45)) {
-                        hasAppeared = true
-                    }
-                }
-                hasActiveTrack = player.hasActiveTrack
-            }
-            .onReceive(player.$hasActiveTrack) { value in
-                if hasActiveTrack != value { hasActiveTrack = value }
-            }
     }
 
     @ViewBuilder
     private var tabInterface: some View {
-        // iOS 26 起一律用系统原生 TabView（系统渲染液态玻璃，性能与观感均为最佳）。
+        // iOS 26 起一律用系统原生 TabView（系统渲染液态玻璃，性能与观感均为最佳），
+        // 不再提供「第三方液态玻璃」选项——自研 shader 效果不如系统原生。
         // iOS 16-25 无原生液态玻璃，退回自绘毛玻璃胶囊栏 WellTabBar。
         if #available(iOS 26.0, *) {
             iOS26TabInterface
@@ -75,57 +31,53 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabInterface: some View {
         iOS26TabView
-            // 与无白边版一致：开启「滚动 → 底栏最小化」
             .tabBarMinimizeBehavior(.onScrollDown)
             // Apply the accessory through a ViewModifier so the TabView keeps a
             // single identity across the hasActiveTrack toggle.
             .modifier(MiniPlayerAccessoryModifier(
-                isActive: hasActiveTrack,
+                isActive: player.hasActiveTrack,
                 onOpenNowPlaying: { showingNowPlaying = true }
             ))
-            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
+            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.hasActiveTrack)
     }
 
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
-            // 每个 Tab = tabStack（NavigationStack 由主框架统一提供）
-            Tab("主页", systemImage: "house.fill", value: WellTab.radio) {
-                tabStack(.radio) { DiscoverView() }
+            Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
+                RadioView()
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                tabStack(.favorites) { FavoritesView() }
+                FavoritesView()
             }
             Tab(value: WellTab.search, role: .search) {
-                tabStack(.search) { SearchView() }
+                SearchView()
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                tabStack(.profile) { ProfileView() }
+                ProfileView()
             }
         }
     }
 
-    /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏（iOS 16-25）
+    /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏
     ///
     /// 4 个页面用 ZStack + opacity 常驻（避免切换时销毁重建状态），但**必须**给每个
     /// 页面稳定 identity —— 否则切换 tab 时 SwiftUI 会把整个 ZStack 重新求值，底栏的
-    /// 液态玻璃层跟着重建，视觉上就是"抖一下"。这里用 `zIndex` + `id` 双固定。
+    /// 液态玻璃层跟着重建，视觉上就是“抖一下”。这里用 `zIndex` + `id` 双固定。
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                page(.favorites) { tabStack(.favorites) { FavoritesView() } }
-                page(.profile) { tabStack(.profile) { ProfileView() } }
-                page(.radio) { tabStack(.radio) { DiscoverView() } }
-                page(.search) { tabStack(.search) { SearchView() } }
+                page(.favorites) { FavoritesView() }
+                page(.profile) { ProfileView() }
+                page(.radio) { RadioView() }
+                page(.search) { SearchView() }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
 
             // 底栏整体（迷你播放器 + Tab 胶囊）用固定 id，避免随 selectedTab 重建
             VStack(spacing: 8) {
-                if hasActiveTrack {
+                if player.hasActiveTrack {
                     MiniPlayerView()
                         .onTapGesture { showingNowPlaying = true }
                         .padding(.horizontal, 12)
@@ -138,29 +90,9 @@ struct MainTabView: View {
             .padding(.bottom, 6)
             .id("well.bottomDock")
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: player.hasActiveTrack)
     }
 
-    /// 一个 Tab 的导航容器：NavigationStack 由主框架统一提供
-    /// （用户 2026-10-13 指令：四个 dock 页「挪回去」，导航容器不放进页面里）。
-    @ViewBuilder
-    private func tabStack<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
-        NavigationStack(path: path(for: tab)) {
-            content()
-        }
-    }
-
-    /// 每个 Tab 独立的导航路径。
-    private func path(for tab: WellTab) -> Binding<[Destination]> {
-        switch tab {
-        case .radio: return $radioPath
-        case .favorites: return $favoritesPath
-        case .search: return $searchPath
-        case .profile: return $profilePath
-        }
-    }
-
-    /// 页面容器：只做透明度 + 命中测试 + 层级
     @ViewBuilder
     private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
         content()
@@ -174,7 +106,7 @@ struct MainTabView: View {
 
 extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
-        .init(tab: .radio, title: "主页", icon: "house"),
+        .init(tab: .radio, title: "发现", icon: "house"),
         .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
@@ -216,10 +148,6 @@ struct NowPlayingRouterView: View {
             },
             onDismiss: onDismiss
         )
-        // 播放页是全屏 cover：出现时放开横屏（触发左右分栏布局），
-        // 消失时收回，保证主界面始终竖屏。
-        .onAppear { OrientationManager.shared.allowLandscape(true) }
-        .onDisappear { OrientationManager.shared.allowLandscape(false) }
     }
 }
 
@@ -251,9 +179,10 @@ private struct MiniPlayerAccessory: View {
     }
 }
 
-/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 播放/下一首）
+/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 上一首/播放/下一首）
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerCore
+    @EnvironmentObject private var settings: SettingsManager
     @Environment(\.colorScheme) private var colorScheme
 
     private let capsuleHeight: CGFloat = 54
@@ -276,10 +205,16 @@ struct MiniPlayerView: View {
             }
             .padding(.leading, 7)
 
-            // 右：播放暂停 / 下一首
-            //
-            // 上一首按钮按设计取消（对齐 RN/Kumone 的迷你条），下一首图标定 18pt。
-            HStack(spacing: 6) {
+            // 右：上一首 / 播放暂停 / 下一首
+            HStack(spacing: 12) {
+                Button {
+                    player.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
                 Button {
                     player.togglePlayPause()
                 } label: {
@@ -292,7 +227,7 @@ struct MiniPlayerView: View {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .frame(width: 34, height: 34)
                         .contentShape(Rectangle())
                 }
@@ -310,6 +245,18 @@ struct MiniPlayerView: View {
             Capsule().strokeBorder(.white.opacity(colorScheme == .dark ? 0.08 : 0.22), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.10), radius: 12, y: 4)
+        // 底部进度细线
+        .overlay(alignment: .bottom) {
+            GeometryReader { geo in
+                Capsule()
+                    .fill(AppTheme.accent)
+                    .frame(width: geo.size.width * min(player.duration > 0 ? player.currentTime / player.duration : 0, 1), height: 2)
+            }
+            .frame(height: 2)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 3)
+        }
     }
 }
 
@@ -320,7 +267,8 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 8
 
     private var resolvedURL: URL? {
-        WellArtworkURL.resolved(url, pixelSize: WellArtworkURL.pixelSize(forPoints: size))
+        guard let url, !url.isEmpty else { return nil }
+        return URL(string: url)
     }
 
     var body: some View {

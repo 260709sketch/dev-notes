@@ -65,17 +65,6 @@ struct WellPlaylistSummary: Identifiable, Hashable {
     var creatorName: String?
 }
 
-/// 排行榜条目（发现页「排行榜」货架用）。
-///
-/// 与普通歌单的区别是多一个 `updateFrequency`（如「每周更新」）——
-/// 卡片右下角会把它压在渐变遮罩上，所以单独成模型而不是复用 `WellPlaylistSummary`。
-struct WellToplistSummary: Identifiable, Hashable {
-    var id: String
-    var name: String
-    var coverURL: String?
-    var updateFrequency: String?
-}
-
 /// 一次聚合搜索的结果集合。
 struct WellSearchResult {
     var songs: [MusicItem] = []

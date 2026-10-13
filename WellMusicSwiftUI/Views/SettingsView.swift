@@ -8,7 +8,6 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var lxStore = WellLXSourceStore.shared
 
     var body: some View {
@@ -60,17 +59,6 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("歌单") {
-                    NavigationLink {
-                        PlaylistImportView()
-                    } label: {
-                        Label("导入歌单", systemImage: "square.and.arrow.down.on.square")
-                    }
-                    Text("粘贴网易云 / QQ 音乐的歌单分享链接，整张歌单保存到本地。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Section("界面") {
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in
@@ -82,43 +70,6 @@ struct SettingsView: View {
                     Text("「跟随系统」会随 iOS 外观设置自动切换深色/浅色。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-
-                Section("歌词背景") {
-                    Picker("渲染方式", selection: $settings.amllBackgroundMode) {
-                        ForEach(AMLLBackgroundMode.allCases) { mode in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mode.displayName)
-                                Text(mode.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .tag(mode)
-                        }
-                    }
-                    .pickerStyle(.navigationLink)
-                    Text("流动背景会根据专辑封面取色生成缓慢流动的光斑。「模糊」档在其上叠加高斯模糊，观感更柔和，也更省电。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    // 只有真正会渲染流动层时才需要画质档位
-                    if settings.amllBackgroundMode == .blurFlow || settings.amllBackgroundMode == .flowing {
-                        Picker("渲染质量", selection: $settings.amllBackgroundQuality) {
-                            ForEach(AMLLBackgroundQuality.allCases) { quality in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(quality.displayName)
-                                    Text(quality.detail)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .tag(quality)
-                            }
-                        }
-                        .pickerStyle(.navigationLink)
-                        Text("流动背景是覆盖全屏的 GPU 着色器，档位直接作用于渲染器的帧率与渲染分辨率。老机型或低电量时建议选「省电」。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Section("关于") {
@@ -136,8 +87,6 @@ struct SettingsView: View {
                     }
                 }
             }
-            // ★ List 系统自带背景自动延伸到 chrome 区域下面（理由同 ProfileView），
-            //   不写 scrollContentBackground / background，完全交给系统。
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

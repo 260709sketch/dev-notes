@@ -35,18 +35,12 @@ final class WellSearchViewModel: ObservableObject {
 // MARK: - 搜索页
 
 /// 搜索 Tab：平台 / 模块分段 + 分区卡片结果（版式对齐 kumone）
-///
-/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
-/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时存在于视图树中时，
-/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct SearchView: View {
-    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
-    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
-    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
-    private var player: PlayerCore { PlayerCore.shared }
+    @EnvironmentObject private var player: PlayerCore
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
     @State private var committedQuery = ""
+    @FocusState private var focused: Bool
 
     private var hasQuery: Bool {
         !committedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -57,56 +51,74 @@ struct SearchView: View {
     }
 
     var body: some View {
-        // 导航容器由 MainTabView 的 tabStack() 统一提供（用户 2026-10-13 指令：四页「挪回去」）。
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if hasQuery {
-                    platformPicker
-                    typePicker
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    searchBar
 
-                    if model.isLoading && model.result.isEmpty(for: model.type) {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 280)
-                    } else if model.result.isEmpty(for: model.type) {
-                        emptyResult
+                    if hasQuery {
+                        platformPicker
+                        typePicker
+
+                        if model.isLoading && model.result.isEmpty(for: model.type) {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, minHeight: 280)
+                        } else if model.result.isEmpty(for: model.type) {
+                            emptyResult
+                        } else {
+                            content
+                        }
                     } else {
-                        content
+                        emptyPrompt
                     }
-                } else {
-                    emptyPrompt
-                }
 
-                // ★ 去除边距（用户 2026-10-13 指令）：底部不再加留白占位、顶部不再加 padding。
+                    // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
+                    Color.clear.frame(height: 150)
+                }
+                .padding(.top, 8)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("搜索")
+            .navigationBarTitleDisplayMode(.inline)
+            .task(id: taskID) {
+                model.clear()
+                await model.load(keyword: committedQuery)
             }
         }
-        // ★ 页面背景兜底（对齐用户 10-11 无白边参照版 5d7dc59f）：
-        //   无白边版的搜索页写法就是 `ScrollView + .background(AppTheme.background)`；
-        //   「页面不铺背景」的旧结论已证伪（kumone 真源码里页面是铺条件色背景的，
-        //   只有 TabView 不铺）。裸奔会让页面区与 chrome 之间透出窗口底色 → 白色大边距。
-        //   `.background` 默认 ignoresSafeAreaEdges: .all → 延伸至状态栏 / Home 指示条后面。
-        .background(AppTheme.background)
-        // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
-        // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
-        // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
-        .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
-        .onSubmit(of: .search) {
-            committedQuery = searchText
+    }
+
+    // MARK: 搜索框
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("搜索歌曲、歌手、专辑、歌单", text: $searchText)
+                .focused($focused)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .onSubmit { committedQuery = searchText }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    committedQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppTheme.secondaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, WellSearchMetrics.contentInset)
         .onChange(of: searchText) { newValue in
-            // 400ms 防抖：输入过程中不逐字打接口
             Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 if searchText == newValue { committedQuery = newValue }
             }
-        }
-        .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
-        // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
-        // kumone 搜索页用的是系统默认的**大标题**，抬头就是一行大字「搜索」。
-        // 之前设成 inline 之后抬头变成导航栏里的小字，和 kumone 完全不是一套，
-        // 用户一眼就看出来了。
-        .task(id: taskID) {
-            model.clear()
-            await model.load(keyword: committedQuery)
         }
     }
 
@@ -121,7 +133,6 @@ struct SearchView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .padding(.horizontal, WellSearchMetrics.contentInset)
-        .padding(.top, 12)
     }
 
     private var typePicker: some View {
@@ -151,7 +162,7 @@ struct SearchView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32)
-        .padding(.top, 60)
+        .padding(.top, 80)
     }
 
     // MARK: 内容

@@ -2,9 +2,6 @@ import SwiftUI
 
 @main
 struct WellMusicApp: App {
-    /// 接管屏幕方向：默认竖屏，仅全屏播放页允许横屏。
-    @UIApplicationDelegateAdaptor(WellMusicAppDelegate.self) private var appDelegate
-
     @StateObject private var appState = AppState.shared
     @StateObject private var playerCore = PlayerCore.shared
     @StateObject private var playerService = PlayerService.shared
@@ -24,8 +21,6 @@ struct WellMusicApp: App {
                 .environmentObject(playerCore)
                 .environmentObject(playerService)
                 .environmentObject(settingsManager)
-                .tint(AppTheme.accent)   // 与 kumone root 同款：全局 tint 红
-                // 跟随用户主题设置（深/浅/跟随系统，默认跟随系统）—— 与 kumone 完全一致。
                 .preferredColorScheme(settingsManager.appTheme.colorScheme)
                 .task {
                     // 恢复已导入的自定义音源并重新激活

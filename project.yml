@@ -5,7 +5,7 @@ options:
     iOS: "16.0"
   createIntermediateGroups: true
 # libmpv 播放内核（MPVKit = libmpv + FFmpeg 预编译 xcframework，LGPL）
-# 选 1.1.0-n9.0.2：与 main 分支 Package.swift 引用的二进制版本一致。
+# 2026-10-13 迁移：无白边底版 + 仅迁移「播放器 / MPV 内核 / LX 音源系统」
 packages:
   MPVKit:
     url: https://github.com/mpvkit/MPVKit.git
@@ -15,52 +15,20 @@ targets:
     type: application
     platform: iOS
     sources:
-      # 整目录 glob：目录下任何非源码文件都会被打成资源。
-      # `Resources/AMLLLyrics.html` 是生成 `AMLLLyricsPage.html` 的**官方原始副本**
-      # （见 build_amll_page.py），运行时只会加载注入后的 Page 版本，
-      # 把它排除掉可以省下约 456 KB 的包体。
-      - path: WellMusicSwiftUI
-        excludes:
-          - "Resources/AMLLLyrics.html"
+      - WellMusicSwiftUI
     dependencies:
       - package: MPVKit
         product: MPVKit
-    sources:
-      # 整目录 glob：目录下任何非源码文件都会被打成资源。
-      # `Resources/AMLLLyrics.html` 是生成 `AMLLLyricsPage.html` 的**官方原始副本**
-      # （见 build_amll_page.py），运行时只会加载注入后的 Page 版本，
-      # 把它排除掉可以省下约 456 KB 的包体。
-      - path: WellMusicSwiftUI
-        excludes:
-          - "Resources/AMLLLyrics.html"
     info:
       path: WellMusicSwiftUI/Supporting/Info.plist
       properties:
         CFBundleDisplayName: WellMusic
-        # ★ 顶部/底部白条的唯一根因：缺 UILaunchScreen 时 iOS 会把 App 当成
-        #   旧式应用「兼容模式」运行 —— 窗口不铺满整屏，状态栏与 Home 指示条
-        #   两条区域用启动屏底色（白）填充，SwiftUI 里加多少 ignoresSafeArea
-        #   都够不到窗口外面。
-        #   必须是**空字典**（与 kumone 完全一致）：kumone 的 plist 注释明确写了
-        #   「empty UILaunchScreen opts the app into native full-screen rendering」。
-        #   ⚠️ 不要加 UIColorName 指向色集 —— 用户实测 78fa838f（UIColorName 版）
-        #   白条依旧；kumone 的空字典方案是经过验证的唯一可靠写法。
-        # ★ 不再设置 UIDesignRequiresCompatibility。
-        #   它曾用于「回退 iOS 18 渲染」，但实测（kumone 对照）：
-        #   compat 渲染下 nav bar / tab bar 退回 iOS 18 毛玻璃材质 —— 在浅色下
-        #   渲染得又白又实，内容滚到 bar 下面时被近乎纯白的毛玻璃挡住
-        #   （用户说的「顶部导航下面的白色矩形」）。
-        #   kumone 无此 key → 纯 iOS 26 液态玻璃 → 内容从 bar 下掠过隐约可见。
-        #   现已移除，与 kumone 完全同渲染。
-        UILaunchScreen: {}
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         UIApplicationSupportsIndirectInputEvents: true
     settings:
       base:

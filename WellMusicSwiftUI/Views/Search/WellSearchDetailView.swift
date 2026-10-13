@@ -2,15 +2,11 @@ import SwiftUI
 
 /// 搜索结果卡片展开页：拉取歌手 / 专辑 / 歌单对应的歌曲列表。
 struct WellSearchDetailView: View {
-    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
-    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
-    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
-    private var player: PlayerCore { PlayerCore.shared }
+    @EnvironmentObject private var player: PlayerCore
     let source: WellSearchDetailSource
     var coverURL: String?
 
     @State private var tracks: [MusicItem] = []
-    @State private var albums: [WellAlbumSummary] = []
     @State private var isLoading = true
 
     var body: some View {
@@ -18,7 +14,7 @@ struct WellSearchDetailView: View {
             if isLoading {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if tracks.isEmpty && albums.isEmpty {
+            } else if tracks.isEmpty {
                 if #available(iOS 17.0, *) {
                     ContentUnavailableView("暂无歌曲", systemImage: "music.note",
                                            description: Text("该内容暂无可播放的歌曲"))
@@ -35,42 +31,13 @@ struct WellSearchDetailView: View {
                         header
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     }
-                    // 歌手主页：专辑货架（目前只有网易云提供歌手专辑接口）
-                    if !albums.isEmpty {
-                        Section("专辑") {
-                            ForEach(albums) { album in
-                                NavigationLink {
-                                    WellSearchDetailView(
-                                        source: .album(id: album.id, platform: album.platform, name: album.name, artist: album.artistName),
-                                        coverURL: album.picURL)
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        WellRemoteImage(url: album.picURL, displaySize: 56)
-                                            .frame(width: 56, height: 56)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(album.name)
-                                                .font(.subheadline)
-                                                .lineLimit(1)
-                                            Text(album.artistName)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                    }
+                    Section {
+                        ForEach(tracks) { item in
+                            TrackRow(item: item)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
                                 }
-                            }
-                        }
-                    }
-                    if !tracks.isEmpty {
-                        Section(albums.isEmpty ? "歌曲" : "热门歌曲") {
-                            ForEach(tracks) { item in
-                                TrackRow(item: item)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
-                                    }
-                            }
                         }
                     }
                 }
@@ -114,12 +81,6 @@ struct WellSearchDetailView: View {
     private func load() async {
         isLoading = true
         tracks = await SearchService.shared.detailTracks(for: source)
-
-        // 歌手主页补充专辑货架（网易云：api/artist/albums 明文可用）
-        if case .artist(let artistId, let platform, _) = source, platform == .netease {
-            albums = (try? await NeteaseMusicAPI.shared.artistAlbums(id: artistId)) ?? []
-        }
-
         isLoading = false
     }
 }

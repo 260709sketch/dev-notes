@@ -1,11 +1,6 @@
 import SwiftUI
 
 /// WellMusic 底部 Tab 枚举
-///
-/// ⚠️ `title` 必须与底栏实际显示的文案一致（见 `MainTabView.glassTabItems`
-/// 与 `iOS26TabView` 的 `Tab(...)` 标签）。之前出现过 `navigationTitle`
-/// 与底栏文案对不上的问题（底栏写「发现」，导航大标题却写「电台」），
-/// 排查时极易误判为「切页标题跳动」。改文案时三处要一起改。
 enum WellTab: String, CaseIterable, Identifiable {
     case favorites
     case profile
@@ -16,18 +11,18 @@ enum WellTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .favorites: return "音乐库"
+        case .favorites: return "收藏"
         case .profile: return "我的"
-        case .radio: return "主页"
+        case .radio: return "电台"
         case .search: return "搜索"
         }
     }
 
     var icon: String {
         switch self {
-        case .favorites: return "square.grid.2x2"
-        case .profile: return "person.crop.circle"
-        case .radio: return "house"
+        case .favorites: return "heart.fill"
+        case .profile: return "person.fill"
+        case .radio: return "dot.radiowaves.left.and.right"
         case .search: return "magnifyingglass"
         }
     }

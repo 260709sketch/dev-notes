@@ -5,11 +5,6 @@ enum AppTheme {
     /// 主题红
     static let accent = Color(red: 0.93, green: 0.25, blue: 0.24)
 
-    /// 全 App 背景色（MainTabView 根、各 page 兜底）。
-    /// 跟老版本一致保留 systemBackground：app 整体强制 dark，**深色下是黑**，
-    /// 配合老版本 .preferredColorScheme(.dark) 的设置（见 WellMusicApp.body），
-    /// nav bar / tab bar / 页面**统一全黑**——"白条"从源头不存在。
-    /// 若未来想支持浅色模式，需同步把 nav bar / tab bar 也铺同色，否则会复现断层。
     static let background = Color(uiColor: .systemBackground)
     static let secondaryBackground = Color(uiColor: .secondarySystemBackground)
     static let tertiaryBackground = Color(uiColor: .tertiarySystemBackground)
