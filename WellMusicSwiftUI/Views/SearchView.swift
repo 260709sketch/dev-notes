@@ -103,19 +103,15 @@ final class WellSearchViewModel: ObservableObject {
 struct SearchView: View {
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
-    @State private var committedQuery = ""
-    @FocusState private var focused: Bool
 
     private var hasQuery: Bool {
-        !committedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    searchBar
-
                     if hasQuery {
                         // 平台分段（网易云 / QQ音乐 / 酷狗）—— kumone SearchView 同款双分段结构
                         platformPicker
@@ -137,52 +133,27 @@ struct SearchView: View {
                 .padding(.top, 8)
             }
             .background(AppTheme.background)
-            .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
+            .navigationTitle(searchText.isEmpty ? "搜索" : "搜索：\(searchText)")
             .navigationBarTitleDisplayMode(.inline)
-            // 关键词 / 平台变化：全清重搜（防抖 400ms 由 searchBar 内部完成）
-            .task(id: "\(model.platform.rawValue)|\(committedQuery)") {
-                model.setQuery(committedQuery)
-                await model.load(tab: model.type)
+            // ★ 搜索框挂在导航栏（kumone 同款 `.searchable`）：
+            //   点击时系统自动上移激活、展开 Cancel，内容区下沉 —— 这是系统级交互。
+            .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
+            .onSubmit(of: .search) {
+                model.setQuery(searchText)
+                Task { await model.load(tab: model.type) }
+            }
+            // 关键词 400ms 防抖（kumone 同款）
+            .onChange(of: searchText) { newValue in
+                Task {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    guard searchText == newValue else { return }
+                    model.setQuery(newValue)
+                    await model.load(tab: model.type)
+                }
             }
             // 模块变化：惰性加载该模块（已加载则跳过）
             .task(id: model.type) {
                 await model.load(tab: model.type)
-            }
-        }
-    }
-
-    // MARK: 搜索框
-
-    /// 搜索框 + 红色 Cancel（对照 kumone 截图：有输入时才出现，点击清空并收起键盘）
-    private var searchBar: some View {
-        HStack(spacing: 12) {
-            WellSearchField(
-                text: $searchText,
-                isFocused: $focused,
-                onSubmit: { committedQuery = searchText },
-                onClear: { searchText = "" }
-            )
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    committedQuery = ""
-                    focused = false
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: 16))
-                        .foregroundStyle(AppTheme.accent)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, WellSearchMetrics.contentInset)
-        .animation(.easeInOut(duration: 0.15), value: searchText.isEmpty)
-        .onChange(of: searchText) { newValue in
-            Task {
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                if searchText == newValue { committedQuery = newValue }
             }
         }
     }
