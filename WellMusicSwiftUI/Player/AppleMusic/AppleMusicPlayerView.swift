@@ -1508,8 +1508,7 @@ struct AppleMusicPlayerView: View {
 /// 在 `updateUIViewController` 里沿 `parent` 链把**每一层**相关的
 /// `view` / `containerView` / `presentedView` 背景都设为 `.clear`：
 /// - 用自己的 VC 作锚点向上遍历，不改动全局 UI 外观（不像 nav/tab appearance 那样有副作用）；
-/// - 宿主透明后，下滑露出的是**真正的下层 tab 页面**，观感与系统原生转场一致
-///   （Beans-CiliCili 的 `BeansPresentedSurfaceClearer` 同款思路，代码按本项目重写）。
+/// - 宿主透明后，下滑露出的是**真正的下层 tab 页面**，观感与系统原生转场一致。
 ///
 /// ⚠️ 必须放在 `DispatchQueue.main.async`：`makeUIViewController` 时机太早，
 ///    此时 `presentationController` 还没建立，直接取会拿到 nil。

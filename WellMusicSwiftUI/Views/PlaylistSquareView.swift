@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 精选页（歌单广场）—— 对齐 Beans 的 PlaylistSquareView 功能：
+/// 精选页（歌单广场）：
 /// 顶部分类胶囊横滑 + 双列歌单网格 + 下拉刷新。
 ///
 /// 数据走网易云明文 `api/top/playlist`（按分类），

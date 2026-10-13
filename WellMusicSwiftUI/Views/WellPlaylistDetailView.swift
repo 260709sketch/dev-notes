@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// 歌单 / 专辑 / 歌手详情页 —— 对齐 Beans `PlaylistView` 的页面结构，代码按本项目重写。
+/// 歌单 / 专辑 / 歌手详情页 —— 页面结构按 Apple Music 专辑页样式，代码按本项目重写。
 ///
 /// 结构：大 header（封面96 + 名称 + 创建者/歌手 + 播放量）
 /// → 播放全部 / 随机播放 双按钮
 /// → 歌单内搜索框 + 排序菜单（默认 / 歌名 / 时长）
 /// → 无分隔线歌曲列表（46 封面、行高 64）。
 ///
-/// ⭐ Beans 同款细节：**搜索与排序只改变可见列表，点击歌曲后的播放队列
+/// ⭐ 关键细节：**搜索与排序只改变可见列表，点击歌曲后的播放队列
 /// 仍按排序后的完整顺序走**（`orderedTracks` 是队列，`displayedTracks` 只是滤镜）。
 struct WellPlaylistDetailView: View {
     let source: WellSearchDetailSource
@@ -22,7 +22,7 @@ struct WellPlaylistDetailView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
 
-    /// 歌单内排序方式（Beans 同款）
+    /// 歌单内排序方式
     enum SortMode: String, CaseIterable, Identifiable {
         case original = "默认"
         case name = "歌名"
@@ -52,7 +52,7 @@ struct WellPlaylistDetailView: View {
 
     /// 排序后的**完整队列**：播放 / 随机播放都按它走。
     ///
-    /// Beans 同款语义：搜索只影响可见列表，点歌后的队列顺序仍是排序后的完整顺序。
+    /// 语义：搜索只影响可见列表，点歌后的队列顺序仍是排序后的完整顺序。
     private var orderedTracks: [MusicItem] {
         switch sortMode {
         case .original:
@@ -476,7 +476,7 @@ struct WellPlaylistDetailView: View {
 
 // MARK: - 详情歌曲行
 
-/// 详情页歌曲行（Beans 同款：46 封面 + 歌名/歌手 + 右侧时长，行高 64，无分隔线）。
+/// 详情页歌曲行（46 封面 + 歌名/歌手 + 右侧时长，行高 64，无分隔线）。
 struct WellDetailSongRow: View {
     let item: MusicItem
 

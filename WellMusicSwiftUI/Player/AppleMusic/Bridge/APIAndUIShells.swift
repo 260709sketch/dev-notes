@@ -201,7 +201,7 @@ struct CommentsView: View {
     }
 }
 
-/// 评论行（kumone Beans 风格）：头像 + 同一行「用户名 · 日期 · N 赞」+ 内容。
+/// 评论行：头像 + 同一行「用户名 · 日期 · N 赞」+ 内容。
 private struct CommentRow: View {
     let comment: SongComment
 

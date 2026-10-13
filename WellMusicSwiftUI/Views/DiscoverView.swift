@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 发现页（首页）—— 对齐 Beans 的发现页板块，代码按本项目架构重写。
+/// 发现页（首页）—— 代码按本项目架构重写。
 ///
 /// 板块（自上而下）：
 /// 1. `dailySection`  每日推荐：横滑入口卡（每日推荐 / 私人漫游 / 心动模式），
@@ -234,7 +234,7 @@ struct DiscoverView: View {
         }
     }
 
-    /// 私人漫游：连续批次灌入队列（Beans 同款行为 —— 先起播再持续 append）。
+    /// 私人漫游：连续批次灌入队列（先起播，再持续 append 后续批次）。
     private func startPersonalFM() async {
         guard actionLoading == nil else { return }
         actionLoading = "fm"

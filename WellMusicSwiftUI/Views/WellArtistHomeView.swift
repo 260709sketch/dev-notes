@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 歌手主页 —— 界面结构对齐 Beans `ArtistHomeSheet`，代码按本项目架构重写。
+/// 歌手主页 —— 界面代码按本项目架构重写。
 ///
 /// 结构：Header（72pt 圆形头像 + 名字 + 统计）
 /// → 热门歌曲（序号前 3 高亮 / 40pt 封面 / 歌名 + 专辑名，播放全部按钮，页内搜索过滤）
@@ -106,7 +106,7 @@ struct WellArtistHomeView: View {
                 .padding(.horizontal, 16)
 
             if !hotSongs.isEmpty {
-                // 播放全部（长条胶囊，Beans 同款布局）
+                // 播放全部（长条胶囊按钮）
                 Button {
                     guard !displayedHotSongs.isEmpty else { return }
                     PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
