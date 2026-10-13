@@ -85,6 +85,8 @@ final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
         navBar.scrollEdgeAppearance = nav
         navBar.compactAppearance = nav
         navBar.compactScrollEdgeAppearance = nav
+        // 老 API 双保险（iOS 15+ 标记 deprecated 但实际仍被系统读取）
+        navBar.isTranslucent = true
 
         // tab bar：全状态（standard / scrollEdge）透明
         let tab = UITabBarAppearance()
@@ -95,6 +97,7 @@ final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
         let tabBar = UITabBar.appearance()
         tabBar.standardAppearance = tab
         tabBar.scrollEdgeAppearance = tab
+        tabBar.isTranslucent = true
     }
 
     func application(

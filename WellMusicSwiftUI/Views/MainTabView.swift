@@ -31,14 +31,13 @@ struct MainTabView: View {
 
     var body: some View {
         tabInterface
-            // ★ 移除顶部/底部「白色遮挡」的核心开关。
-            //
-            // 用户实测：dock 栏（tab bar）下方与页面顶部各有一块**白色遮挡**，
-            // 挡住了延伸到这些区域的内容（「下面还有界面显示的」）。这两个白色
-            // 块是系统 nav bar / tab bar 的 chrome 背景底座 —— 把它们隐藏后，
-            // 页面内容直接延伸显示到状态栏 / Home 指示条区域，不再被挡。
-            // （与变色无关：是「移除遮挡层」本身。）
-            .modifier(HiddenChromeBackgroundModifier())
+            // ⚠️ 这里**不要**挂任何 toolbar/chrome 相关的 SwiftUI modifier：
+            //   实测 `toolbarBackgroundVisibility(.hidden, for: .automatic)`
+            //   会把导航栏样式弄坏（标题漂浮）且**修不掉**白边（对系统 TabView 的
+            //   UITabBar/UINavigationBar 背景层无效）。
+            //   白边的真正移除在 UIKit 层 —— WellMusicAppDelegate
+            //   `removeChromeBackgrounds()`（UINavigationBar/UITabBarAppearance
+            //   全状态 configureWithTransparentBackground）。
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
