@@ -53,6 +53,14 @@ struct WellAlbumSummary: Identifiable, Hashable {
     var platform: MusicSource
     /// QQ / 酷狗专辑 mid（部分接口需要）
     var albumMid: String?
+    /// 专辑类型（「专辑 / EP / 单曲」；歌手专辑接口返回）。nil 视作「专辑」。
+    var albumType: String?
+
+    /// 是否 EP / 单曲（歌手主页分货架用）
+    var isEPOrSingle: Bool {
+        guard let albumType else { return false }
+        return albumType.contains("EP") || albumType.contains("单曲")
+    }
 }
 
 /// 搜索结果里的歌单条目。

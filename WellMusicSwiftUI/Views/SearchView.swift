@@ -232,9 +232,8 @@ struct SearchView: View {
     private func artistCards(_ items: some Collection<WellArtistSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { artist in
             NavigationLink {
-                WellSearchDetailView(
-                    source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
-                    coverURL: artist.picURL)
+                WellArtistHomeView(artistId: artist.id, artistName: artist.name,
+                                   coverURL: artist.picURL)
             } label: {
                 WellArtistCard(artist: artist, fillWidth: fillWidth)
             }

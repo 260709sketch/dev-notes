@@ -135,6 +135,8 @@ final class NeteaseMusicAPI {
         var name: String?
         var picUrl: String?
         var size: Int?
+        /// 专辑类型（「专辑 / EP / 单曲」；歌手专辑接口返回，搜索接口可能缺省）
+        var type: String?
         var artist: Artist?
         struct Artist: Decodable { var name: String? }
     }
@@ -478,7 +480,8 @@ final class NeteaseMusicAPI {
             guard let id = al.id, let name = al.name else { return nil }
             return WellAlbumSummary(
                 id: "\(id)", name: name, picURL: al.picUrl,
-                artistName: al.artist?.name ?? "未知歌手", platform: .netease, albumMid: nil)
+                artistName: al.artist?.name ?? "未知歌手", platform: .netease, albumMid: nil,
+                albumType: al.type)
         }
     }
 

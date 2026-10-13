@@ -310,9 +310,8 @@ struct DiscoverView: View {
             WellShelf(title: artistSectionTitle, rowHeight: 170) {
                 ForEach(Array(artists.enumerated()), id: \.element.id) { index, artist in
                     NavigationLink {
-                        WellPlaylistDetailView(
-                            source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
-                            coverURL: artist.picURL)
+                        WellArtistHomeView(artistId: artist.id, artistName: artist.name,
+                                           coverURL: artist.picURL)
                     } label: {
                         WellArtistCard(artist: artist)
                     }
