@@ -75,16 +75,17 @@ struct SearchView: View {
                     emptyPrompt
                 }
 
-                // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
-                Color.clear.frame(height: 150)
+                // 底栏留白：iOS 26 系统已自动扩展 safe area（见 WellBottomClearance）
+                WellBottomClearance()
             }
             .padding(.top, 8)
         }
-        // ★ 沉浸式底部（与 kumone 一致，用户 2026-10-13 指令）：
-        //   内容延伸到底部安全区域，液态玻璃 TabBar 浮在内容上透出模糊倒影。
-        //   底部 150pt 留白确保最后一条内容不被 TabBar 永久遮挡。
-        .ignoresSafeArea(edges: .bottom)
-        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
+        // ★ 页面背景兜底（对齐用户 10-11 无白边参照版 5d7dc59f）：
+        //   无白边版的搜索页写法就是 `ScrollView + .background(AppTheme.background)`；
+        //   「页面不铺背景」的旧结论已证伪（kumone 真源码里页面是铺条件色背景的，
+        //   只有 TabView 不铺）。裸奔会让页面区与 chrome 之间透出窗口底色 → 白色大边距。
+        //   `.background` 默认 ignoresSafeAreaEdges: .all → 延伸至状态栏 / Home 指示条后面。
+        .background(AppTheme.background)
         // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
         // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
         // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。

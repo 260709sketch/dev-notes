@@ -50,11 +50,13 @@ struct ProfileView: View {
                 }
             }
         }
-        // ★ List 的系统自带 insetGrouped 背景（systemGroupedBackground）会由系统自动
-        //   延伸到状态栏 / nav bar / tab bar 的 chrome 区域下面，颜色天然连续。
-        //   之前 scrollContentBackground(.hidden) + 手动补背景，手动背景延伸不到
-        //   chrome 区域 → 状态栏露白、tab bar 露白（iOS 26 TabView chrome 挡住手动层）。
-        //   所以这里什么都不写，完全交给系统（与 iOS 设置 app 同一机制）。
+        // ★ 逐字对齐 kumone `LocalPlaylistView.swift:91` 的写法：
+        //   浅灰页面底色**必须显式铺满全屏**（`background` 默认
+        //   ignoresSafeAreaEdges: .all → 延伸到状态栏 / Home 指示条后面）。
+        //   只靠 List 的系统背景不延伸进 TabView 的 chrome 区 ——
+        //   浅灰页面 + 白色 chrome 区 = 顶部/底部「白色矩形」（用户 12:38 截图实锤）。
+        .scrollContentBackground(.hidden)
+        .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground))
         .navigationTitle("我的")
         .sheet(isPresented: $showingSettings) {
             SettingsView()

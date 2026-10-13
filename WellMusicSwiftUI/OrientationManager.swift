@@ -58,45 +58,34 @@ final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        Self.removeChromeBackgrounds()
+        Self.makeNavigationBarTransparent()
         return true
     }
 
-    /// ★★★ 移除顶部 / 底部「白色遮挡块」的最终手段（UIKit 层）。
+    /// ★★★ 顶部导航栏**全透明**（用户 2026-10-13 最终目标）。
     ///
-    /// 现象（用户真机实测）：播放页外的主界面，顶部 nav bar 区域与底部
-    /// tab bar 区域各有一块**不透明白色**，把滚动到这些区域的内容硬挡住。
-    /// SwiftUI 的 `toolbarBackground(.hidden)` / `toolbarBackgroundVisibility(.hidden)`
-    /// 对「系统 TabView + NavigationStack」组合下的 bar 背景无效。
+    /// 用户对照 kumone 的原话：「kumone 这上面是**透明的可以看到下面的页面**的」。
+    /// 而我们的 nav bar 在滚动状态下有一层"近乎纯白"的材质把内容硬挡住
+    /// （卡片顶部被平齐切断）。这里把 `UINavigationBar` 的**全部状态**
+    /// （standard / scrollEdge / compact / compactScrollEdge）换成
+    /// `configureWithTransparentBackground` —— 背景层（含模糊）整体移除，
+    /// 标题与按钮保留，**内容滚动到 bar 后面直接可见**（沉浸式）。
     ///
-    /// 这里直接把 `UINavigationBar` / `UITabBar` 的全部 appearance 换成
-    /// **完全透明背景**（configureWithTransparentBackground），bar 上的标题与
-    /// 图标保持可见，背景层整体移除 —— 内容滚动到状态栏 / Home 指示条区域时
-    /// 直接透出，不再被白块遮挡（沉浸式，与 kumone 观感一致）。
-    ///
-    /// ⚠️ 2026-10-13 修正：顶部导航栏之前「不做处理」导致 iOS 26 大标题模式下
-    /// 状态栏下方露出白色矩形。现在统一配置 UINavigationBarAppearance 为默认
-    /// 毛玻璃背景，确保导航栏背景延伸到状态栏区域。底部安全区域的白块由
-    /// MainTabView.iOS26TabInterface 铺背景色解决（UIKit 层管不到 TabBar 下方）。
-    private static func removeChromeBackgrounds() {
-        // 导航栏：默认毛玻璃背景，确保延伸到状态栏区域，消除顶部白色矩形
+    /// tab bar **不动**：系统液态玻璃底栏本身就是「悬浮 + 内容可见」的形态
+    /// （= kumone 底部栏的观感），无需干预。
+    private static func makeNavigationBarTransparent() {
         let nav = UINavigationBarAppearance()
-        nav.configureWithDefaultBackground()
-        let navBar = UINavigationBar.appearance()
-        navBar.standardAppearance = nav
-        navBar.scrollEdgeAppearance = nav
-        navBar.compactAppearance = nav
-
-        // tab bar：全状态（standard / scrollEdge）透明 —— 内容滚动到底部时直接透出
-        let tab = UITabBarAppearance()
-        tab.configureWithTransparentBackground()
-        tab.backgroundColor = .clear
-        tab.backgroundEffect = nil
-        tab.shadowColor = .clear
-        let tabBar = UITabBar.appearance()
-        tabBar.standardAppearance = tab
-        tabBar.scrollEdgeAppearance = tab
-        tabBar.isTranslucent = true
+        nav.configureWithTransparentBackground()
+        nav.backgroundColor = .clear
+        nav.backgroundEffect = nil
+        nav.shadowColor = .clear
+        let bar = UINavigationBar.appearance()
+        bar.standardAppearance = nav
+        bar.scrollEdgeAppearance = nav
+        bar.compactAppearance = nav
+        bar.compactScrollEdgeAppearance = nav
+        // 老 API 双保险（系统仍读取）
+        bar.isTranslucent = true
     }
 
     func application(
