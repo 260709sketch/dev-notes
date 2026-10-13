@@ -126,20 +126,21 @@ struct AppleMusicPlayerView: View {
         let isLandscape = screenSize.width > screenSize.height
 
         ZStack {
-            // 下滑关闭时**露出来的底色**。
+            // ⚠️ 这里**不放任何固定底色**。
             //
-            // 播放页是 `fullScreenCover` 呈现的，下面的 tab 页并没有跟着缩小/变暗；
-            // 一旦把播放器整体往下平移，顶上空出来的那块就会直接露出下层页面。
+            // 之前这里铺过「纯黑」和「随位移淡出的深色遮罩」两种方案，都被用户否掉：
+            // 下滑关闭时总会看到**一整块黑/白的页面粘着播放器一起下滑**。
             //
-            // ⚠️ 这里**不用纯黑**：用户反馈「慢慢下滑会看到一整个屏幕黑色的东西
-            //    跟着一起下滑」。纯黑固定底会与位移中的内容形成一整块黑色视觉。
-            //    改为**随位移淡出的深色遮罩** —— 拖得越远越透明，露出下层页面，
-            //    既避免纯黑块、又保留了下滑关闭的视觉反馈。
-            Color.black
-                .ignoresSafeArea()
-                .opacity(isDismissDragging
-                         ? max(0, 1 - Double(dismissDragOffset) / 420.0)
-                         : 0)
+            // 根因不在这一层，而在 `fullScreenCover` 的系统宿主视图：
+            // 系统在播放页内容背后垫了一层**不透明背景**（浅色模式是白、深色是黑），
+            // 我们自己拖 `.offset` 时这层宿主不会跟着走 → 露出白/黑板。
+            //
+            // 正解：用 `PresentedSurfaceClearer` 把整条宿主视图链刷成透明
+            // （见文件末尾），让下层的 tab 页面直接透出来。这样下滑时看到的是
+            // **真正的下层页面**，既没有白板也没有黑板，和系统原生转场一致。
+            PresentedSurfaceClearer()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
 
             ZStack {
                 // 底层：playerBackground 内部已集成 AMLL（开启时）或原版背景
@@ -1437,6 +1438,50 @@ struct AppleMusicPlayerView: View {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
             rootVC.present(alert, animated: true)
+        }
+    }
+}
+
+// MARK: - 全屏播放页宿主透明化
+
+/// 把 `fullScreenCover` 的**系统宿主视图链刷成透明**，消除「一整块白/黑页面粘着播放器下滑」。
+///
+/// ## 为什么需要它
+/// 播放页由 `fullScreenCover` 呈现。系统会在我们的内容背后垫一层不透明宿主视图：
+/// - 浅色模式 = 白色，深色模式 = 黑色；
+/// - 这层宿主**不参与**我们自己的 `.offset(y:)` 位移。
+///
+/// 于是手动下滑关闭时，跟上手指的只有内容本身，宿主原地不动 →
+/// 露出的那块就是「一整块白/黑板」，用户看到的就是「一整个页面粘着一起关」。
+///
+/// ## 做法
+/// 一个零尺寸的 `UIViewControllerRepresentable`，挂到播放页 ZStack 的最底层。
+/// 在 `updateUIViewController` 里沿 `parent` 链把**每一层**相关的
+/// `view` / `containerView` / `presentedView` 背景都设为 `.clear`：
+/// - 用自己的 VC 作锚点向上遍历，不改动全局 UI 外观（不像 nav/tab appearance 那样有副作用）；
+/// - 宿主透明后，下滑露出的是**真正的下层 tab 页面**，观感与系统原生转场一致
+///   （Beans-CiliCili 的 `BeansPresentedSurfaceClearer` 同款思路，代码按本项目重写）。
+///
+/// ⚠️ 必须放在 `DispatchQueue.main.async`：`makeUIViewController` 时机太早，
+///    此时 `presentationController` 还没建立，直接取会拿到 nil。
+struct PresentedSurfaceClearer: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = UIViewController()
+        controller.view.backgroundColor = .clear
+        controller.view.isUserInteractionEnabled = false
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        DispatchQueue.main.async {
+            var current: UIViewController? = uiViewController
+            while let controller = current {
+                controller.view.backgroundColor = .clear
+                controller.parent?.view.backgroundColor = .clear
+                controller.presentationController?.containerView?.backgroundColor = .clear
+                controller.presentationController?.presentedView?.backgroundColor = .clear
+                current = controller.parent
+            }
         }
     }
 }
