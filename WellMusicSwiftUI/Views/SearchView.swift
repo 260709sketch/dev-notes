@@ -117,6 +117,8 @@ struct SearchView: View {
                     searchBar
 
                     if hasQuery {
+                        // 平台分段（网易云 / QQ音乐 / 酷狗）—— kumone SearchView 同款双分段结构
+                        platformPicker
                         typePicker
 
                         if model.isLoading && model.currentEmpty(for: model.type) {
@@ -186,6 +188,13 @@ struct SearchView: View {
     }
 
     // MARK: 分段选择
+
+    private var platformPicker: some View {
+        WellSegmentedControl(items: WellSearchPlatform.allCases,
+                             title: { $0.rawValue },
+                             selection: $model.platform)
+            .padding(.horizontal, WellSearchMetrics.contentInset)
+    }
 
     private var typePicker: some View {
         WellSegmentedControl(items: WellSearchType.allCases,
