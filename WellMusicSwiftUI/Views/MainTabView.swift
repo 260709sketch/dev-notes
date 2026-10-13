@@ -54,7 +54,7 @@ struct MainTabView: View {
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
-                RadioView()
+                DiscoverView()
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
                 FavoritesView()
@@ -80,7 +80,7 @@ struct MainTabView: View {
             ZStack {
                 page(.favorites) { FavoritesView() }
                 page(.profile) { ProfileView() }
-                page(.radio) { RadioView() }
+                page(.radio) { DiscoverView() }
                 page(.search) { SearchView() }
             }
 

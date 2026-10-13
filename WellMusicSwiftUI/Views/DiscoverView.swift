@@ -1,0 +1,475 @@
+import SwiftUI
+
+/// 发现页（首页）—— 对齐 Beans 的发现页板块，代码按本项目架构重写。
+///
+/// 板块（自上而下）：
+/// 1. `dailySection`  每日推荐：横滑入口卡（每日推荐 / 私人漫游 / 心动模式）
+/// 2. `newAlbumsSection` 新碟上架：横滑专辑卡
+/// 3. `toplistsSection` 排行榜：竖排榜单行
+/// 4. `artistsSection` 热门歌手：圆形横滑
+///
+/// ⚠️ 性能铁律：本页**绝不订阅 PlayerCore**。整页是长列表 + 异步图片，
+///    一旦订阅 20Hz 的 `currentTime`，整页每秒重算 20 次 → 滑动必掉帧。
+///    发起播放只用 `PlayerCore.shared` 单例，不做订阅。
+///
+/// ⚠️ 导航栏：本页自带 `NavigationStack`，**不手动铺背景**（除 ScrollView 兜底色），
+///    以对齐 iOS 26 系统 chrome 的渲染方式（参见项目白边终审结论）。
+struct DiscoverView: View {
+    @State private var dailySongs: [MusicItem] = []
+    @State private var newAlbums: [WellAlbumSummary] = []
+    @State private var toplists: [WellToplistSummary] = []
+    @State private var artists: [WellArtistSummary] = []
+
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    /// 榜单展开状态：收起显示前 3，展开显示前 10
+    @State private var ranksExpanded = false
+    /// 正在加载的动作键（每日推荐 / 私人漫游 / 心动模式），用于按钮转圈
+    @State private var actionLoading: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    if let errorMessage {
+                        errorState(errorMessage)
+                    } else if isLoading {
+                        loadingState
+                    } else {
+                        dailySection
+                        newAlbumsSection
+                        toplistsSection
+                        artistsSection
+                    }
+
+                    // 底栏留白：迷你播放器 + Tab 胶囊
+                    Color.clear.frame(height: 170)
+                }
+                .padding(.top, 8)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("发现")
+            .navigationBarTitleDisplayMode(.large)
+            .task { await load() }
+            .refreshable { await load(force: true) }
+        }
+    }
+
+    // MARK: - 加载
+
+    private func load(force: Bool = false) async {
+        if isLoading == false && !force { return }
+        isLoading = true
+        errorMessage = nil
+
+        async let dailyTask = try? NeteaseMusicAPI.shared.dailyRecommendSongs()
+        async let albumsTask = try? NeteaseMusicAPI.shared.newAlbums(limit: 20)
+        async let topsTask = try? NeteaseMusicAPI.shared.toplists()
+        async let artistsTask = try? NeteaseMusicAPI.shared.topArtists(limit: 30)
+
+        let (daily, albums, tops, arts) = await (dailyTask, albumsTask, topsTask, artistsTask)
+        dailySongs = daily ?? []
+        newAlbums = albums ?? []
+        toplists = tops ?? []
+        artists = arts ?? []
+        isLoading = false
+
+        if dailySongs.isEmpty && newAlbums.isEmpty && toplists.isEmpty && artists.isEmpty {
+            errorMessage = "内容加载失败，请下拉重试"
+        }
+    }
+
+    // MARK: - 每日推荐（含私人漫游 / 心动模式入口）
+
+    private var dailySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            WellSectionHeader(title: "推荐")
+                .padding(.horizontal, WellSearchMetrics.contentInset)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
+
+                    WellFeatureCard(
+                        title: "每日推荐",
+                        subtitle: dailySubtitle,
+                        icon: "calendar",
+                        coverURL: dailySongs.first?.albumCoverURL,
+                        gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
+                                   Color(red: 0.96, green: 0.68, blue: 0.30)],
+                        isLoading: false
+                    ) {
+                        guard !dailySongs.isEmpty else { return }
+                        PlayerCore.shared.play(queue: dailySongs, startIndex: 0)
+                    }
+
+                    WellFeatureCard(
+                        title: "私人漫游",
+                        subtitle: "从喜欢的歌开始漫游",
+                        icon: "wave.3.right.circle.fill",
+                        coverURL: nil,
+                        gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                   Color(red: 0.41, green: 0.28, blue: 0.65)],
+                        isLoading: actionLoading == "fm"
+                    ) {
+                        Task { await startPersonalFM() }
+                    }
+
+                    WellFeatureCard(
+                        title: "心动模式",
+                        subtitle: "你的红心歌曲和相似推荐",
+                        icon: "heart.circle.fill",
+                        coverURL: nil,
+                        gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                                   Color(red: 0.98, green: 0.43, blue: 0.35)],
+                        isLoading: actionLoading == "heartbeat"
+                    ) {
+                        Task { await startHeartbeat() }
+                    }
+
+                    Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
+                }
+                .padding(.vertical, 4)
+            }
+            .modifier(WellHorizontalClipModifier())
+        }
+    }
+
+    private var dailySubtitle: String {
+        dailySongs.isEmpty ? "每天 6:00 更新" : "\(dailySongs.count) 首 · 每天 6:00 更新"
+    }
+
+    /// 私人漫游：连续批次灌入队列（Beans 同款行为 —— 先起播再持续 append）。
+    private func startPersonalFM() async {
+        guard actionLoading == nil else { return }
+        actionLoading = "fm"
+        defer { actionLoading = nil }
+
+        var started = false
+        do {
+            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 2)
+            guard !tracks.isEmpty else {
+                ToastCenter.shared.show("私人漫游暂时没有推荐")
+                return
+            }
+            started = true
+            PlayerCore.shared.play(queue: tracks, startIndex: 0)
+            ToastCenter.shared.show("已开启私人漫游")
+        } catch {
+            if !started { ToastCenter.shared.show("私人漫游加载失败") }
+        }
+    }
+
+    /// 心动模式：以「我喜欢」歌单里随机一首为种子 + 该歌单为口味范围，让服务端推相似串。
+    /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid（与 NeteaseLikedSongsView 同款）。
+    private func startHeartbeat() async {
+        guard actionLoading == nil else { return }
+        actionLoading = "heartbeat"
+        defer { actionLoading = nil }
+
+        guard let uid = NeteaseSession.shared.account?.userId else {
+            ToastCenter.shared.show("请先登录网易云")
+            return
+        }
+        do {
+            let likedId = "\(uid)"
+            let likedTracks = try await NeteaseMusicAPI.shared.playlistTracks(id: likedId)
+            guard let seed = likedTracks.randomElement(),
+                  let seedId = seed.neteaseId else {
+                ToastCenter.shared.show("先收藏一些喜欢的歌曲吧")
+                return
+            }
+            let songs = try await NeteaseMusicAPI.shared.intelligenceList(songId: seedId, playlistId: likedId)
+            guard !songs.isEmpty else {
+                ToastCenter.shared.show("心动模式暂时不可用")
+                return
+            }
+            PlayerCore.shared.play(queue: songs, startIndex: 0)
+            ToastCenter.shared.show("已开启心动模式")
+        } catch {
+            ToastCenter.shared.show("心动模式加载失败")
+        }
+    }
+
+    // MARK: - 新碟上架
+
+    @ViewBuilder
+    private var newAlbumsSection: some View {
+        if !newAlbums.isEmpty {
+            WellShelf(title: "新碟上架") {
+                ForEach(newAlbums) { album in
+                    NavigationLink {
+                        WellSearchDetailView(
+                            source: .album(id: album.id, platform: album.platform,
+                                           name: album.name, artist: album.artistName),
+                            coverURL: album.picURL)
+                    } label: {
+                        WellCoverCard(coverURL: album.picURL, title: album.name,
+                                      subtitle: album.artistName)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - 排行榜
+
+    @ViewBuilder
+    private var toplistsSection: some View {
+        if !toplists.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                WellSectionHeader(title: "排行榜")
+                    .padding(.horizontal, WellSearchMetrics.contentInset)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(displayedToplists.enumerated()), id: \.element.id) { index, top in
+                        NavigationLink {
+                            WellSearchDetailView(
+                                source: .playlist(id: top.id, platform: .netease, name: top.name),
+                                coverURL: top.coverURL)
+                        } label: {
+                            WellRankRow(index: index + 1, item: top)
+                        }
+                        .buttonStyle(.plain)
+                        if index < displayedToplists.count - 1 {
+                            Divider()
+                                .padding(.leading, WellSearchMetrics.contentInset + 24 + 12 + 52 + 12)
+                        }
+                    }
+
+                    if toplists.count > 3 {
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                                ranksExpanded.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(ranksExpanded ? "收起" : "展开全部（\(min(toplists.count, 10))）")
+                                    .font(.system(size: 13, weight: .medium))
+                                Image(systemName: ranksExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundStyle(AppTheme.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, WellSearchMetrics.contentInset)
+            }
+        }
+    }
+
+    private var displayedToplists: [WellToplistSummary] {
+        Array(toplists.prefix(ranksExpanded ? min(toplists.count, 10) : 3))
+    }
+
+    // MARK: - 热门歌手
+
+    @ViewBuilder
+    private var artistsSection: some View {
+        if !artists.isEmpty {
+            WellShelf(title: "热门歌手") {
+                ForEach(artists) { artist in
+                    NavigationLink {
+                        WellSearchDetailView(
+                            source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
+                            coverURL: artist.picURL)
+                    } label: {
+                        WellArtistCard(artist: artist)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - 状态视图
+
+    private var loadingState: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+            Text("正在加载推荐内容…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 420)
+    }
+
+    private func errorState(_ message: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 42, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await load(force: true) }
+            } label: {
+                Text("重新加载")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 9)
+                    .background(AppTheme.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, minHeight: 420)
+    }
+}
+
+// MARK: - 功能入口卡（每日推荐 / 私人漫游 / 心动模式）
+
+/// 大号入口卡：有封面用封面 + 底部渐变，无封面用品牌渐变 + 图标水印。
+struct WellFeatureCard: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    var coverURL: String?
+    let gradient: [Color]
+    var isLoading: Bool = false
+    var action: () -> Void
+
+    private let width: CGFloat = 160
+    private let height: CGFloat = 160
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .bottomLeading) {
+                background
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 7) {
+                        Image(systemName: icon)
+                            .font(.system(size: 15, weight: .bold))
+                        if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(0.72)
+                        }
+                    }
+                    .foregroundStyle(.white.opacity(0.92))
+
+                    Spacer(minLength: 0)
+
+                    Text(title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                }
+                .padding(14)
+            }
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(WellPressButtonStyle())
+        .disabled(isLoading)
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        if let coverURL, !coverURL.isEmpty {
+            WellRemoteImage(url: coverURL, displaySize: height)
+                .frame(width: width, height: height)
+                .overlay(
+                    LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.62)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(alignment: .topTrailing) {
+                    Circle()
+                        .fill(.white.opacity(0.16))
+                        .frame(width: 92, height: 92)
+                        .blur(radius: 3)
+                        .offset(x: 24, y: -26)
+                }
+                .overlay(alignment: .center) {
+                    Image(systemName: icon)
+                        .font(.system(size: 46, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.28))
+                        .offset(x: 34, y: -18)
+                }
+        }
+    }
+}
+
+// MARK: - 榜单行
+
+/// 排行榜行：`[序号] [封面52] 榜单名 / 更新频率   ›`
+struct WellRankRow: View {
+    let index: Int
+    let item: WellToplistSummary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(index)")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(index <= 3 ? AppTheme.accent : Color.secondary)
+                .frame(width: 24)
+
+            WellRemoteImage(url: item.coverURL, displaySize: 52)
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(item.updateFrequency ?? "每周更新")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 辅助
+
+/// 横向货架不裁剪溢出（iOS 17+ 才有 `scrollClipDisabled`）。
+private struct WellHorizontalClipModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.scrollClipDisabled()
+        } else {
+            content
+        }
+    }
+}
+
+/// 轻微按压缩放（替代 kumone 的 GlassPressButtonStyle）。
+struct WellPressButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.95
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: configuration.isPressed)
+    }
+}
+
+#Preview {
+    DiscoverView()
+}
