@@ -75,10 +75,8 @@ struct SearchView: View {
                     emptyPrompt
                 }
 
-                // 底栏留白：iOS 26 系统已自动扩展 safe area（见 WellBottomClearance）
-                WellBottomClearance()
+                // ★ 去除边距（用户 2026-10-13 指令）：底部不再加留白占位、顶部不再加 padding。
             }
-            .padding(.top, 8)
         }
         // ★ 页面背景兜底（对齐用户 10-11 无白边参照版 5d7dc59f）：
         //   无白边版的搜索页写法就是 `ScrollView + .background(AppTheme.background)`；
