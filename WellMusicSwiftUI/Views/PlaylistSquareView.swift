@@ -39,9 +39,11 @@ struct PlaylistSquareView: View {
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                             ForEach(playlists) { pl in
                                 NavigationLink {
-                                    WellSearchDetailView(
+                                    WellPlaylistDetailView(
                                         source: .playlist(id: pl.id, platform: .netease, name: pl.name),
-                                        coverURL: pl.coverURL)
+                                        coverURL: pl.coverURL,
+                                        creatorName: pl.creatorName,
+                                        playCount: pl.playCount)
                                 } label: {
                                     WellCoverCard(coverURL: pl.coverURL, title: pl.name,
                                                   subtitle: pl.creatorName,

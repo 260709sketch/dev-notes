@@ -285,7 +285,7 @@ struct SearchView: View {
     private func artistCards(_ items: some Collection<WellArtistSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { artist in
             NavigationLink {
-                WellSearchDetailView(
+                WellPlaylistDetailView(
                     source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
                     coverURL: artist.picURL)
             } label: {
@@ -298,10 +298,11 @@ struct SearchView: View {
     private func albumCards(_ items: some Collection<WellAlbumSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { album in
             NavigationLink {
-                WellSearchDetailView(
+                WellPlaylistDetailView(
                     source: .album(id: album.id, platform: album.platform,
                                    name: album.name, artist: album.artistName),
-                    coverURL: album.picURL)
+                    coverURL: album.picURL,
+                    creatorName: album.artistName)
             } label: {
                 WellCoverCard(coverURL: album.picURL, title: album.name,
                               subtitle: album.artistName, fillWidth: fillWidth)
@@ -313,9 +314,11 @@ struct SearchView: View {
     private func playlistCards(_ items: some Collection<WellPlaylistSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { playlist in
             NavigationLink {
-                WellSearchDetailView(
+                WellPlaylistDetailView(
                     source: .playlist(id: playlist.id, platform: .netease, name: playlist.name),
-                    coverURL: playlist.coverURL)
+                    coverURL: playlist.coverURL,
+                    creatorName: playlist.creatorName,
+                    playCount: playlist.playCount)
             } label: {
                 WellCoverCard(coverURL: playlist.coverURL, title: playlist.name,
                               subtitle: playlist.creatorName, playCount: playlist.playCount,

@@ -199,10 +199,11 @@ struct DiscoverView: View {
             WellShelf(title: "新碟上架") {
                 ForEach(newAlbums) { album in
                     NavigationLink {
-                        WellSearchDetailView(
+                        WellPlaylistDetailView(
                             source: .album(id: album.id, platform: album.platform,
                                            name: album.name, artist: album.artistName),
-                            coverURL: album.picURL)
+                            coverURL: album.picURL,
+                            creatorName: album.artistName)
                     } label: {
                         WellCoverCard(coverURL: album.picURL, title: album.name,
                                       subtitle: album.artistName)
@@ -230,7 +231,7 @@ struct DiscoverView: View {
 
                         ForEach(toplists.prefix(10)) { top in
                             NavigationLink {
-                                WellSearchDetailView(
+                                WellPlaylistDetailView(
                                     source: .playlist(id: top.id, platform: .netease, name: top.name),
                                     coverURL: top.coverURL)
                             } label: {
@@ -255,7 +256,7 @@ struct DiscoverView: View {
             WellShelf(title: "热门歌手") {
                 ForEach(artists) { artist in
                     NavigationLink {
-                        WellSearchDetailView(
+                        WellPlaylistDetailView(
                             source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
                             coverURL: artist.picURL)
                     } label: {
