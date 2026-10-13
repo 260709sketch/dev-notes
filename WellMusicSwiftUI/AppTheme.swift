@@ -5,6 +5,11 @@ enum AppTheme {
     /// 主题红
     static let accent = Color(red: 0.93, green: 0.25, blue: 0.24)
 
+    /// 全 App 背景色（MainTabView 根、各 page 兜底）。
+    /// 跟老版本一致保留 systemBackground：app 整体强制 dark，**深色下是黑**，
+    /// 配合老版本 .preferredColorScheme(.dark) 的设置（见 WellMusicApp.body），
+    /// nav bar / tab bar / 页面**统一全黑**——"白条"从源头不存在。
+    /// 若未来想支持浅色模式，需同步把 nav bar / tab bar 也铺同色，否则会复现断层。
     static let background = Color(uiColor: .systemBackground)
     static let secondaryBackground = Color(uiColor: .secondarySystemBackground)
     static let tertiaryBackground = Color(uiColor: .tertiarySystemBackground)
@@ -26,6 +31,25 @@ extension Color {
             green: Double((hex >> 8) & 0xFF) / 255.0,
             blue: Double(hex & 0xFF) / 255.0
         )
+    }
+}
+
+/// ★ 移除顶部/底部「白色遮挡」的 chrome 背景隐藏开关。
+///
+/// 用户实测：dock 栏（tab bar）下方与页面顶部各有一块**白色遮挡**，挡住了
+/// 延伸到这些区域的内容。这两块是系统 nav bar / tab bar 的 chrome 背景底座，
+/// 必须隐藏（不是变色）。iOS 18+ 的 `toolbarBackgroundVisibility(.hidden,
+/// for: .automatic)` 一次性隐藏 nav bar + tab bar + 搜索栏底座；
+/// iOS 16-17 退回逐个隐藏。
+struct HiddenChromeBackgroundModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .automatic)
+        } else {
+            content
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarBackground(.hidden, for: .tabBar)
+        }
     }
 }
 

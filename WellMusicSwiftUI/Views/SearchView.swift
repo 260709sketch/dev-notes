@@ -1,253 +1,196 @@
 import SwiftUI
 
-// MARK: - 视图模型（kumone 全搬：按模块惰性加载 + 平台/关键词切换全清）
+// MARK: - 视图模型
 
 @MainActor
 final class WellSearchViewModel: ObservableObject {
-    @Published var platform: WellSearchPlatform = .netease {
-        didSet {
-            // 平台切换：清空已加载标签和所有结果，强制重新搜索
-            guard oldValue != platform else { return }
-            loadedTabs.removeAll()
-            songs = []
-            artists = []
-            albums = []
-            playlists = []
-        }
-    }
-    /// 模块切换时清空已加载标签，强制重新搜索（kumone 同款语义）
-    @Published var type: WellSearchType = .all {
-        didSet { loadedTabs.removeAll() }
-    }
-
-    /// 当前生效的搜索词（由视图层防抖后 `setQuery` 写入，不直接 @Published）
-    private(set) var query = ""
-
-    @Published var songs: [MusicItem] = []
-    @Published var artists: [WellArtistSummary] = []
-    @Published var albums: [WellAlbumSummary] = []
-    @Published var playlists: [WellPlaylistSummary] = []
+    @Published var platform: WellSearchPlatform = .netease
+    @Published var type: WellSearchType = .all
+    @Published var result = WellSearchResult()
     @Published var isLoading = false
-    @Published var loadedTabs: Set<WellSearchType> = []
 
-    /// 关键词变化：全清 + 强制重搜
-    func setQuery(_ newQuery: String) {
-        guard newQuery != query else { return }
-        query = newQuery
-        loadedTabs.removeAll()
-        songs = []
-        artists = []
-        albums = []
-        playlists = []
+    private var loadedKey = ""
+
+    func clear() {
+        result = WellSearchResult()
+        isLoading = false
     }
 
-    /// 当前模块是否无结果（综合 = 四类全空）
-    func currentEmpty(for type: WellSearchType) -> Bool {
-        switch type {
-        case .all: return songs.isEmpty && artists.isEmpty && albums.isEmpty && playlists.isEmpty
-        case .songs: return songs.isEmpty
-        case .artists: return artists.isEmpty
-        case .albums: return albums.isEmpty
-        case .playlists: return playlists.isEmpty
-        }
-    }
+    func load(keyword: String) async {
+        let key = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { clear(); return }
+        let tag = "\(platform.rawValue)|\(type.rawValue)|\(key)"
+        guard tag != loadedKey else { return }
 
-    /// 按模块惰性加载：已拉过的模块直接跳过（kumone loadedTabs 语义）
-    func load(tab: WellSearchType) async {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !loadedTabs.contains(tab) else { return }
         isLoading = true
-        defer { isLoading = false }
-        loadedTabs.insert(tab)
-
-        switch tab {
-        case .all:
-            // 综合页：四路并发取样（与 kumone async let 同构）
-            async let songsTask = SearchService.shared.search(keyword: trimmed, platform: platform, type: .songs, limit: 12)
-            async let artistsTask = SearchService.shared.search(keyword: trimmed, platform: platform, type: .artists, limit: 10)
-            async let albumsTask = SearchService.shared.search(keyword: trimmed, platform: platform, type: .albums, limit: 10)
-            async let playlistsTask = SearchService.shared.search(keyword: trimmed, platform: platform, type: .playlists, limit: 10)
-            let (s, ar, al, pl) = await (songsTask, artistsTask, albumsTask, playlistsTask)
-            songs = s.songs
-            artists = ar.artists
-            albums = al.albums
-            playlists = pl.playlists
-        case .songs:
-            // 单曲页全量：网易云 100，QQ/酷狗 50（kumone 同款配额）
-            let limit = platform == .netease ? 100 : 50
-            let fetched = await SearchService.shared.search(keyword: trimmed, platform: platform, type: .songs, limit: limit)
-            songs = fetched.songs
-        case .artists:
-            let fetched = await SearchService.shared.search(keyword: trimmed, platform: platform, type: .artists, limit: 50)
-            artists = fetched.artists
-        case .albums:
-            let fetched = await SearchService.shared.search(keyword: trimmed, platform: platform, type: .albums, limit: 50)
-            albums = fetched.albums
-        case .playlists:
-            // QQ/酷狗无歌单搜索（SearchService 内部也会挡），保持空
-            let fetched = await SearchService.shared.search(keyword: trimmed, platform: platform, type: .playlists, limit: 50)
-            playlists = fetched.playlists
-        }
+        let fetched = await SearchService.shared.search(keyword: key, platform: platform, type: type)
+        // 请求期间条件若已变化则丢弃本次结果
+        guard tag == "\(platform.rawValue)|\(type.rawValue)|\(key)" else { return }
+        result = fetched
+        loadedKey = tag
+        isLoading = false
     }
 }
 
 // MARK: - 搜索页
 
-/// 搜索 Tab —— kumone `SearchView` 全量移植（该页为用户原创，授权全搬）。
+/// 搜索 Tab：平台 / 模块分段 + 分区卡片结果（版式对齐 kumone）
 ///
-/// 结构：搜索框 → 平台分段 → 模块分段 → 结果（综合 = 单曲列表 + 歌手/专辑/歌单货架）。
-/// 关键词 400ms 防抖；切模块惰性加载；切平台/关键词全清重搜。
-///
-/// ⚠️ 不订阅 PlayerCore（只用它「发起播放」；订阅会让搜索列表随
-/// 20Hz 播放时钟每秒重算 20 次 → 滑动掉帧）。
+/// ⚠️ 本视图**不带 `NavigationStack`**：导航容器由 `MainTabView` 统一提供。
+/// 原因见 `MainTabView.page(_:_:)` —— 四个 Tab 的导航栈同时存在于视图树中时，
+/// 切换可见性会让四个导航栏一起重新测量，大标题与整页都会跳一下。
 struct SearchView: View {
+    /// ⚠️ 刻意**不用** `@EnvironmentObject`：`PlayerCore` 每 0.05s 推一次 `currentTime`，
+    /// 只要订阅了它，本页 `body` 就跟着每秒重算 20 次 —— 页面里有几十张卡时滚动直接卡死。
+    /// 本页只在点击时**发起播放**、不显示任何播放状态，所以直接取单例，不订阅。
+    private var player: PlayerCore { PlayerCore.shared }
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
+    @State private var committedQuery = ""
 
     private var hasQuery: Bool {
-        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !committedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var taskID: String {
+        "\(model.platform.rawValue)|\(model.type.rawValue)|\(committedQuery)"
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if hasQuery {
-                        // 平台分段（网易云 / QQ音乐 / 酷狗）—— kumone SearchView 同款双分段结构
-                        platformPicker
-                        typePicker
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if hasQuery {
+                    platformPicker
+                    typePicker
 
-                        if model.isLoading && model.currentEmpty(for: model.type) {
-                            ProgressView()
-                                .frame(maxWidth: .infinity, minHeight: 300)
-                        } else {
-                            tabContent
-                        }
+                    if model.isLoading && model.result.isEmpty(for: model.type) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 280)
+                    } else if model.result.isEmpty(for: model.type) {
+                        emptyResult
                     } else {
-                        emptyPrompt
+                        content
                     }
+                } else {
+                    emptyPrompt
+                }
 
-                    // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
-                    Color.clear.frame(height: 150)
-                }
-                .padding(.top, 8)
+                // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
+                Color.clear.frame(height: 150)
             }
-            .background(AppTheme.background)
-            .navigationTitle(searchText.isEmpty ? "搜索" : "搜索：\(searchText)")
-            .navigationBarTitleDisplayMode(.inline)
-            // ★ 搜索框挂在导航栏（kumone 同款 `.searchable`）：
-            //   点击时系统自动上移激活、展开 Cancel，内容区下沉 —— 这是系统级交互。
-            .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
-            .onSubmit(of: .search) {
-                model.setQuery(searchText)
-                Task { await model.load(tab: model.type) }
+            .padding(.top, 8)
+        }
+        // ★ 不铺背景（与 kumone 一致），交给系统 Liquid Glass 自动融合。
+        // 用系统搜索框（与 kumone 版式一致），不再自绘一行搜索框。
+        // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到
+        // 系统搜索栏上；iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
+        .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
+        .onSubmit(of: .search) {
+            committedQuery = searchText
+        }
+        .onChange(of: searchText) { newValue in
+            // 400ms 防抖：输入过程中不逐字打接口
+            Task {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if searchText == newValue { committedQuery = newValue }
             }
-            // 关键词 400ms 防抖（kumone 同款）
-            .onChange(of: searchText) { newValue in
-                Task {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                    guard searchText == newValue else { return }
-                    model.setQuery(newValue)
-                    await model.load(tab: model.type)
-                }
-            }
-            // 模块变化：惰性加载该模块（已加载则跳过）
-            .task(id: model.type) {
-                await model.load(tab: model.type)
-            }
+        }
+        .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
+        // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
+        // kumone 搜索页用的是系统默认的**大标题**，抬头就是一行大字「搜索」。
+        // 之前设成 inline 之后抬头变成导航栏里的小字，和 kumone 完全不是一套，
+        // 用户一眼就看出来了。
+        .task(id: taskID) {
+            model.clear()
+            await model.load(keyword: committedQuery)
         }
     }
 
     // MARK: 分段选择
 
     private var platformPicker: some View {
-        WellSegmentedControl(items: WellSearchPlatform.allCases,
-                             title: { $0.rawValue },
-                             selection: $model.platform)
-            .padding(.horizontal, WellSearchMetrics.contentInset)
+        Picker("", selection: $model.platform) {
+            ForEach(WellSearchPlatform.allCases) { p in
+                Text(p.rawValue).tag(p)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, WellSearchMetrics.contentInset)
+        .padding(.top, 12)
     }
 
     private var typePicker: some View {
-        WellSegmentedControl(items: WellSearchType.allCases,
-                             title: { $0.rawValue },
-                             selection: $model.type)
-            .padding(.horizontal, WellSearchMetrics.contentInset)
+        Picker("", selection: $model.type) {
+            ForEach(WellSearchType.allCases) { t in
+                Text(t.rawValue).tag(t)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, WellSearchMetrics.contentInset)
     }
 
     // MARK: 空态提示
 
     private var emptyPrompt: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: 46, weight: .light))
                 .foregroundStyle(.tertiary)
-                .padding(.top, 60)
             Text("探索海量华语流行与经典音乐")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            Text("输入歌曲名称、歌手名或歌单关键字开始搜索")
+            Text("输入歌曲、歌手、专辑或歌单关键字开始搜索")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 32)
+        .padding(.top, 60)
     }
 
-    // MARK: 结果区
+    // MARK: 内容
 
     @ViewBuilder
-    private var tabContent: some View {
+    private var content: some View {
         switch model.type {
-        case .all:
-            allContent
-            // 综合页四类全空且不在加载 → 明确的「无结果」提示（kumone 同款）
-            if model.currentEmpty(for: .all), !model.isLoading {
-                emptyResult
-                    .frame(minHeight: 300)
-            }
-        case .songs:
-            songList(model.songs)
+        case .all: allContent
+        case .songs: songList(model.result.songs)
         case .artists:
-            WellCardGrid { artistCards(model.artists, fillWidth: true) }
+            WellCardGrid { artistCards(model.result.artists, fillWidth: true) }
                 .padding(.horizontal, WellSearchMetrics.contentInset)
         case .albums:
-            WellCardGrid { albumCards(model.albums, fillWidth: true) }
+            WellCardGrid { albumCards(model.result.albums, fillWidth: true) }
                 .padding(.horizontal, WellSearchMetrics.contentInset)
         case .playlists:
-            if model.playlists.isEmpty, !model.isLoading {
-                emptyResult
-                    .frame(minHeight: 300)
-            } else {
-                WellCardGrid { playlistCards(model.playlists, fillWidth: true) }
-                    .padding(.horizontal, WellSearchMetrics.contentInset)
-            }
+            WellCardGrid { playlistCards(model.result.playlists, fillWidth: true) }
+                .padding(.horizontal, WellSearchMetrics.contentInset)
         }
     }
 
     @ViewBuilder
     private var allContent: some View {
-        if !model.songs.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                WellSectionHeader(title: "单曲") {
-                    model.type = .songs
-                }
-                .padding(.horizontal, WellSearchMetrics.contentInset)
-                songList(Array(model.songs.prefix(6)))
+        if !model.result.songs.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                WellSectionHeader(title: "单曲", action: { model.type = .songs })
+                    .padding(.horizontal, WellSearchMetrics.contentInset)
+                songList(Array(model.result.songs.prefix(6)))
             }
         }
-        if !model.artists.isEmpty {
+        if !model.result.artists.isEmpty {
             WellShelf(title: "歌手", action: { model.type = .artists }) {
-                artistCards(model.artists.prefix(8))
+                artistCards(model.result.artists.prefix(8))
             }
         }
-        if !model.albums.isEmpty {
+        if !model.result.albums.isEmpty {
             WellShelf(title: "专辑", action: { model.type = .albums }) {
-                albumCards(model.albums.prefix(8))
+                albumCards(model.result.albums.prefix(8))
             }
         }
-        if !model.playlists.isEmpty {
+        if !model.result.playlists.isEmpty {
             WellShelf(title: "歌单", action: { model.type = .playlists }) {
-                playlistCards(model.playlists.prefix(8))
+                playlistCards(model.result.playlists.prefix(8))
             }
         }
     }
@@ -260,22 +203,26 @@ struct SearchView: View {
             Text("没有找到相关结果")
                 .font(.headline)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 280)
     }
 
     // MARK: 歌曲列表
 
-    /// 歌曲列表（对照 kumone 截图：行间**无分隔线**，干净列表）
     private func songList(_ tracks: [MusicItem]) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, item in
                 Button {
-                    PlayerCore.shared.play(queue: tracks, startIndex: index)
+                    player.play(queue: tracks, startIndex: index)
                 } label: {
-                    WellSearchTrackRow(item: item)
+                    TrackRow(item: item)
+                        .padding(.vertical, 6)
                         .padding(.horizontal, WellSearchMetrics.contentInset)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                if index < tracks.count - 1 {
+                    Divider().padding(.leading, WellSearchMetrics.contentInset + 58)
+                }
             }
         }
     }
@@ -285,7 +232,7 @@ struct SearchView: View {
     private func artistCards(_ items: some Collection<WellArtistSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { artist in
             NavigationLink {
-                WellPlaylistDetailView(
+                WellSearchDetailView(
                     source: .artist(id: artist.id, platform: artist.platform, name: artist.name),
                     coverURL: artist.picURL)
             } label: {
@@ -298,11 +245,10 @@ struct SearchView: View {
     private func albumCards(_ items: some Collection<WellAlbumSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { album in
             NavigationLink {
-                WellPlaylistDetailView(
+                WellSearchDetailView(
                     source: .album(id: album.id, platform: album.platform,
                                    name: album.name, artist: album.artistName),
-                    coverURL: album.picURL,
-                    creatorName: album.artistName)
+                    coverURL: album.picURL)
             } label: {
                 WellCoverCard(coverURL: album.picURL, title: album.name,
                               subtitle: album.artistName, fillWidth: fillWidth)
@@ -314,11 +260,9 @@ struct SearchView: View {
     private func playlistCards(_ items: some Collection<WellPlaylistSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { playlist in
             NavigationLink {
-                WellPlaylistDetailView(
+                WellSearchDetailView(
                     source: .playlist(id: playlist.id, platform: .netease, name: playlist.name),
-                    coverURL: playlist.coverURL,
-                    creatorName: playlist.creatorName,
-                    playCount: playlist.playCount)
+                    coverURL: playlist.coverURL)
             } label: {
                 WellCoverCard(coverURL: playlist.coverURL, title: playlist.name,
                               subtitle: playlist.creatorName, playCount: playlist.playCount,

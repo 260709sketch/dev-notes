@@ -25,48 +25,46 @@ struct PlaylistSquareView: View {
     ]
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    categoryBar
+        // ⚠️ 不带 NavigationStack：导航容器由 MainTabView 的 page() 统一提供（11:10 架构）。
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                categoryBar
 
-                    if failed && playlists.isEmpty {
-                        retryState
-                    } else if isLoading && playlists.isEmpty {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 360)
-                    } else {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                            ForEach(playlists) { pl in
-                                NavigationLink {
-                                    WellPlaylistDetailView(
-                                        source: .playlist(id: pl.id, platform: .netease, name: pl.name),
-                                        coverURL: pl.coverURL,
-                                        creatorName: pl.creatorName,
-                                        playCount: pl.playCount)
-                                } label: {
-                                    WellCoverCard(coverURL: pl.coverURL, title: pl.name,
-                                                  subtitle: pl.creatorName,
-                                                  playCount: pl.playCount,
-                                                  fillWidth: true)
-                                }
-                                .buttonStyle(.plain)
+                if failed && playlists.isEmpty {
+                    retryState
+                } else if isLoading && playlists.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 360)
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                        ForEach(playlists) { pl in
+                            NavigationLink {
+                                WellPlaylistDetailView(
+                                    source: .playlist(id: pl.id, platform: .netease, name: pl.name),
+                                    coverURL: pl.coverURL,
+                                    creatorName: pl.creatorName,
+                                    playCount: pl.playCount)
+                            } label: {
+                                WellCoverCard(coverURL: pl.coverURL, title: pl.name,
+                                              subtitle: pl.creatorName,
+                                              playCount: pl.playCount,
+                                              fillWidth: true)
                             }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, WellSearchMetrics.contentInset)
                     }
-
-                    Color.clear.frame(height: 170)
+                    .padding(.horizontal, WellSearchMetrics.contentInset)
                 }
-                .padding(.top, 8)
+
+                Color.clear.frame(height: 170)
             }
-            .background(AppTheme.background)
-            .navigationTitle("精选")
-            .navigationBarTitleDisplayMode(.large)
-            .refreshable { await load(force: true) }
-            .task(id: category) {
-                await load()
-            }
+            .padding(.top, 8)
+        }
+        .navigationTitle("精选")
+        .navigationBarTitleDisplayMode(.large)
+        .refreshable { await load(force: true) }
+        .task(id: category) {
+            await load()
         }
     }
 
@@ -119,7 +117,11 @@ struct PlaylistSquareView: View {
                     list = (try? await NeteaseMusicAPI.shared.categoryPlaylists(cat: "全部", limit: 40)) ?? []
                 }
             } else {
-                list = try await NeteaseMusicAPI.shared.categoryPlaylists(cat: key, limit: 40)
+                // 分类歌单（明文 api/playlist/list）；失败退个性化推荐，避免整页报错
+                list = (try? await NeteaseMusicAPI.shared.categoryPlaylists(cat: key, limit: 40)) ?? []
+                if list.isEmpty {
+                    list = (try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 40)) ?? []
+                }
             }
             // 请求期间用户已切到别的分类 → 丢弃本次结果
             guard key == category else { return }

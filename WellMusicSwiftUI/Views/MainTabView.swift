@@ -15,13 +15,28 @@ struct MainTabView: View {
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
 
+    /// 各 Tab 独立的导航路径（类型擦除；push 一律用 destination-based NavigationLink）。
+    ///
+    /// ⚠️ 导航容器（`NavigationStack`）必须由**这里**统一提供，**不要**写进各页面内部：
+    /// 四个/五个 `NavigationStack` 同时存在时若由页面自持，切换可见性会让所有导航栏
+    /// 一起重新测量，大标题与整页都会跳一下（11:10 版踩过并修复的结构，勿回退）。
+    @State private var radioPath = NavigationPath()
+    @State private var squarePath = NavigationPath()
+    @State private var favoritesPath = NavigationPath()
+    @State private var searchPath = NavigationPath()
+    @State private var profilePath = NavigationPath()
+
     var body: some View {
         tabInterface
+            .modifier(HiddenChromeBackgroundModifier())
             .overlay(alignment: .top) { WellToastView() }
-            .onReceive(PlayerCore.shared.$hasActiveTrack) { hasActiveTrack = $0 }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
+            .onReceive(PlayerCore.shared.$hasActiveTrack) { value in
+                if hasActiveTrack != value { hasActiveTrack = value }
+            }
+            .onAppear { hasActiveTrack = PlayerCore.shared.hasActiveTrack }
     }
 
     @ViewBuilder
@@ -54,21 +69,23 @@ struct MainTabView: View {
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
-                DiscoverView()
+                // 原生 TabView 不提供导航容器，这里由 MainTabView 统一补上
+                //（页面自身不带 NavigationStack）。
+                NavigationStack(path: $radioPath) { DiscoverView() }
             }
             Tab("精选", systemImage: "sparkles.rectangle.stack.fill", value: WellTab.square) {
-                PlaylistSquareView()
+                NavigationStack(path: $squarePath) { PlaylistSquareView() }
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                FavoritesView()
+                NavigationStack(path: $favoritesPath) { FavoritesView() }
             }
             Tab(value: WellTab.search, role: .search) {
-                SearchView()
+                NavigationStack(path: $searchPath) { SearchView() }
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                ProfileView()
+                NavigationStack(path: $profilePath) { ProfileView() }
             }
         }
     }
@@ -108,12 +125,24 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            // 稳定 identity：切换时只改 opacity / zIndex，不重建视图子树
-            .id(tab)
-            .opacity(selectedTab == tab ? 1 : 0)
-            .allowsHitTesting(selectedTab == tab)
-            .zIndex(selectedTab == tab ? 1 : 0)
+        // 导航容器在切换层之外稳定存在，页面只作为其内容；
+        // 切 tab 只改 opacity，不触碰导航栏结构（大标题不跳）。
+        NavigationStack(path: path(for: tab)) {
+            content()
+        }
+        .opacity(selectedTab == tab ? 1 : 0)
+        .allowsHitTesting(selectedTab == tab)
+    }
+
+    /// 每个 Tab 独立的导航路径。
+    private func path(for tab: WellTab) -> Binding<NavigationPath> {
+        switch tab {
+        case .radio: return $radioPath
+        case .square: return $squarePath
+        case .favorites: return $favoritesPath
+        case .search: return $searchPath
+        case .profile: return $profilePath
+        }
     }
 }
 

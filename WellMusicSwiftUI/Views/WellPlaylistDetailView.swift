@@ -16,6 +16,8 @@ struct WellPlaylistDetailView: View {
     var creatorName: String?
     /// 播放量（歌单页显示）
     var playCount: Int = 0
+    /// ★ 每日推荐模式：数据走 `dailyRecommendSongs()`，header 封面用首曲封面
+    var dailyMode: Bool = false
 
     /// 歌单内排序方式（Beans 同款）
     enum SortMode: String, CaseIterable, Identifiable {
@@ -31,6 +33,11 @@ struct WellPlaylistDetailView: View {
     @State private var searchText = ""
     @State private var sortMode: SortMode = .original
 
+    /// 每日推荐模式下的 header 封面（首曲封面）
+    private var headerCoverURL: String? {
+        dailyMode ? (tracks.first?.albumCoverURL ?? coverURL) : coverURL
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -40,7 +47,6 @@ struct WellPlaylistDetailView: View {
             }
             .padding(.top, 12)
         }
-        .background(AppTheme.background)
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
@@ -62,7 +68,7 @@ struct WellPlaylistDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                WellRemoteImage(url: coverURL, displaySize: 96)
+                WellRemoteImage(url: headerCoverURL, displaySize: 96)
                     .frame(width: 96, height: 96)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
@@ -259,7 +265,12 @@ struct WellPlaylistDetailView: View {
     private func load() async {
         isLoading = true
         failed = false
-        let fetched = await SearchService.shared.detailTracks(for: source)
+        let fetched: [MusicItem]
+        if dailyMode {
+            fetched = (try? await NeteaseMusicAPI.shared.dailyRecommendSongs()) ?? []
+        } else {
+            fetched = await SearchService.shared.detailTracks(for: source)
+        }
         tracks = fetched
         failed = fetched.isEmpty
         isLoading = false

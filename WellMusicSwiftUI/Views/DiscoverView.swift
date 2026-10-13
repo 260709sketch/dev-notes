@@ -16,6 +16,7 @@ import SwiftUI
 ///    以对齐 iOS 26 系统 chrome 的渲染方式（参见项目白边终审结论）。
 struct DiscoverView: View {
     @State private var dailySongs: [MusicItem] = []
+    @State private var recommendedPlaylists: [WellPlaylistSummary] = []
     @State private var newAlbums: [WellAlbumSummary] = []
     @State private var toplists: [WellToplistSummary] = []
     @State private var artists: [WellArtistSummary] = []
@@ -26,31 +27,30 @@ struct DiscoverView: View {
     @State private var actionLoading: String?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    if let errorMessage {
-                        errorState(errorMessage)
-                    } else if isLoading {
-                        loadingState
-                    } else {
-                        dailySection
-                        newAlbumsSection
-                        toplistsSection
-                        artistsSection
-                    }
-
-                    // 底栏留白：迷你播放器 + Tab 胶囊
-                    Color.clear.frame(height: 170)
+        // ⚠️ 不带 NavigationStack：导航容器由 MainTabView 的 page() 统一提供（11:10 架构）。
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                if let errorMessage {
+                    errorState(errorMessage)
+                } else if isLoading {
+                    loadingState
+                } else {
+                    dailySection
+                    recommendedSection
+                    newAlbumsSection
+                    toplistsSection
+                    artistsSection
                 }
-                .padding(.top, 8)
+
+                // 底栏留白：迷你播放器 + Tab 胶囊
+                Color.clear.frame(height: 170)
             }
-            .background(AppTheme.background)
-            .navigationTitle("发现")
-            .navigationBarTitleDisplayMode(.large)
-            .task { await load() }
-            .refreshable { await load(force: true) }
+            .padding(.top, 8)
         }
+        .navigationTitle("发现")
+        .navigationBarTitleDisplayMode(.large)
+        .task { await load() }
+        .refreshable { await load(force: true) }
     }
 
     // MARK: - 加载
@@ -61,19 +61,44 @@ struct DiscoverView: View {
         errorMessage = nil
 
         async let dailyTask = try? NeteaseMusicAPI.shared.dailyRecommendSongs()
+        async let recsTask = try? NeteaseMusicAPI.shared.personalizedPlaylists(limit: 30)
         async let albumsTask = try? NeteaseMusicAPI.shared.newAlbums(limit: 20)
         async let topsTask = try? NeteaseMusicAPI.shared.toplists()
         async let artistsTask = try? NeteaseMusicAPI.shared.topArtists(limit: 30)
 
-        let (daily, albums, tops, arts) = await (dailyTask, albumsTask, topsTask, artistsTask)
+        let (daily, recs, albums, tops, arts) = await (dailyTask, recsTask, albumsTask, topsTask, artistsTask)
         dailySongs = daily ?? []
+        recommendedPlaylists = recs ?? []
         newAlbums = albums ?? []
         toplists = tops ?? []
         artists = arts ?? []
         isLoading = false
 
-        if dailySongs.isEmpty && newAlbums.isEmpty && toplists.isEmpty && artists.isEmpty {
+        if dailySongs.isEmpty && recommendedPlaylists.isEmpty && newAlbums.isEmpty && toplists.isEmpty && artists.isEmpty {
             errorMessage = "内容加载失败，请下拉重试"
+        }
+    }
+
+    // MARK: - 推荐歌单（个性化推荐货架）
+
+    @ViewBuilder
+    private var recommendedSection: some View {
+        if !recommendedPlaylists.isEmpty {
+            WellShelf(title: "推荐歌单") {
+                ForEach(recommendedPlaylists) { pl in
+                    NavigationLink {
+                        WellPlaylistDetailView(
+                            source: .playlist(id: pl.id, platform: .netease, name: pl.name),
+                            coverURL: pl.coverURL,
+                            creatorName: pl.creatorName,
+                            playCount: pl.playCount)
+                    } label: {
+                        WellCoverCard(coverURL: pl.coverURL, title: pl.name,
+                                      subtitle: pl.creatorName, playCount: pl.playCount)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
@@ -88,9 +113,13 @@ struct DiscoverView: View {
                 HStack(alignment: .top, spacing: 14) {
                     Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
 
-                    // 每日推荐：整卡 NavigationLink 进列表页（对齐 kumone DailySongsView）
+                    // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
+                    // 数据走 dailyRecommendSongs），不是直接播放
                     NavigationLink {
-                        DailyRecommendView()
+                        WellPlaylistDetailView(
+                            source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
+                            coverURL: nil,
+                            dailyMode: true)
                     } label: {
                         WellFeatureCard(
                             title: "每日推荐",
@@ -109,8 +138,7 @@ struct DiscoverView: View {
                         icon: "wave.3.right.circle.fill",
                         coverURL: nil,
                         gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
-                                   Color(red: 0.41, green: 0.28, blue: 0.65)],
-                        isLoading: actionLoading == "fm"
+                                   Color(red: 0.41, green: 0.28, blue: 0.65)]
                     ) {
                         Task { await startPersonalFM() }
                     }
@@ -121,8 +149,7 @@ struct DiscoverView: View {
                         icon: "heart.circle.fill",
                         coverURL: nil,
                         gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
-                                   Color(red: 0.98, green: 0.43, blue: 0.35)],
-                        isLoading: actionLoading == "heartbeat"
+                                   Color(red: 0.98, green: 0.43, blue: 0.35)]
                     ) {
                         Task { await startHeartbeat() }
                     }
@@ -160,8 +187,9 @@ struct DiscoverView: View {
         }
     }
 
-    /// 心动模式：以「我喜欢」歌单里随机一首为种子 + 该歌单为口味范围，让服务端推相似串。
-    /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid（与 NeteaseLikedSongsView 同款）。
+    /// 心动模式：以「我喜欢」歌单随机种子走 intelligenceList；失败逐级兜底
+    /// （相似歌曲 simiSong → 我喜欢歌单随机起播），保证总能出歌。
+    /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid。
     private func startHeartbeat() async {
         guard actionLoading == nil else { return }
         actionLoading = "heartbeat"
@@ -171,24 +199,41 @@ struct DiscoverView: View {
             ToastCenter.shared.show("请先登录网易云")
             return
         }
-        do {
-            let likedId = "\(uid)"
-            let likedTracks = try await NeteaseMusicAPI.shared.playlistTracks(id: likedId)
-            guard let seed = likedTracks.randomElement(),
-                  let seedId = seed.neteaseId else {
-                ToastCenter.shared.show("先收藏一些喜欢的歌曲吧")
-                return
-            }
-            let songs = try await NeteaseMusicAPI.shared.intelligenceList(songId: seedId, playlistId: likedId)
-            guard !songs.isEmpty else {
-                ToastCenter.shared.show("心动模式暂时不可用")
-                return
-            }
-            PlayerCore.shared.play(queue: songs, startIndex: 0)
-            ToastCenter.shared.show("已开启心动模式")
-        } catch {
-            ToastCenter.shared.show("心动模式加载失败")
+        let likedId = "\(uid)"
+
+        // 种子：我喜欢歌单随机一首
+        var seedId: String?
+        var likedTracks: [MusicItem] = []
+        if let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
+            likedTracks = list
+            seedId = list.randomElement()?.neteaseId
         }
+
+        // ① 种子 + 口味范围 → intelligenceList（服务端推相似串）
+        if let seedId {
+            if let songs = try? await NeteaseMusicAPI.shared.intelligenceList(songId: seedId, playlistId: likedId),
+               !songs.isEmpty {
+                PlayerCore.shared.play(queue: songs, startIndex: 0)
+                ToastCenter.shared.show("已开启心动模式")
+                return
+            }
+            // ② 相似歌曲兜底
+            if let songs = try? await NeteaseMusicAPI.shared.simiSongs(songId: seedId), !songs.isEmpty {
+                PlayerCore.shared.play(queue: songs, startIndex: 0)
+                ToastCenter.shared.show("已开启心动模式")
+                return
+            }
+        }
+
+        // ③ 最后兜底：我喜欢歌单随机起播（总能出歌）
+        if !likedTracks.isEmpty {
+            let shuffled = likedTracks.shuffled()
+            PlayerCore.shared.play(queue: shuffled, startIndex: 0)
+            ToastCenter.shared.show("已开启心动模式")
+            return
+        }
+
+        ToastCenter.shared.show("先收藏一些喜欢的歌曲吧")
     }
 
     // MARK: - 新碟上架
@@ -332,16 +377,9 @@ struct WellFeatureCard: View {
                 background
 
                 VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 7) {
-                        Image(systemName: icon)
-                            .font(.system(size: 15, weight: .bold))
-                        if isLoading {
-                            ProgressView()
-                                .tint(.white)
-                                .scaleEffect(0.72)
-                        }
-                    }
-                    .foregroundStyle(.white.opacity(0.92))
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.92))
 
                     Spacer(minLength: 0)
 

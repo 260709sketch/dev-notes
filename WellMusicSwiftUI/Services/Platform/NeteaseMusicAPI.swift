@@ -223,6 +223,12 @@ final class NeteaseMusicAPI {
         var more: Bool?
     }
 
+    /// `api/discovery/simiSong`（相似歌曲）响应
+    private struct SimiSongResponse: Decodable {
+        var code: Int?
+        var songs: [Song]?
+    }
+
     private struct ToplistItem: Decodable {
         var id: Int?
         var name: String?
@@ -616,16 +622,29 @@ final class NeteaseMusicAPI {
         return (resp.result ?? []).compactMap(Self.mapPlaylist)
     }
 
-    /// 歌单广场：按分类拉歌单（`api/top/playlist`，明文可用）。
-    /// `cat` 传「全部」时服务端返回官方热推全集；分页用 `order=hot` + offset。
+    /// 歌单广场：按分类拉歌单。
+    ///
+    /// 主通道：明文 GET `api/playlist/list?cat=...`（老接口，无需登录长期稳定）。
+    /// `api/top/playlist` 在部分账号/UA 下会 301 到风控页导致解码失败，故弃用。
     func categoryPlaylists(cat: String, limit: Int = 30, offset: Int = 0) async throws -> [WellPlaylistSummary] {
-        let params: [String: Any] = [
-            "cat": cat, "order": "hot", "limit": limit, "offset": offset,
-            "total": true, "csrf_token": "",
+        var comps = URLComponents(string: "https://music.163.com/api/playlist/list")!
+        comps.queryItems = [
+            URLQueryItem(name: "cat", value: cat),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "offset", value: "\(offset)"),
+            URLQueryItem(name: "total", value: "true"),
         ]
-        let resp: TopPlaylistResponse = try await Self.apiRequest(
-            "api/top/playlist", params: params, type: TopPlaylistResponse.self)
+        let data = try await rawGet(comps.url!.absoluteString)
+        let resp = try JSONDecoder().decode(TopPlaylistResponse.self, from: data)
         return (resp.playlists ?? []).compactMap(Self.mapPlaylist)
+    }
+
+    /// 相似歌曲（心动模式兜底：`api/discovery/simiSong`，明文可用）。
+    func simiSongs(songId: String, limit: Int = 30) async throws -> [MusicItem] {
+        let params: [String: Any] = ["songid": songId, "limit": limit, "csrf_token": ""]
+        let resp: SimiSongResponse = try await Self.apiRequest(
+            "api/discovery/simiSong", params: params, type: SimiSongResponse.self)
+        return (resp.songs ?? []).compactMap(Self.mapSong)
     }
 
     /// 排行榜列表（带更新频率）
