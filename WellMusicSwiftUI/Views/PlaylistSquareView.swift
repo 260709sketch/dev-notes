@@ -108,11 +108,14 @@ struct PlaylistSquareView: View {
         isLoading = true
         failed = false
         do {
-            let list: [WellPlaylistSummary]
+            var list: [WellPlaylistSummary] = []
             if key == "全部" {
-                // 「全部」用个性化推荐兜底，比 top/playlist 的全集质量更高
-                list = (try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 40))
-                    ?? (try await NeteaseMusicAPI.shared.categoryPlaylists(cat: "全部", limit: 40))
+                // 「全部」用个性化推荐兜底，比 top/playlist 的全集质量更高；
+                // 个性化失败（未登录等）再退回 top/playlist 全集
+                list = (try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 40)) ?? []
+                if list.isEmpty {
+                    list = (try? await NeteaseMusicAPI.shared.categoryPlaylists(cat: "全部", limit: 40)) ?? []
+                }
             } else {
                 list = try await NeteaseMusicAPI.shared.categoryPlaylists(cat: key, limit: 40)
             }
