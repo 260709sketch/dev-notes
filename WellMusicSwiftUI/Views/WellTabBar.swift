@@ -5,6 +5,7 @@ enum WellTab: String, CaseIterable, Identifiable {
     case favorites
     case profile
     case radio
+    case square
     case search
 
     var id: String { rawValue }
@@ -13,7 +14,8 @@ enum WellTab: String, CaseIterable, Identifiable {
         switch self {
         case .favorites: return "收藏"
         case .profile: return "我的"
-        case .radio: return "电台"
+        case .radio: return "发现"
+        case .square: return "精选"
         case .search: return "搜索"
         }
     }
@@ -22,7 +24,8 @@ enum WellTab: String, CaseIterable, Identifiable {
         switch self {
         case .favorites: return "heart.fill"
         case .profile: return "person.fill"
-        case .radio: return "dot.radiowaves.left.and.right"
+        case .radio: return "house.fill"
+        case .square: return "sparkles.rectangle.stack.fill"
         case .search: return "magnifyingglass"
         }
     }

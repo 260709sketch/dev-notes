@@ -216,6 +216,13 @@ final class NeteaseMusicAPI {
         var result: [PlaylistItem]?
     }
 
+    /// `api/top/playlist`（歌单广场）响应
+    private struct TopPlaylistResponse: Decodable {
+        var code: Int?
+        var playlists: [PlaylistItem]?
+        var more: Bool?
+    }
+
     private struct ToplistItem: Decodable {
         var id: Int?
         var name: String?
@@ -607,6 +614,18 @@ final class NeteaseMusicAPI {
         let resp: PersonalizedPlaylistResponse = try await Self.apiRequest(
             "api/personalized/playlist", params: params, type: PersonalizedPlaylistResponse.self)
         return (resp.result ?? []).compactMap(Self.mapPlaylist)
+    }
+
+    /// 歌单广场：按分类拉歌单（`api/top/playlist`，明文可用）。
+    /// `cat` 传「全部」时服务端返回官方热推全集；分页用 `order=hot` + offset。
+    func categoryPlaylists(cat: String, limit: Int = 30, offset: Int = 0) async throws -> [WellPlaylistSummary] {
+        let params: [String: Any] = [
+            "cat": cat, "order": "hot", "limit": limit, "offset": offset,
+            "total": true, "csrf_token": "",
+        ]
+        let resp: TopPlaylistResponse = try await Self.apiRequest(
+            "api/top/playlist", params: params, type: TopPlaylistResponse.self)
+        return (resp.playlists ?? []).compactMap(Self.mapPlaylist)
     }
 
     /// 排行榜列表（带更新频率）

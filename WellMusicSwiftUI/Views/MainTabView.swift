@@ -56,6 +56,9 @@ struct MainTabView: View {
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
                 DiscoverView()
             }
+            Tab("精选", systemImage: "sparkles.rectangle.stack.fill", value: WellTab.square) {
+                PlaylistSquareView()
+            }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
                 FavoritesView()
             }
@@ -81,6 +84,7 @@ struct MainTabView: View {
                 page(.favorites) { FavoritesView() }
                 page(.profile) { ProfileView() }
                 page(.radio) { DiscoverView() }
+                page(.square) { PlaylistSquareView() }
                 page(.search) { SearchView() }
             }
 
@@ -116,6 +120,7 @@ struct MainTabView: View {
 extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
         .init(tab: .radio, title: "发现", icon: "house"),
+        .init(tab: .square, title: "精选", icon: "sparkles.rectangle.stack"),
         .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
