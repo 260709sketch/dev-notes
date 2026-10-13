@@ -259,19 +259,19 @@ struct WellArtistHomeView: View {
         isLoading = true
         failed = false
 
-        // 并发拉热门歌曲 + 专辑（真实接口）
+        // 并发拉热门歌曲 + 专辑（真实接口）；热门歌曲只取前 50 首
         async let songsTask = try? NeteaseMusicAPI.shared.artistTopSongs(id: artistId)
         async let albumsTask = try? NeteaseMusicAPI.shared.artistAlbums(id: artistId, limit: 50)
 
         let songs = await songsTask ?? []
         let fetchedAlbums = await albumsTask ?? []
 
-        hotSongs = songs
+        hotSongs = Array(songs.prefix(50))
         albums = fetchedAlbums
         if resolvedName.isEmpty { resolvedName = artistName }
         if resolvedCover == nil { resolvedCover = coverURL ?? songs.first?.albumCoverURL }
 
-        // 热门歌曲兜底：接口异常时用同名搜索补全
+        // 热门歌曲兜底：接口异常时用同名搜索补全（同样封顶 50 首）
         if hotSongs.isEmpty {
             hotSongs = await SearchService.shared
                 .search(keyword: artistName, platform: .netease, type: .songs, limit: 50).songs
