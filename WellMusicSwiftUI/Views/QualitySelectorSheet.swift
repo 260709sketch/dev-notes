@@ -67,7 +67,19 @@ struct QualitySelectorSheet: View {
             .padding(.horizontal, 32)
         }
         .presentationDetents([.height(300)])
-        .presentationBackground(.clear)
+        .modifier(ClearPresentationBackgroundIfAvailable())
         .presentationDragIndicator(.visible)
+    }
+}
+
+/// `presentationBackground(.clear)` 需要 iOS 16.4+，而本项目部署目标是 iOS 16.0。
+/// 用条件 modifier 包一层，低版本自动跳过（低版本上背景为系统默认，仅观感差异）。
+private struct ClearPresentationBackgroundIfAvailable: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) {
+            content.presentationBackground(.clear)
+        } else {
+            content
+        }
     }
 }
