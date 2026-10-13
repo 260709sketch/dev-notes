@@ -14,10 +14,13 @@ enum WellSearchMetrics {
 struct WellRemoteImage: View {
     let url: String?
     var contentMode: ContentMode = .fill
+    /// 卡片在屏幕上的点尺寸。给了就向图床要对应尺寸的缩图 ——
+    /// 原图 1024×1024 解码就是 4 MB，货架里铺十几张足以把滚动拖垮。
+    /// （2026-10-13 迁移：播放器评论头像用 `displaySize:` 调用，需当前版实现。）
+    var displaySize: CGFloat?
 
     private var resolvedURL: URL? {
-        guard let url, !url.isEmpty else { return nil }
-        return URL(string: url)
+        WellArtworkURL.resolved(url, pixelSize: displaySize.map(WellArtworkURL.pixelSize(forPoints:)))
     }
 
     var body: some View {
