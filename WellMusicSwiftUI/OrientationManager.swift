@@ -53,48 +53,12 @@ final class OrientationManager {
 ///
 /// 通过 `UIApplicationDelegateAdaptor` 挂到 `WellMusicApp` 上；SwiftUI 不会因此
 /// 改变生命周期，只是把方向决策权交给它。
+///
+/// ⚠️ 不再包含任何 chrome（nav bar / tab bar）干预 —— 曾试过 UIKit appearance
+/// 透明化，但 kumone（无白边的参照）**从不对 chrome 做任何设置**。白块的真正
+/// 元凶已在页面层解决（150pt 硬编码留白 + UIDesignRequiresCompatibility 移除），
+/// 这里恢复为纯方向仲裁，与 kumone 的 AppDelegate 职责一致。
 final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
-    ) -> Bool {
-        Self.removeChromeBackgrounds()
-        return true
-    }
-
-    /// ★★★ 移除顶部 / 底部「白色遮挡块」的最终手段（UIKit 层）。
-    ///
-    /// 现象（用户真机实测）：播放页外的主界面，顶部 nav bar 区域与底部
-    /// tab bar 区域各有一块**不透明白色**，把滚动到这些区域的内容硬挡住。
-    /// SwiftUI 的 `toolbarBackground(.hidden)` / `toolbarBackgroundVisibility(.hidden)`
-    /// 对「系统 TabView + NavigationStack」组合下的 bar 背景无效。
-    ///
-    /// 这里直接把 `UINavigationBar` / `UITabBar` 的全部 appearance 换成
-    /// **完全透明背景**（configureWithTransparentBackground），bar 上的标题与
-    /// 图标保持可见，背景层整体移除 —— 内容滚动到状态栏 / Home 指示条区域时
-    /// 直接透出，不再被白块遮挡（沉浸式，与 kumone 观感一致）。
-    /// ★★★ 移除底部「白色遮挡块」的手段（UIKit 层）。
-    ///
-    /// 现象（用户真机实测）：底部 tab bar 区域有一块白色背景把滚动内容挡住
-    /// （内容延伸到那里时被硬切）。SwiftUI 的 `toolbarBackground(.hidden)` /
-    /// `toolbarBackgroundVisibility(.hidden)` 对「系统 TabView + NavigationStack」
-    /// 组合下的 bar 背景无效。
-    ///
-    /// ⚠️ 导航栏（顶部）**不做处理，保持系统默认外观**（用户明确要求
-    /// 「恢复顶部导航栏」—— nav bar 透明化会让标题漂浮在内容上、观感异常）。
-    private static func removeChromeBackgrounds() {
-        // tab bar：全状态（standard / scrollEdge）透明 —— 内容滚动到底部时直接透出
-        let tab = UITabBarAppearance()
-        tab.configureWithTransparentBackground()
-        tab.backgroundColor = .clear
-        tab.backgroundEffect = nil
-        tab.shadowColor = .clear
-        let tabBar = UITabBar.appearance()
-        tabBar.standardAppearance = tab
-        tabBar.scrollEdgeAppearance = tab
-        tabBar.isTranslucent = true
-    }
-
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
