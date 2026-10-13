@@ -20,6 +20,14 @@ struct FavoritesView: View {
     }
 
     var body: some View {
+        // 与无白边版（5d7dc59f）同构：导航容器由页面自己携带，MainTabView 不再统一包裹。
+        NavigationStack {
+            pageBody
+        }
+    }
+
+    /// 页面主体（导航容器由本页携带）
+    private var pageBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             Picker("", selection: $segment) {
                 ForEach(Segment.allCases, id: \.self) { s in

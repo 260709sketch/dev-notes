@@ -1,79 +1,45 @@
 import Combine
 import SwiftUI
 
-/// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
+/// 主框架（2026-10-13 重写：以用户 10-11 无白边版 `5d7dc59f` 为骨架，功能全套迁入）。
+///
+/// 骨架要点（与无白边版逐字对齐）：
+///   * **每个 Tab 直接挂页面** —— 导航容器（NavigationStack）由各页面自己携带，
+///     MainTabView 不做任何包裹（此结构为用户实机验证「无白边」的原始形态）。
+///   * `.tabBarMinimizeBehavior(.onScrollDown)` 开启（与无白边版一致）。
+///   * 无启动动画、无任何 chrome appearance 干预、无任何自加边距。
+///   * iOS 16-25 退回自绘毛玻璃胶囊栏 `WellTabBar`（与无白边版一致）。
+///
+/// 功能注记：页面本体（Discover/Favorites/Search/Profile）、MiniPlayer、
+/// 播放页路由等全部为当前最新实现（MPV 内核 / 缩图封面 / 新版迷你条），原样迁入。
+///
+/// ⚠️ 性能铁律（踩过，整 App 卡死）：
+/// **这一层绝不能 `@EnvironmentObject` 整个 `PlayerCore`**（currentTime 每 0.05s 推一次）。
+/// 这里只取单例引用（不订阅），用 `onReceive` 只盯 `hasActiveTrack` 这一个粗信号。
 struct MainTabView: View {
-    @EnvironmentObject private var settings: SettingsManager
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
-    /// ⚠️ **这一层绝不能 `@EnvironmentObject` 整个 `PlayerCore`**（踩过，整 App 都卡）。
-    ///
-    /// `PlayerCore` 每 0.05s 推一次 `currentTime`（逐字歌词需要这个采样率）。
-    /// SwiftUI 的 `@EnvironmentObject` 是「任何一个 `@Published` 变了就重算 body」，
-    /// 而这里是**所有 tab 页的父视图** —— 一旦订阅，四个 tab 页的 body 会跟着
-    /// 每秒重算 20 次，页面里有几十张封面卡时横向滑动直接卡死。
-    ///
-    /// 这一层真正需要的只是「有没有在播」这个**粗信号**，所以直接取单例引用（不订阅），
-    /// 再用 `onReceive` 只盯 `hasActiveTrack` 这一个字段。
     private var player: PlayerCore { PlayerCore.shared }
     @State private var hasActiveTrack = false
 
-    /// 启动动画（对应 kumone `hasAppeared`）：首帧后从底部上浮 + 淡入
-    @State private var hasAppeared = false
-
-    /// 四个 Tab 各自的导航路径。
-    ///
-    /// 每个 tab 一条独立路径，互不干扰：在「发现」里 push 的详情页不会影响
-    /// 「音乐库」的导航深度。路径由 `MainTabView` 持有（而不是页面自己），
-    /// 这样导航容器可以在 tab 切换时稳定存在 —— 详见 `page(_:_:)` 的说明。
-    @State private var radioPath: [Destination] = []
-    @State private var favoritesPath: [Destination] = []
-    @State private var searchPath: [Destination] = []
-    @State private var profilePath: [Destination] = []
-
     var body: some View {
-        appContent
+        tabInterface
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
-            // 启动动画：从底部上浮 + 淡入（与 kumone IOSMainWindow.body 同款结构）
-            .offset(y: hasAppeared ? 0 : 24)
-            .opacity(hasAppeared ? 1 : 0)
-            .onAppear {
-                // 延迟 50ms，等视图布局完成后再触发，避免和其他动画冲突
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeOut(duration: 0.45)) {
-                        hasAppeared = true
-                    }
-                }
-                hasActiveTrack = player.hasActiveTrack
-            }
+            .onAppear { hasActiveTrack = player.hasActiveTrack }
             .onReceive(player.$hasActiveTrack) { value in
                 if hasActiveTrack != value { hasActiveTrack = value }
             }
     }
 
-    /// 主内容（对应 kumone 的 `appContent`）：Tab 界面本体。
-    ///
-    /// ⚠️ 这里**不要**挂任何 toolbar/chrome 相关的 SwiftUI modifier：
-    /// 实测 `toolbarBackgroundVisibility(.hidden, for: .automatic)` 会把导航栏
-    /// 样式弄坏（标题漂浮）且修不掉白边（对系统 TabView 的 bar 背景层无效）。
-    private var appContent: some View {
-        tabInterface
-    }
-
     @ViewBuilder
     private var tabInterface: some View {
-        // ⚠️★ 实验开关（用户 2026-10-13 指令：「把底部栏 iOS 26 液态玻璃暂时移除，
-        //   之后看下变化」）—— 一律走 customTabInterface（自绘毛玻璃胶囊栏），
-        //   iOS 26 的系统 TabView（液态玻璃底栏）暂时停用，
-        //   观察「底部/顶部白色矩形」是否随之消失（验证其是否与系统 TabView 相关）。
-        //   系统 TabView 的完整实现（iOS26TabInterface / iOS26TabView /
-        //   MiniPlayerAccessoryModifier）保留在本文件中，改回
-        //   `WellChromeMode.usesSystemTabView = true` 即可恢复。
-        if #available(iOS 26.0, *), WellChromeMode.usesSystemTabView {
+        // iOS 26 起一律用系统原生 TabView（系统渲染液态玻璃，性能与观感均为最佳）。
+        // iOS 16-25 无原生液态玻璃，退回自绘毛玻璃胶囊栏 WellTabBar。
+        if #available(iOS 26.0, *) {
             iOS26TabInterface
         } else {
             customTabInterface
@@ -84,17 +50,8 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabInterface: some View {
         iOS26TabView
-            // ★ 稳定身份（用户 2026-10-13 指令：「Dock 切换抖动」修复之一）：
-            //   播放状态切换时 MiniPlayerAccessoryModifier 的 if/else 会改 modifier 链，
-            //   系统 TabView 若因此被当成新视图重建，底栏会出现白块/抖动。
-            //   固定 id 让 TabView 实例身份恒定，modifier 链变化不再触发重建。
-            .id("well.iOS26Tab")
-            // ⚠️ 刻意**不启用** `.tabBarMinimizeBehavior(.onScrollDown)`：
-            //   它是系统路径下唯一的「滚动 → 底栏形态切换」通道 —— 布局重排若被
-            //   系统误判为滚动，底栏会在【完整 ↔ 最小化】之间抖动重建，底栏区域
-            //   出现白色矩形/闪烁。用户 2026-10-13 指令：所有页面底部白块与
-            //   「Dock 切换抖动」有关——最直接的防御就是不让这个联动存在
-            //   （底栏保持常驻，代价仅为不随滚动收起）。
+            // 与无白边版一致：开启「滚动 → 底栏最小化」
+            .tabBarMinimizeBehavior(.onScrollDown)
             // Apply the accessory through a ViewModifier so the TabView keeps a
             // single identity across the hasActiveTrack toggle.
             .modifier(MiniPlayerAccessoryModifier(
@@ -107,42 +64,37 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
-            // 与 kumone 同构：每个 Tab 内容 = `tabStack(页面)`（NavigationStack 在 tabStack 里）
+            // 与无白边版同构：Tab 直接挂页面（各页面自带 NavigationStack）
             Tab("主页", systemImage: "house.fill", value: WellTab.radio) {
-                tabStack(.radio) { DiscoverView() }
+                DiscoverView()
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                tabStack(.favorites) { FavoritesView() }
+                FavoritesView()
             }
             Tab(value: WellTab.search, role: .search) {
-                tabStack(.search) { SearchView() }
+                SearchView()
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                tabStack(.profile) { ProfileView() }
+                ProfileView()
             }
         }
     }
 
-    /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏
+    /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏（iOS 16-25）
     ///
-    /// 4 个页面用 ZStack + opacity 常驻（避免切换时销毁重建状态）。
-    ///
-    /// ⚠️ 导航容器（`NavigationStack`）必须由**这里**统一提供，**不要**写进各个页面内部。
-    /// 详见 `page(_:_:)` 的说明。
+    /// 4 个页面用 ZStack + opacity 常驻（避免切换时销毁重建状态），但**必须**给每个
+    /// 页面稳定 identity —— 否则切换 tab 时 SwiftUI 会把整个 ZStack 重新求值，底栏的
+    /// 液态玻璃层跟着重建，视觉上就是"抖一下"。这里用 `zIndex` + `id` 双固定。
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                // 与 kumone 同构：page(容器) { tabStack(页面) }，
-                // NavigationStack 在 tabStack 里、page 只管透明度与层级。
-                page(.favorites) { tabStack(.favorites) { FavoritesView() } }
-                page(.profile) { tabStack(.profile) { ProfileView() } }
-                page(.radio) { tabStack(.radio) { DiscoverView() } }
-                page(.search) { tabStack(.search) { SearchView() } }
+                page(.favorites) { FavoritesView() }
+                page(.profile) { ProfileView() }
+                page(.radio) { DiscoverView() }
+                page(.search) { SearchView() }
             }
-            // 内层 ZStack 撑满可用空间，把每个页面约束到同一尺寸，
-            // 避免切换时因各页内容高度不同而让整棵树上下位移。
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
@@ -164,34 +116,15 @@ struct MainTabView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
-    /// 一个 Tab 的导航容器（与 kumone `tabStack` 同构）。
-    @ViewBuilder
-    private func tabStack<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
-        NavigationStack(path: path(for: tab)) {
-            content()
-        }
-    }
-
-    /// 一个 Tab 的页面容器（与 kumone `page` 同构）：
-    /// **只做透明度 + 命中测试 + 层级**，导航容器已由 `tabStack` 提供。
+    /// 页面容器：只做透明度 + 命中测试 + 层级（导航容器由页面自己携带）
     @ViewBuilder
     private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
         content()
-            // ★ 稳定身份（用户 2026-10-13 指令：「补稳定 .id」）
+            // 稳定 identity：切换时只改 opacity / zIndex，不重建视图子树
             .id(tab)
             .opacity(selectedTab == tab ? 1 : 0)
             .allowsHitTesting(selectedTab == tab)
             .zIndex(selectedTab == tab ? 1 : 0)
-    }
-
-    /// 每个 Tab 独立的导航路径。
-    private func path(for tab: WellTab) -> Binding<[Destination]> {
-        switch tab {
-        case .radio: return $radioPath
-        case .favorites: return $favoritesPath
-        case .search: return $searchPath
-        case .profile: return $profilePath
-        }
     }
 }
 
@@ -202,33 +135,6 @@ extension MainTabView {
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]
-}
-
-/// 底栏留白（对应 kumone `PlayerClearanceSpacer` 的逻辑）。
-///
-/// ★ 只有**系统 TabView（底部 accessory）**才会自动扩展内容 safe area insets ——
-///   此时页面只需 8pt 呼吸边距；自绘胶囊栏浮在内容**之上**（不扩 safe area），
-///   必须显式留足（≈ MiniPlayer 54 + 间距 8 + 胶囊 64 + 边距 6 + 呼吸 12）。
-///   是否走系统 TabView 由 `WellChromeMode.usesSystemTabView` 统一决定。
-struct WellBottomClearance: View {
-    var body: some View {
-        if #available(iOS 26.0, *), WellChromeMode.usesSystemTabView {
-            Color.clear.frame(height: 8)
-        } else {
-            Color.clear.frame(height: 150)
-        }
-    }
-}
-
-/// 主界面 chrome 模式（实验开关）。
-enum WellChromeMode {
-    /// 是否使用 iOS 26 系统 TabView（液态玻璃底栏 + 底部 accessory）。
-    ///
-    /// 恢复为 `true`（2026-10-13 最终目标对齐 kumone）：
-    /// 用户明确「kumone 底部栏是悬浮的、可以看到下面的页面」——
-    /// 这就是系统 TabView 液态玻璃底栏的形态（悬浮胶囊 + 内容穿透）。
-    /// （此前一轮的自绘实验已完成排查使命。）
-    static let usesSystemTabView = true
 }
 
 /// 全局轻提示（自动换源等）
@@ -301,10 +207,9 @@ private struct MiniPlayerAccessory: View {
     }
 }
 
-/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 上一首/播放/下一首）
+/// 屏下迷你播放条（对齐 RN/Kumone 浮动胶囊：54pt 高胶囊 + 42pt 封面 + 播放/下一首）
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerCore
-    @EnvironmentObject private var settings: SettingsManager
     @Environment(\.colorScheme) private var colorScheme
 
     private let capsuleHeight: CGFloat = 54

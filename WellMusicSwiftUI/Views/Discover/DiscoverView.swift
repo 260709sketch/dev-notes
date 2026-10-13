@@ -247,6 +247,14 @@ struct DiscoverView: View {
     private var contentInset: CGFloat { WellSearchMetrics.contentInset }
 
     var body: some View {
+        // 与无白边版（5d7dc59f）同构：导航容器由页面自己携带，MainTabView 不再统一包裹。
+        NavigationStack {
+            pageBody
+        }
+    }
+
+    /// 页面主体（导航容器由本页携带）
+    private var pageBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DiscoverLayout.sectionSpacing) {
                 switch model.phase {
