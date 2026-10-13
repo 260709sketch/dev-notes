@@ -73,22 +73,17 @@ final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
     /// **完全透明背景**（configureWithTransparentBackground），bar 上的标题与
     /// 图标保持可见，背景层整体移除 —— 内容滚动到状态栏 / Home 指示条区域时
     /// 直接透出，不再被白块遮挡（沉浸式，与 kumone 观感一致）。
+    /// ★★★ 移除底部「白色遮挡块」的手段（UIKit 层）。
+    ///
+    /// 现象（用户真机实测）：底部 tab bar 区域有一块白色背景把滚动内容挡住
+    /// （内容延伸到那里时被硬切）。SwiftUI 的 `toolbarBackground(.hidden)` /
+    /// `toolbarBackgroundVisibility(.hidden)` 对「系统 TabView + NavigationStack」
+    /// 组合下的 bar 背景无效。
+    ///
+    /// ⚠️ 导航栏（顶部）**不做处理，保持系统默认外观**（用户明确要求
+    /// 「恢复顶部导航栏」—— nav bar 透明化会让标题漂浮在内容上、观感异常）。
     private static func removeChromeBackgrounds() {
-        // nav bar：全状态（standard / scrollEdge / compact）透明
-        let nav = UINavigationBarAppearance()
-        nav.configureWithTransparentBackground()
-        nav.backgroundColor = .clear
-        nav.backgroundEffect = nil
-        nav.shadowColor = .clear
-        let navBar = UINavigationBar.appearance()
-        navBar.standardAppearance = nav
-        navBar.scrollEdgeAppearance = nav
-        navBar.compactAppearance = nav
-        navBar.compactScrollEdgeAppearance = nav
-        // 老 API 双保险（iOS 15+ 标记 deprecated 但实际仍被系统读取）
-        navBar.isTranslucent = true
-
-        // tab bar：全状态（standard / scrollEdge）透明
+        // tab bar：全状态（standard / scrollEdge）透明 —— 内容滚动到底部时直接透出
         let tab = UITabBarAppearance()
         tab.configureWithTransparentBackground()
         tab.backgroundColor = .clear
