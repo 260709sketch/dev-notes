@@ -185,6 +185,10 @@ final class PlayerCore: NSObject, ObservableObject {
                     await MainActor.run { ToastCenter.shared.show("自动换源：\(name)") }
                 }
                 await MainActor.run {
+                    // 唤醒音频会话：App 启动时 setActive 可能失败（系统繁忙/被其他
+                    // App 占用），或会话在后台被抢走后被系统 deactivate —— 每次
+                    // 开始播放前主动激活一次，保证后台播放 / 控件中心 / 锁屏链路完整。
+                    AudioSessionManager.activate()
                     engine.load(url: resolved.url,
                                 headers: resolved.headers,
                                 startAt: time,
@@ -282,6 +286,8 @@ final class PlayerCore: NSObject, ObservableObject {
         isScrubbing = false
         markUserSeek()
         engine.seek(to: target)
+        // 锁屏 / 控制中心的进度与拖动结果保持一致
+        updateNowPlaying()
     }
 
     func seek(to time: TimeInterval) {
@@ -294,6 +300,8 @@ final class PlayerCore: NSObject, ObservableObject {
         currentTime = target
         markUserSeek()
         engine.seek(to: target)
+        // 锁屏拖动进度条（changePlaybackPosition 命令）后同步 elapsed
+        updateNowPlaying()
     }
 
     /// 最近一次**用户主动 seek**（拖进度条 / 点歌词 / 锁屏拖动）的时间戳。
@@ -386,8 +394,13 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 上次断流自动恢复的时刻（冷却防死循环）
     private var lastAutoReloadAt: TimeInterval = 0
-    /// 已经尝试过「官方通道重播」的曲目 key（防试听检测无限循环）
+    /// 已尝试过「官方通道重播」的曲目 key（防试听检测无限循环）
     private var officialRetriedTrackKey: String?
+
+    /// 已为哪首歌补过 NowPlaying 封面图（每首歌只异步拉一次，暂停/恢复不重复下载）
+    private var nowPlayingArtworkKey: String?
+    /// 已下载的封面（同歌多次更新 nowPlayingInfo 时复用，避免整块信息被无图覆盖）
+    private var nowPlayingArtwork: MPMediaItemArtwork?
 
     /// 曲目结束处理。
     ///
@@ -447,10 +460,19 @@ final class PlayerCore: NSObject, ObservableObject {
         // ⚠️ 双保险：还要求 mpv 报告的 duration 与歌曲元数据时长**接近**（差 <15s）。
         // 某些 CDN / 试听链路的容器元数据时长是错的（报出 15~30s 的假时长），
         // 播到「duration - 5」就满足 nearEnd → 被误判成播完 → 无声切下一首。
-        // 元数据对不上的一律不算播完，交给 ①（试听重播）或 ③（断流重载）。
+        // 元数据对不上的一律不算播完，交给 ①（试听重播）、②b 或 ③（断流重载）。
+        //
+        // ⚠️ 元数据时长缺失（LX 源常见 item.duration == 0）时**绝不能无条件放行**：
+        // 旧逻辑「guard ... else return true」会让「无元数据的试听片段」直接命中
+        // 自然播完 → 自动切歌（「播放十几秒就自动播放下一首」的隐蔽路径）。
+        // 缺失时改用**流时长**做保守判定：60s 以上视为正常长度的完整音频放行；
+        // 以下视作试听/截断嫌疑，交由 ②b（先试官方通道，仍短则停住）。
         let nearEnd = duration > 0 && currentTime >= duration - 5
         let durationMatchesMeta: Bool = {
-            guard let item = currentItem, item.duration > 0, duration > 0 else { return true }
+            guard let item = currentItem else { return true }
+            guard item.duration > 0, duration > 0 else {
+                return duration >= 60
+            }
             return abs(item.duration - duration) < 15
         }()
 
@@ -463,8 +485,11 @@ final class PlayerCore: NSObject, ObservableObject {
         // ②b EOF 且到了文件结尾、但时长与元数据对不上：
         //    - 未尝试过官方通道 → 官方重播（试听片段的兜底分支：差 15~20s 的
         //      短文件 ① 的 ">20s" 条件抓不到，这里补上）
-        //    - 已尝试过 → 确认这就是该平台能给的**最长版本**（如 VIP 歌只剩
-        //      试听），明确提示后正常进入下一首（避免「无声切歌」的困惑）。
+        //    - 已尝试过 → 确认这就是该平台能给的**最长版本**（如 VIP 歌只剩试听）。
+        //      ★ 不再自动 next()：官方通道也拿不到完整版时，「自动播下一首」让用户
+        //        产生「歌没听完就被切走」的丢失感（连播时连续发生，非常严重）。
+        //        改为【停在当前曲目】：重载并保持暂停（EOF 后 mpv 已卸载文件，
+        //        不重载则「按播放」无响应），回到开头等用户决定去留。
         if reason == .eof, nearEnd, !durationMatchesMeta, let item = currentItem {
             if officialRetriedTrackKey != item.keyOf {
                 officialRetriedTrackKey = item.keyOf
@@ -472,9 +497,9 @@ final class PlayerCore: NSObject, ObservableObject {
                 ToastCenter.shared.show("已切换为完整版播放")
                 playCurrentItem(seekTo: 0, autoPlay: true, preferOfficial: true)
             } else {
-                PlayerDiag.log("已播完最长可用版本 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 提示后下一首")
-                ToastCenter.shared.show("该歌曲仅有试听片段，已播放完整试听")
-                next()
+                PlayerDiag.log("已确认仅试听片段 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) meta=\(String(format: "%.1f", item.duration)) → 停住（不自动切歌）")
+                ToastCenter.shared.show("该歌曲仅提供试听片段，已停止自动切换")
+                playCurrentItem(seekTo: 0, autoPlay: false, isReload: true)
             }
             return
         }
@@ -503,7 +528,10 @@ final class PlayerCore: NSObject, ObservableObject {
 
     private func tick() {
         // 位置：time-pos 是音频输出时钟驱动的渲染真值
-        if let pos = engine.timePos {
+        // ⚠️ 去重赋值：暂停/空闲时 time-pos 恒定，若照旧无脑赋值，@Published 会
+        //    每秒丢 20 次 objectWillChange —— 所有订阅方（迷你播放器进度线等）
+        //    被持续拽着重算，滚动掉帧。只在真正变化时广播。
+        if let pos = engine.timePos, pos != currentTime {
             currentTime = pos
         }
         // 时长
@@ -537,6 +565,8 @@ final class PlayerCore: NSObject, ObservableObject {
         let enginePlaying = !engine.isPaused && !engine.isCoreIdle
         if hasActiveTrack, !isScrubbing, enginePlaying != isPlaying {
             isPlaying = enginePlaying
+            // 播放/暂停态变化 → 同步锁屏 / 控制中心（rate 与状态保持一致）
+            updateNowPlaying()
         }
     }
 
@@ -569,27 +599,55 @@ final class PlayerCore: NSObject, ObservableObject {
     private func updateNowPlaying(_ item: MusicItem? = nil) {
         let song = item ?? currentItem
         guard let song else { return }
-        var info: [String: Any] = [
+
+        let center = MPNowPlayingInfoCenter.default()
+        let isNewSong = nowPlayingArtworkKey != song.keyOf
+        if isNewSong {
+            nowPlayingArtworkKey = song.keyOf
+            nowPlayingArtwork = nil     // 换歌即作废上一首封面，防止错配
+        }
+
+        // ① 立即写入基础信息（**不等封面**）：
+        //    控制中心 / 锁屏 / 灵动岛在上报的同一刻就能拿到标题、时长与播放态。
+        //    旧实现是「封面图下载完成后才写 nowPlayingInfo」——封面请求慢/挂起时
+        //    系统侧长时间没有任何 NowPlaying 信息，表现即「什么都不显示」。
+        var info = nowPlayingInfo(for: song)
+        if !isNewSong, let artwork = nowPlayingArtwork {
+            info[MPMediaItemPropertyArtwork] = artwork    // 同歌更新：带上已下载的封面
+        }
+        center.nowPlayingInfo = info
+        // ② 播放状态显式声明（playing / paused / stopped）：
+        //    系统据此展示与控制卡片（含灵动岛的媒体活动）。
+        center.playbackState = hasActiveTrack ? (isPlaying ? .playing : .paused) : .stopped
+        PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration))")
+
+        // ③ 封面图：每首歌只异步拉一次（走 WellImageCache 的缩图缓存，与列表/播放页
+        //    共用同一份解码结果），到图后补写同一条信息；失败则保持无封面，不影响显示。
+        guard isNewSong, let coverURL = WellArtworkURL.resolved(song.albumCoverURL, pixelSize: 1024) else { return }
+        Task { [weak self] in
+            guard let image = await WellImageCache.shared.image(for: coverURL) else { return }
+            guard let self, self.currentItem.map({ MusicItem.isSame($0, song) }) ?? false else { return }
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            self.nowPlayingArtwork = artwork
+            var latest = self.nowPlayingInfo(for: song)
+            latest[MPMediaItemPropertyArtwork] = artwork
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = latest
+            PlayerDiag.log("NowPlaying 封面已补齐：\(song.title)")
+        }
+    }
+
+    /// NowPlaying 基础信息（标题 / 艺人 / 专辑 / 时长 / 进度 / 速率）。
+    /// `MPNowPlayingInfoPropertyDefaultPlaybackRate` 恒为 1.0：系统在控制中心
+    /// 按「播放」键时按这个速率恢复播放，与当前是否在播无关。
+    private func nowPlayingInfo(for song: MusicItem) -> [String: Any] {
+        [
             MPMediaItemPropertyTitle: song.title,
             MPMediaItemPropertyArtist: song.artist ?? "未知艺术家",
             MPMediaItemPropertyAlbumTitle: song.album ?? "",
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
         ]
-        if let cover = song.albumCoverURL, let url = URL(string: cover) {
-            Task {
-                if let (data, _) = try? await URLSession.shared.data(from: url), let img = UIImage(data: data) {
-                    let artwork = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
-                    info[MPMediaItemPropertyArtwork] = artwork
-                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-                } else {
-                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-                }
-            }
-        } else {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        }
     }
 }

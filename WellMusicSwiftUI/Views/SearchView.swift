@@ -35,8 +35,10 @@ final class WellSearchViewModel: ObservableObject {
 // MARK: - 搜索页
 
 /// 搜索 Tab：平台 / 模块分段 + 分区卡片结果（版式对齐 kumone）
+///
+/// ⚠️ 不订阅 PlayerCore（只用它「发起播放」；订阅会让搜索列表随
+/// 20Hz 播放时钟每秒重算 20 次 → 滑动掉帧）。
 struct SearchView: View {
-    @EnvironmentObject private var player: PlayerCore
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
     @State private var committedQuery = ""
@@ -227,7 +229,7 @@ struct SearchView: View {
         VStack(spacing: 0) {
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, item in
                 Button {
-                    player.play(queue: tracks, startIndex: index)
+                    PlayerCore.shared.play(queue: tracks, startIndex: index)
                 } label: {
                     TrackRow(item: item)
                         .padding(.vertical, 6)

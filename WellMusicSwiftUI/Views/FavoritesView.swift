@@ -1,9 +1,11 @@
 import SwiftUI
 
 /// 收藏 Tab：顶部切换 收藏歌曲 / 收藏歌单 / 播放历史，入口自建歌单
+///
+/// ⚠️ 不订阅 PlayerCore（本页只用它「发起播放」，不需要读任何播放态；
+/// 订阅会让整个列表随 20Hz 播放时钟每秒重算 20 次 → 滑动掉帧）。
 struct FavoritesView: View {
     @EnvironmentObject private var appState: AppState
-    @EnvironmentObject private var player: PlayerCore
     @State private var segment: Segment = .tracks
 
     enum Segment: String, CaseIterable {
@@ -58,7 +60,7 @@ struct FavoritesView: View {
             ForEach(tracks) { item in
                 TrackRow(item: item)
                     .contentShape(Rectangle())
-                    .onTapGesture { player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0) }
+                    .onTapGesture { PlayerCore.shared.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0) }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             remove(item)

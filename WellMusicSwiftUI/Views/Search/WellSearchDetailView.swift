@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// 搜索结果卡片展开页：拉取歌手 / 专辑 / 歌单对应的歌曲列表。
+///
+/// ⚠️ 不订阅 PlayerCore（只用它「发起播放」；订阅会让列表随 20Hz 播放时钟重算）。
 struct WellSearchDetailView: View {
-    @EnvironmentObject private var player: PlayerCore
     let source: WellSearchDetailSource
     var coverURL: String?
 
@@ -36,7 +37,7 @@ struct WellSearchDetailView: View {
                             TrackRow(item: item)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
+                                    PlayerCore.shared.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
                                 }
                         }
                     }
@@ -63,7 +64,7 @@ struct WellSearchDetailView: View {
                     .foregroundStyle(.secondary)
                 Button {
                     guard !tracks.isEmpty else { return }
-                    player.play(queue: tracks, startIndex: 0)
+                    PlayerCore.shared.play(queue: tracks, startIndex: 0)
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                         .font(.system(size: 14, weight: .semibold))

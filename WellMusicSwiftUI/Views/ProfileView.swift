@@ -126,15 +126,16 @@ struct MyPlaylistsView: View {
 }
 
 /// 歌单详情
+///
+/// ⚠️ 不订阅 PlayerCore（只用它「发起播放」；订阅会让列表随 20Hz 播放时钟重算）。
 struct PlaylistDetailView: View {
-    @EnvironmentObject private var player: PlayerCore
     let playlist: Playlist
 
     var body: some View {
         List(playlist.tracks) { item in
             TrackRow(item: item)
                 .onTapGesture {
-                    player.play(queue: playlist.tracks, startIndex: playlist.tracks.firstIndex(of: item) ?? 0)
+                    PlayerCore.shared.play(queue: playlist.tracks, startIndex: playlist.tracks.firstIndex(of: item) ?? 0)
                 }
         }
         .navigationTitle(playlist.name)
