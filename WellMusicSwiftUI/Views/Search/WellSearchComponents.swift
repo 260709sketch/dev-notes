@@ -417,17 +417,18 @@ struct WellSearchTrackRow: View {
     }
 }
 
-/// 搜索行右侧收藏按钮（红心）。叶子视图，只订阅 `AccountStore`。
+/// 搜索行右侧收藏按钮（红心）。叶子视图，只订阅 `AppState`（原生吃 `MusicItem`，
+/// 不经过桥接层 `Track` 转换）。
 struct WellSearchLikeButton: View {
     let item: MusicItem
 
-    @ObservedObject private var account = AccountStore.shared
+    @ObservedObject private var appState = AppState.shared
 
-    private var isLiked: Bool { account.isLiked(track: item) }
+    private var isLiked: Bool { appState.isFavorite(item) }
 
     var body: some View {
         Button {
-            Task { await account.toggleLike(trackID: item.id, track: item) }
+            appState.toggleFavorite(item)
         } label: {
             Image(systemName: isLiked ? "heart.fill" : "heart")
                 .font(.system(size: 15))
