@@ -4,8 +4,8 @@ import SwiftUI
 /// 主框架（2026-10-13 重写：以用户 10-11 无白边版 `5d7dc59f` 为骨架，功能全套迁入）。
 ///
 /// 骨架要点（与无白边版逐字对齐）：
-///   * **每个 Tab 直接挂页面** —— 导航容器（NavigationStack）由各页面自己携带，
-///     MainTabView 不做任何包裹（此结构为用户实机验证「无白边」的原始形态）。
+///   * 每个 Tab = `tabStack()`（NavigationStack 由主框架统一提供）——
+///     用户 2026-10-13 16:20 指令：四个 dock 页「挪回去」，导航容器不放进页面里。
 ///   * `.tabBarMinimizeBehavior(.onScrollDown)` 开启（与无白边版一致）。
 ///   * 启动动画保留（用户 2026-10-13 指令「这个加上」）；导航栏全透明（用户指令「导航栏保留」）；
 ///     无任何自加边距。
@@ -26,6 +26,16 @@ struct MainTabView: View {
 
     /// 启动动画状态（对应 kumone `hasAppeared`）：首帧后从底部上浮 + 淡入
     @State private var hasAppeared = false
+
+    /// 四个 Tab 各自的导航路径。
+    ///
+    /// 每个 tab 一条独立路径，互不干扰：在「主页」里 push 的详情页不会影响
+    /// 「音乐库」的导航深度。路径由 `MainTabView` 持有（而不是页面自己），
+    /// 这样导航容器可以在 tab 切换时稳定存在。
+    @State private var radioPath: [Destination] = []
+    @State private var favoritesPath: [Destination] = []
+    @State private var searchPath: [Destination] = []
+    @State private var profilePath: [Destination] = []
 
     var body: some View {
         tabInterface
@@ -79,20 +89,20 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
-            // 与无白边版同构：Tab 直接挂页面（各页面自带 NavigationStack）
+            // 每个 Tab = tabStack（NavigationStack 由主框架统一提供）
             Tab("主页", systemImage: "house.fill", value: WellTab.radio) {
-                DiscoverView()
+                tabStack(.radio) { DiscoverView() }
             }
             Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                FavoritesView()
+                tabStack(.favorites) { FavoritesView() }
             }
             Tab(value: WellTab.search, role: .search) {
-                SearchView()
+                tabStack(.search) { SearchView() }
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                ProfileView()
+                tabStack(.profile) { ProfileView() }
             }
         }
     }
@@ -105,10 +115,10 @@ struct MainTabView: View {
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                page(.favorites) { FavoritesView() }
-                page(.profile) { ProfileView() }
-                page(.radio) { DiscoverView() }
-                page(.search) { SearchView() }
+                page(.favorites) { tabStack(.favorites) { FavoritesView() } }
+                page(.profile) { tabStack(.profile) { ProfileView() } }
+                page(.radio) { tabStack(.radio) { DiscoverView() } }
+                page(.search) { tabStack(.search) { SearchView() } }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
@@ -131,7 +141,26 @@ struct MainTabView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
-    /// 页面容器：只做透明度 + 命中测试 + 层级（导航容器由页面自己携带）
+    /// 一个 Tab 的导航容器：NavigationStack 由主框架统一提供
+    /// （用户 2026-10-13 指令：四个 dock 页「挪回去」，导航容器不放进页面里）。
+    @ViewBuilder
+    private func tabStack<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
+        NavigationStack(path: path(for: tab)) {
+            content()
+        }
+    }
+
+    /// 每个 Tab 独立的导航路径。
+    private func path(for tab: WellTab) -> Binding<[Destination]> {
+        switch tab {
+        case .radio: return $radioPath
+        case .favorites: return $favoritesPath
+        case .search: return $searchPath
+        case .profile: return $profilePath
+        }
+    }
+
+    /// 页面容器：只做透明度 + 命中测试 + 层级
     @ViewBuilder
     private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
         content()

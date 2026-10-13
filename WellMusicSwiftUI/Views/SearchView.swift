@@ -57,14 +57,7 @@ struct SearchView: View {
     }
 
     var body: some View {
-        // 与无白边版（5d7dc59f）同构：导航容器由页面自己携带，MainTabView 不再统一包裹。
-        NavigationStack {
-            pageBody
-        }
-    }
-
-    /// 页面主体（导航容器由本页携带）
-    private var pageBody: some View {
+        // 导航容器由 MainTabView 的 tabStack() 统一提供（用户 2026-10-13 指令：四页「挪回去」）。
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if hasQuery {
