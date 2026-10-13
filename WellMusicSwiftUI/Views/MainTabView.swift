@@ -66,10 +66,14 @@ struct MainTabView: View {
 
     @ViewBuilder
     private var tabInterface: some View {
-        // iOS 26 起一律用系统原生 TabView（系统渲染液态玻璃，性能与观感均为最佳），
-        // 不再提供「第三方液态玻璃」选项——自研 shader 效果不如系统原生。
-        // iOS 16-25 无原生液态玻璃，退回自绘毛玻璃胶囊栏 WellTabBar。
-        if #available(iOS 26.0, *) {
+        // ⚠️★ 实验开关（用户 2026-10-13 指令：「把底部栏 iOS 26 液态玻璃暂时移除，
+        //   之后看下变化」）—— 一律走 customTabInterface（自绘毛玻璃胶囊栏），
+        //   iOS 26 的系统 TabView（液态玻璃底栏）暂时停用，
+        //   观察「底部/顶部白色矩形」是否随之消失（验证其是否与系统 TabView 相关）。
+        //   系统 TabView 的完整实现（iOS26TabInterface / iOS26TabView /
+        //   MiniPlayerAccessoryModifier）保留在本文件中，改回
+        //   `WellChromeMode.usesSystemTabView = true` 即可恢复。
+        if #available(iOS 26.0, *), WellChromeMode.usesSystemTabView {
             iOS26TabInterface
         } else {
             customTabInterface
@@ -202,20 +206,27 @@ extension MainTabView {
 
 /// 底栏留白（对应 kumone `PlayerClearanceSpacer` 的逻辑）。
 ///
-/// ★ iOS 26+ 原生 TabView 的底部 accessory（MiniPlayer）会**自动扩展内容的
-///   safe area insets** —— 系统已经替页面留好了 tab bar + 播放条的全部空间，
-///   页面只需一点呼吸边距。此时若再手动加 150pt 大留白，滚到底就会在内容与
-///   tab bar 之间多出一整块空白（浅色下即「底部白色矩形」）。
-///   iOS 16-25 的自绘胶囊栏浮在内容**之上**（不扩展 safe area），
+/// ★ 只有**系统 TabView（底部 accessory）**才会自动扩展内容 safe area insets ——
+///   此时页面只需 8pt 呼吸边距；自绘胶囊栏浮在内容**之上**（不扩 safe area），
 ///   必须显式留足（≈ MiniPlayer 54 + 间距 8 + 胶囊 64 + 边距 6 + 呼吸 12）。
+///   是否走系统 TabView 由 `WellChromeMode.usesSystemTabView` 统一决定。
 struct WellBottomClearance: View {
     var body: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), WellChromeMode.usesSystemTabView {
             Color.clear.frame(height: 8)
         } else {
             Color.clear.frame(height: 150)
         }
     }
+}
+
+/// 主界面 chrome 模式（实验开关）。
+enum WellChromeMode {
+    /// 是否使用 iOS 26 系统 TabView（液态玻璃底栏 + 底部 accessory）。
+    ///
+    /// ⚠️ 实验（用户 2026-10-13 指令）：暂时设为 `false` —— 一律自绘胶囊栏，
+    /// 观察「白色矩形」是否消失。恢复系统底栏改回 `true` 即可（实现均保留）。
+    static let usesSystemTabView = false
 }
 
 /// 全局轻提示（自动换源等）
