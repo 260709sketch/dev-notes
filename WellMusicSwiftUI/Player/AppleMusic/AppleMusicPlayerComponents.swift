@@ -1204,12 +1204,11 @@ struct PlayerSeekBar: View {
             }
             .frame(height: 30)
 
-            // 时间行：左「当前时间」/ 中「音质徽章」/ 右「-剩余时间」
-            // （需求 18：对齐 RN 版 WellMusicAppleMusicV2Player 的三栏布局）
+            // 时间行：左「当前时间」/ 右「-剩余时间」
+            // （用户明确：播放器界面**不要**显示音质徽章，去掉中间那栏）
             HStack(spacing: 0) {
                 Text(wellamTimeString(time))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                QualityBadgeView()
                 Text("-" + wellamTimeString(max(0, total - time)))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -1250,10 +1249,11 @@ struct PlayerLikeButton: View {
             guard let track else { return }
             Task { await AccountStore.shared.toggleLike(trackID: track.id, track: track) }
         } label: {
+            // 用户要求：五角星**收藏后保持白色**，不要变红。
             Image(systemName: isLiked ? "star.fill" : "star")
-                .font(.system(size: ScreenAdapter.h(20), weight: .semibold))
-                .foregroundStyle(isLiked ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(40), height: ScreenAdapter.h(40))
+                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+                .foregroundStyle(isLiked ? primaryColor : primaryColor.opacity(0.78))
+                .frame(width: ScreenAdapter.h(30), height: ScreenAdapter.h(30))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

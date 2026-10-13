@@ -720,6 +720,8 @@ struct AppleMusicPlayerView: View {
                 ) { [.expanded: $0] }
 
             if settings.showLyricPreview {
+                // 歌名/歌手信息与下方进度条**同宽同边距**（需求：左对齐进度条开头）；
+                // 五角星与三点**右对齐进度条结尾**。
                 HStack(spacing: ScreenAdapter.w(12)) {
                     VStack(alignment: .leading, spacing: ScreenAdapter.h(5)) {
                         HStack(spacing: ScreenAdapter.w(9)) {
@@ -754,7 +756,8 @@ struct AppleMusicPlayerView: View {
                     )
                     moreMenu
                 }
-                .frame(maxWidth: ScreenAdapter.w(420))
+                .frame(maxWidth: Self.contentMaxWidth)
+                .padding(.horizontal, Self.infoHorizontalPadding)
                 .padding(.top, ScreenAdapter.h(22))
                 .offset(x: infoEntry.x, y: infoEntry.y)
 
@@ -767,13 +770,16 @@ struct AppleMusicPlayerView: View {
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.previewLyric)))
             } else {
                 compactTrackHeader
+                    .padding(.horizontal, Self.infoHorizontalPadding)
                     .padding(.top, ScreenAdapter.h(40))
                     .offset(x: infoEntry.x, y: infoEntry.y)
             }
 
             Spacer(minLength: 0).frame(height: ScreenAdapter.h(24))
         }
-        .padding(.horizontal, ScreenAdapter.w(32))
+        // ⚠️ 这里**不**加水平内边距：歌名/歌手行自己带 `infoHorizontalPadding`，
+        //    必须与 `playbackControls`（进度条所在容器）一致才能左右对齐。
+        //    封面占位符另外用 `padding` 控制（见上），互不影响。
     }
 
     private var compactTrackHeader: some View {
@@ -811,6 +817,14 @@ struct AppleMusicPlayerView: View {
     }
 
     // MARK: - 下滑关闭
+
+    /// 竖屏内容统一水平内边距 / 最大宽度。
+    ///
+    /// **必须与 `playbackControls` 一致**：歌名歌手行、进度条、控制按钮、
+    /// 音量条、底部按钮全部挂同一组数值，这样「歌名左缘 == 进度条左缘」、
+    /// 「五角星/三点右缘 == 进度条右缘」自然成立。
+    private static let infoHorizontalPadding = ScreenAdapter.w(24)
+    private static let contentMaxWidth = ScreenAdapter.w(420)
 
     private static let dismissIndicatorWidth: CGFloat = 44
     private static let dismissIndicatorHeight: CGFloat = 5
@@ -902,7 +916,7 @@ struct AppleMusicPlayerView: View {
 
     private var lyricsPage: some View {
         VStack(spacing: 0) {
-            // 顶部热区：**不是歌词的位置**，在这里下滑即可关闭播放器（需求 19）。
+            // 顶部热区：**不是歌词的位置**，在这里下滑即可关闭播放器。
             //
             // 热区高度取「安全区顶部 + 一段留白」，把状态栏/灵动岛下方的整条
             // 顶部空白都纳入 —— 用户从屏幕顶端往下滑就能关掉播放器，不必精确
@@ -915,7 +929,6 @@ struct AppleMusicPlayerView: View {
             }
             .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))
             .contentShape(Rectangle())
-            .offset(y: showLyrics ? headerDragOffset : 0)
             // ⚠️ 不要写 `showLyrics ? DragGesture… : nil`：`nil` 无法参与
             // `Gesture` 推断，`showLyrics == false` 时会在附件手势那一刻
             // 解包失败直接崩溃。改为永远附加同一个手势，用 `including`
@@ -988,6 +1001,12 @@ struct AppleMusicPlayerView: View {
                 }
             }
         }
+        // ★ 需求：歌词界面也要能「像大封面一样」下滑关闭 —— 整页跟手下移 + 淡出。
+        //   （此前只让顶部热区跟手，页面主体不动，手感与封面页不一致。）
+        .offset(y: showLyrics ? headerDragOffset : 0)
+        .opacity(showLyrics && headerDragOffset > 0
+                 ? max(0, 1 - Double(headerDragOffset) / 520.0)
+                 : 1)
     }
 
     private var lyricsHeader: some View {
@@ -1087,7 +1106,7 @@ struct AppleMusicPlayerView: View {
 
             // 常驻音量条（替代底部音量按钮）
             PlayerVolumeControl()
-                .frame(maxWidth: ScreenAdapter.w(420))
+                .frame(maxWidth: Self.contentMaxWidth)
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.volume)))
 
             Spacer().frame(height: ScreenAdapter.h(30))
@@ -1104,10 +1123,10 @@ struct AppleMusicPlayerView: View {
                     showQueue = true
                 }
             }
-            .frame(maxWidth: ScreenAdapter.w(420))
+            .frame(maxWidth: Self.contentMaxWidth)
             .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.actions)))
         }
-        .padding(.horizontal, ScreenAdapter.w(24))
+        .padding(.horizontal, Self.infoHorizontalPadding)
         .padding(.top, ScreenAdapter.h(10))
         .padding(.bottom, ScreenAdapter.h(70))
         .gesture(commentsGesture)
@@ -1127,14 +1146,15 @@ struct AppleMusicPlayerView: View {
         .buttonStyle(.plain)
     }
 
-    private func compactActionButton(icon: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+    private func compactActionButton(icon: String, active: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button {
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: ScreenAdapter.h(20), weight: .semibold))
-                .foregroundStyle(active ? accentColor : primaryColor.opacity(0.78))
-                .frame(width: ScreenAdapter.h(40), height: ScreenAdapter.h(40))
+                // 用户要求：三点/五角星**不要太大**，与五角星同尺寸（17pt）。
+                .font(.system(size: ScreenAdapter.h(17), weight: .semibold))
+                .foregroundStyle(tint ?? (active ? accentColor : primaryColor.opacity(0.78)))
+                .frame(width: ScreenAdapter.h(30), height: ScreenAdapter.h(30))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
