@@ -895,21 +895,32 @@ struct AppleMusicPlayerView: View {
     ///
     /// 始终返回同一类型的 `some Gesture`（不能返回 `Optional<Gesture>`），
     /// 是否启用交给 `.gesture(_:including:)` 决定。
+    ///
+    /// ★ 这里驱动的是**外层容器**共用的 `isDismissDragging` / `dismissDragOffset`
+    ///   （与大封面下滑关闭走同一条视觉通路），而不是给歌词页单独加 `.offset`。
+    ///   原因：歌词页底层是 AMLL 的 `WKWebView`，对它所在的子树叠加位移 / 透明度
+    ///   会强制 WebView 进离屏合成层，导致歌词与头部错位渗色。复用外层通路则完全
+    ///   不动歌词页自身布局。
     private var headerDismissGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
                 guard showLyrics else { return }
-                if value.translation.height > 0 {
-                    headerDragOffset = value.translation.height * 0.5
-                }
+                guard value.translation.height > 0 else { return }
+                isDismissDragging = true
+                dismissDragOffset = value.translation.height
             }
             .onEnded { value in
                 guard showLyrics else { return }
-                if value.translation.height > 80 {
+                let translation = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                if translation > Self.dismissDistance || predicted > Self.dismissPrediction {
+                    // 与大封面一致：关闭时保持 `isDismissDragging = true`，避免弹回再关。
                     onDismiss()
-                }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    headerDragOffset = 0
+                } else {
+                    isDismissDragging = false
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        dismissDragOffset = 0
+                    }
                 }
             }
     }
@@ -1001,12 +1012,6 @@ struct AppleMusicPlayerView: View {
                 }
             }
         }
-        // ★ 需求：歌词界面也要能「像大封面一样」下滑关闭 —— 整页跟手下移 + 淡出。
-        //   （此前只让顶部热区跟手，页面主体不动，手感与封面页不一致。）
-        .offset(y: showLyrics ? headerDragOffset : 0)
-        .opacity(showLyrics && headerDragOffset > 0
-                 ? max(0, 1 - Double(headerDragOffset) / 520.0)
-                 : 1)
     }
 
     private var lyricsHeader: some View {
