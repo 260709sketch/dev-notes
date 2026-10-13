@@ -283,6 +283,7 @@ struct WellArtistHomeView: View {
 }
 
 #Preview {
+    // 触发构建
     NavigationStack {
         WellArtistHomeView(artistId: "6452", artistName: "示例歌手")
     }
