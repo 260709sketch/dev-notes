@@ -224,9 +224,11 @@ struct WellBottomClearance: View {
 enum WellChromeMode {
     /// 是否使用 iOS 26 系统 TabView（液态玻璃底栏 + 底部 accessory）。
     ///
-    /// ⚠️ 实验（用户 2026-10-13 指令）：暂时设为 `false` —— 一律自绘胶囊栏，
-    /// 观察「白色矩形」是否消失。恢复系统底栏改回 `true` 即可（实现均保留）。
-    static let usesSystemTabView = false
+    /// 恢复为 `true`（2026-10-13 最终目标对齐 kumone）：
+    /// 用户明确「kumone 底部栏是悬浮的、可以看到下面的页面」——
+    /// 这就是系统 TabView 液态玻璃底栏的形态（悬浮胶囊 + 内容穿透）。
+    /// （此前一轮的自绘实验已完成排查使命。）
+    static let usesSystemTabView = true
 }
 
 /// 全局轻提示（自动换源等）

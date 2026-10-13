@@ -53,12 +53,41 @@ final class OrientationManager {
 ///
 /// 通过 `UIApplicationDelegateAdaptor` 挂到 `WellMusicApp` 上；SwiftUI 不会因此
 /// 改变生命周期，只是把方向决策权交给它。
-///
-/// ⚠️ 不再包含任何 chrome（nav bar / tab bar）干预 —— 曾试过 UIKit appearance
-/// 透明化，但 kumone（无白边的参照）**从不对 chrome 做任何设置**。白块的真正
-/// 元凶已在页面层解决（150pt 硬编码留白 + UIDesignRequiresCompatibility 移除），
-/// 这里恢复为纯方向仲裁，与 kumone 的 AppDelegate 职责一致。
 final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        Self.makeNavigationBarTransparent()
+        return true
+    }
+
+    /// ★★★ 顶部导航栏**全透明**（用户 2026-10-13 最终目标）。
+    ///
+    /// 用户对照 kumone 的原话：「kumone 这上面是**透明的可以看到下面的页面**的」。
+    /// 而我们的 nav bar 在滚动状态下有一层"近乎纯白"的材质把内容硬挡住
+    /// （卡片顶部被平齐切断）。这里把 `UINavigationBar` 的**全部状态**
+    /// （standard / scrollEdge / compact / compactScrollEdge）换成
+    /// `configureWithTransparentBackground` —— 背景层（含模糊）整体移除，
+    /// 标题与按钮保留，**内容滚动到 bar 后面直接可见**（沉浸式）。
+    ///
+    /// tab bar **不动**：系统液态玻璃底栏本身就是「悬浮 + 内容可见」的形态
+    /// （= kumone 底部栏的观感），无需干预。
+    private static func makeNavigationBarTransparent() {
+        let nav = UINavigationBarAppearance()
+        nav.configureWithTransparentBackground()
+        nav.backgroundColor = .clear
+        nav.backgroundEffect = nil
+        nav.shadowColor = .clear
+        let bar = UINavigationBar.appearance()
+        bar.standardAppearance = nav
+        bar.scrollEdgeAppearance = nav
+        bar.compactAppearance = nav
+        bar.compactScrollEdgeAppearance = nav
+        // 老 API 双保险（系统仍读取）
+        bar.isTranslucent = true
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
