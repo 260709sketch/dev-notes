@@ -58,9 +58,30 @@ final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // 2026-10-13 重写：不再做任何 chrome appearance 干预 ——
-        // 与无白边版（5d7dc59f）/ kumone 一致，nav bar / tab bar 全部交给系统默认渲染。
+        Self.makeNavigationBarTransparent()
         return true
+    }
+
+    /// ★ 顶部导航栏**全透明**（用户 2026-10-13 明确「导航栏保留」——重写后重新加回）。
+    ///
+    /// 把 `UINavigationBar` 的全部状态（standard / scrollEdge / compact / compactScrollEdge）
+    /// 换成 `configureWithTransparentBackground` —— 背景层（含模糊）整体移除，
+    /// 标题与按钮保留，**内容滚动到 bar 后面直接可见**（沉浸式，kumone 同款观感）。
+    ///
+    /// tab bar **不动**：系统液态玻璃底栏本身就是「悬浮 + 内容可见」的形态，无需干预。
+    private static func makeNavigationBarTransparent() {
+        let nav = UINavigationBarAppearance()
+        nav.configureWithTransparentBackground()
+        nav.backgroundColor = .clear
+        nav.backgroundEffect = nil
+        nav.shadowColor = .clear
+        let bar = UINavigationBar.appearance()
+        bar.standardAppearance = nav
+        bar.scrollEdgeAppearance = nav
+        bar.compactAppearance = nav
+        bar.compactScrollEdgeAppearance = nav
+        // 老 API 双保险（系统仍读取）
+        bar.isTranslucent = true
     }
 
     func application(
