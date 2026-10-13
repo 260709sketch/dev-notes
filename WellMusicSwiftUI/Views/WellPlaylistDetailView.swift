@@ -34,6 +34,9 @@ struct WellPlaylistDetailView: View {
     @State private var failed = false
     @State private var searchText = ""
     @State private var sortMode: SortMode = .original
+    /// 歌单简介（Apple Music 样式：两行截断 + 「更多」展开）
+    @State private var playlistDescription: String?
+    @State private var showFullDescription = false
 
     /// 每日推荐模式下的 header 封面（首曲封面）
     private var headerCoverURL: String? {
@@ -66,6 +69,7 @@ struct WellPlaylistDetailView: View {
                     heroCover
                     titleBlock
                     controlsRow
+                    descriptionBlock
                     searchRow
                     songsSection
                     Color.clear.frame(height: 170)
@@ -172,7 +176,40 @@ struct WellPlaylistDetailView: View {
         .padding(.bottom, 16)
     }
 
-    // MARK: - 搜索行（胶囊 + 右侧排序菜单「…」）
+    // MARK: - 简介（两行截断 + 「更多」展开，Apple Music 同款）
+
+    @ViewBuilder
+    private var descriptionBlock: some View {
+        if let desc = playlistDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !desc.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showFullDescription.toggle()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(desc.replacingOccurrences(of: "\n", with: " "))
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(showFullDescription ? nil : 2)
+                            .multilineTextAlignment(.leading)
+                        if !showFullDescription {
+                            Text("更多")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+    }
+
+    // MARK: - 搜索行（透明一行：放大镜 + 占位 + 排序「…」，Apple Music 同款无底色）
 
     private var searchRow: some View {
         HStack(spacing: 10) {
@@ -185,10 +222,9 @@ struct WellPlaylistDetailView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 4)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
-            .background(AppTheme.secondaryBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             // 排序菜单（…）
             Menu {
@@ -201,12 +237,13 @@ struct WellPlaylistDetailView: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 42, height: 42)
-                    .background(AppTheme.secondaryBackground, in: Circle())
+                    .frame(width: 36, height: 36)
             }
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 10)
+        .padding(.bottom, 4)
+        Divider().padding(.horizontal, 20)
+        .padding(.bottom, 4)
     }
 
     // MARK: - 歌曲列表（Apple Music 行：44 封面 + 名/歌手 + 右时长，无分隔线）
@@ -291,6 +328,11 @@ struct WellPlaylistDetailView: View {
         tracks = fetched
         failed = fetched.isEmpty
         isLoading = false
+
+        // 歌单简介（网易云歌单；每日推荐无）
+        if case .playlist(let pid, let plat, _) = source, plat == .netease, !dailyMode {
+            playlistDescription = await NeteaseMusicAPI.shared.playlistDescription(id: pid)
+        }
     }
 }
 

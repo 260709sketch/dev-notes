@@ -182,6 +182,7 @@ final class NeteaseMusicAPI {
         struct Body: Decodable {
             var name: String?
             var coverImgUrl: String?
+            var description: String?
             var tracks: [Song]?
             var trackIds: [TrackID]?
             struct TrackID: Decodable { var id: Int? }
@@ -493,6 +494,14 @@ final class NeteaseMusicAPI {
     // MARK: 详情（点击卡片后展开歌曲列表）
 
     /// 歌单歌曲
+    /// 歌单简介（详情页「更多」展开用；`api/v6/playlist/detail` 明文可用）
+    func playlistDescription(id: String) async -> String? {
+        let params: [String: Any] = ["id": id, "n": 0, "csrf_token": ""]
+        let resp: PlaylistDetailResponse = try await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        return resp.playlist?.description
+    }
+
     func playlistTracks(id: String) async throws -> [MusicItem] {
         let idValue: Any = Int(id).map { $0 as Any } ?? id
         let params: [String: Any] = ["id": idValue, "n": 100_000, "s": 8, "csrf_token": ""]
