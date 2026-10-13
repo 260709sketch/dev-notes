@@ -22,9 +22,7 @@ struct DiscoverView: View {
 
     @State private var isLoading = true
     @State private var errorMessage: String?
-    /// 榜单展开状态：收起显示前 3，展开显示前 10
-    @State private var ranksExpanded = false
-    /// 正在加载的动作键（每日推荐 / 私人漫游 / 心动模式），用于按钮转圈
+    /// 正在加载的动作键（私人漫游 / 心动模式），用于按钮转圈
     @State private var actionLoading: String?
 
     var body: some View {
@@ -97,11 +95,9 @@ struct DiscoverView: View {
                         coverURL: dailySongs.first?.albumCoverURL,
                         gradient: [Color(red: 0.95, green: 0.36, blue: 0.28),
                                    Color(red: 0.96, green: 0.68, blue: 0.30)],
-                        isLoading: false
-                    ) {
-                        guard !dailySongs.isEmpty else { return }
-                        PlayerCore.shared.play(queue: dailySongs, startIndex: 0)
-                    }
+                        useNavigation: true,
+                        destination: { DailyRecommendView() }
+                    )
 
                     WellFeatureCard(
                         title: "私人漫游",
@@ -213,7 +209,7 @@ struct DiscoverView: View {
         }
     }
 
-    // MARK: - 排行榜
+    // MARK: - 排行榜（横滑方卡，对齐 kumone HomeView 货架）
 
     @ViewBuilder
     private var toplistsSection: some View {
@@ -222,49 +218,29 @@ struct DiscoverView: View {
                 WellSectionHeader(title: "排行榜")
                     .padding(.horizontal, WellSearchMetrics.contentInset)
 
-                VStack(spacing: 0) {
-                    ForEach(Array(displayedToplists.enumerated()), id: \.element.id) { index, top in
-                        NavigationLink {
-                            WellSearchDetailView(
-                                source: .playlist(id: top.id, platform: .netease, name: top.name),
-                                coverURL: top.coverURL)
-                        } label: {
-                            WellRankRow(index: index + 1, item: top)
-                        }
-                        .buttonStyle(.plain)
-                        if index < displayedToplists.count - 1 {
-                            Divider()
-                                .padding(.leading, WellSearchMetrics.contentInset + 24 + 12 + 52 + 12)
-                        }
-                    }
+                // ⚠️ 项目铁律：横向货架用 HStack 绝不用 LazyHStack
+                //（LazyHStack 交叉轴测不出高 → 卡片全叠 y=0）
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
 
-                    if toplists.count > 3 {
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                                ranksExpanded.toggle()
+                        ForEach(toplists.prefix(10)) { top in
+                            NavigationLink {
+                                WellSearchDetailView(
+                                    source: .playlist(id: top.id, platform: .netease, name: top.name),
+                                    coverURL: top.coverURL)
+                            } label: {
+                                WellToplistCard(item: top)
                             }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(ranksExpanded ? "收起" : "展开全部（\(min(toplists.count, 10))）")
-                                    .font(.system(size: 13, weight: .medium))
-                                Image(systemName: ranksExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .foregroundStyle(AppTheme.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+
+                        Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
                     }
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, WellSearchMetrics.contentInset)
             }
         }
-    }
-
-    private var displayedToplists: [WellToplistSummary] {
-        Array(toplists.prefix(ranksExpanded ? min(toplists.count, 10) : 3))
     }
 
     // MARK: - 热门歌手
@@ -326,6 +302,8 @@ struct DiscoverView: View {
 // MARK: - 功能入口卡（每日推荐 / 私人漫游 / 心动模式）
 
 /// 大号入口卡：有封面用封面 + 底部渐变，无封面用品牌渐变 + 图标水印。
+/// `destination` 非空时整卡是 NavigationLink（如每日推荐进列表页），
+/// 否则点按执行 `action`（如私人漫游/心动模式直接起播）。
 struct WellFeatureCard: View {
     let title: String
     let subtitle: String
@@ -333,13 +311,26 @@ struct WellFeatureCard: View {
     var coverURL: String?
     let gradient: [Color]
     var isLoading: Bool = false
-    var action: () -> Void
+    var action: () -> Void = {}
+    /// true = 整卡 NavigationLink 进 `destination`（每日推荐列表页）；false = 点按执行 `action`
+    var useNavigation: Bool = false
+    var destination: () -> some View = { EmptyView() }
 
     private let width: CGFloat = 160
     private let height: CGFloat = 160
 
     var body: some View {
-        Button(action: action) {
+        if useNavigation {
+            NavigationLink { destination() } label: { cardBody }
+                .buttonStyle(WellPressButtonStyle())
+        } else {
+            Button(action: action) { cardBody }
+                .buttonStyle(WellPressButtonStyle())
+                .disabled(isLoading)
+        }
+    }
+
+    private var cardBody: some View {
             ZStack(alignment: .bottomLeading) {
                 background
 
@@ -373,9 +364,6 @@ struct WellFeatureCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(WellPressButtonStyle())
-        .disabled(isLoading)
     }
 
     @ViewBuilder
@@ -407,41 +395,37 @@ struct WellFeatureCard: View {
     }
 }
 
-// MARK: - 榜单行
+// MARK: - 榜单卡（kumone 式：方图 + 底部渐变 + 左下角更新频率 + 图下榜单名）
 
-/// 排行榜行：`[序号] [封面52] 榜单名 / 更新频率   ›`
-struct WellRankRow: View {
-    let index: Int
+struct WellToplistCard: View {
     let item: WellToplistSummary
 
+    private let size: CGFloat = 148
+
     var body: some View {
-        HStack(spacing: 12) {
-            Text("\(index)")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(index <= 3 ? AppTheme.accent : Color.secondary)
-                .frame(width: 24)
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomLeading) {
+                WellRemoteImage(url: item.coverURL, displaySize: size)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            WellRemoteImage(url: item.coverURL, displaySize: 52)
-                .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                LinearGradient(colors: [.clear, .black.opacity(0.55)],
+                               startPoint: .center, endPoint: .bottom)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text(item.updateFrequency ?? "每周更新")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                Text(item.updateFrequency ?? "")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(8)
             }
-            Spacer(minLength: 8)
+            .frame(width: size, height: size)
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.tertiary)
+            Text(item.name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
         }
-        .padding(.vertical, 8)
+        .frame(width: size, alignment: .leading)
         .contentShape(Rectangle())
     }
 }

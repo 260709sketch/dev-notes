@@ -156,24 +156,21 @@ struct WellRemoteImage: View {
 
 // MARK: - 分区标题
 
+/// 分区标题（对照 kumone 截图）：标题粗体 + 右侧小箭头（无「查看全部」字样）。
 struct WellSectionHeader: View {
     let title: String
     var action: (() -> Void)?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack {
             Text(title)
                 .font(.system(size: 19, weight: .bold))
             Spacer()
             if let action {
                 Button(action: action) {
-                    HStack(spacing: 2) {
-                        Text("查看全部")
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
