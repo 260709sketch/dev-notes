@@ -181,6 +181,11 @@ enum AppleMusicLayoutPart: String, CaseIterable, Identifiable {
     case next = "下一首"
     case volume = "音量条"
     case actions = "底部按钮"
+    /// 歌词页顶部**整行**（小封面 + 歌名歌手 + 五角星 + 三点）整体位置。
+    /// ⚠️ 与 `.title`（大封面状态那行）**互相独立**，歌词页单独调不影响大封面。
+    case lyricsHeader = "歌词页顶部整行"
+    /// 歌词页顶部**歌名/歌手文字块**单独位置（在 `lyricsHeader` 内部再叠一层）。
+    case lyricsTrackInfo = "歌词页歌名歌手"
 
     var id: String { rawValue }
 }
@@ -316,7 +321,8 @@ final class AppleMusicLayoutStore: ObservableObject {
         switch part {
         case .top:
             return PlayerLayoutEntry(y: -63)
-        case .cover, .title, .previewLyric, .progress, .previous, .play, .next, .volume, .actions:
+        case .cover, .title, .previewLyric, .progress, .previous, .play, .next, .volume, .actions,
+             .lyricsHeader, .lyricsTrackInfo:
             return PlayerLayoutEntry()
         }
     }

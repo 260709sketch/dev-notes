@@ -952,6 +952,8 @@ struct AppleMusicPlayerView: View {
                 .padding(.horizontal, ScreenAdapter.w(24))
                 .padding(.top, ScreenAdapter.h(85))
                 .padding(.bottom, ScreenAdapter.h(10))
+                // 歌词页顶部整行整体位置（独立于大封面状态的 `.title`）
+                .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.lyricsHeader)))
 
             if settings.appleMusicUseAMLL {
                 // AMLL 已在底层渲染歌词，这里只保留头部，剩余空间透明
@@ -1056,6 +1058,9 @@ struct AppleMusicPlayerView: View {
                     }
                 }
             }
+            // 歌词页歌名/歌手文字块单独位置（与「整行」独立叠加）
+            .offset(x: layoutEntry(.lyricsTrackInfo).x,
+                    y: layoutEntry(.lyricsTrackInfo).y)
             Spacer(minLength: 0)
             PlayerLikeButton(
                 track: track,

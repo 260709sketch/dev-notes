@@ -22,6 +22,7 @@ struct PlayerAdjustSheet: View {
             Form {
                 positionSection
                 trackInfoFontSection
+                lyricsHeaderSection
                 backgroundSection
                 topBarSection
                 amllLyricSection
@@ -116,6 +117,43 @@ struct PlayerAdjustSheet: View {
             Text("歌手歌曲信息")
         } footer: {
             Text("字号同时作用于大封面状态与歌词页顶部的歌曲名 / 歌手信息。")
+        }
+    }
+
+    /// 歌词页顶部整行 + 歌名歌手单独位置。
+    ///
+    /// * `.lyricsHeader`    → 小封面 + 歌名歌手 + 五角星 + 三点**整体**上下
+    /// * `.lyricsTrackInfo` → 其中的歌名/歌手文字块**单独**上下左右
+    ///
+    /// 与大封面状态的那行（`trackInfoFontSection` 用 `.title`）完全独立，
+    /// 调这里不会影响大封面。
+    private var lyricsHeaderSection: some View {
+        Section {
+            layoutSlider(
+                title: "歌词页顶部整行 上下",
+                part: .lyricsHeader,
+                axis: .vertical,
+                range: -200...200,
+                note: "小封面 / 歌名歌手 / 五角星 / 三点 整体上下"
+            )
+            layoutSlider(
+                title: "歌词页歌名歌手 上下",
+                part: .lyricsTrackInfo,
+                axis: .vertical,
+                range: -100...100,
+                note: "仅歌词页顶部的歌名 / 歌手文字块"
+            )
+            layoutSlider(
+                title: "歌词页歌名歌手 左右",
+                part: .lyricsTrackInfo,
+                axis: .horizontal,
+                range: -100...100,
+                note: "正值向右、负值向左"
+            )
+        } header: {
+            Text("歌词页顶部")
+        } footer: {
+            Text("仅作用于歌词页（小封面那一行），不影响大封面状态。")
         }
     }
 
