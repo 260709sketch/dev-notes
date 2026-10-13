@@ -43,6 +43,61 @@ struct WellPlaylistDetailView: View {
         dailyMode ? (tracks.first?.albumCoverURL ?? coverURL) : coverURL
     }
 
+    // MARK: - 排序 / 搜索（`orderedTracks` 是播放队列，`displayedTracks` 只是滤镜）
+
+    /// 排序后的**完整队列**：播放 / 随机播放都按它走。
+    ///
+    /// Beans 同款语义：搜索只影响可见列表，点歌后的队列顺序仍是排序后的完整顺序。
+    private var orderedTracks: [MusicItem] {
+        switch sortMode {
+        case .original:
+            return tracks
+        case .name:
+            return tracks.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        case .duration:
+            return tracks.sorted { $0.duration < $1.duration }
+        }
+    }
+
+    /// 搜索过滤后的**可见列表**（只影响显示，不影响播放队列）。
+    private var displayedTracks: [MusicItem] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return orderedTracks }
+        return orderedTracks.filter {
+            $0.title.localizedCaseInsensitiveContains(keyword)
+                || ($0.artist ?? "").localizedCaseInsensitiveContains(keyword)
+        }
+    }
+
+    /// 可见列表里的某一首对应完整队列的下标（点歌按队列顺序播）。
+    private func playbackIndex(for item: MusicItem) -> Int {
+        orderedTracks.firstIndex(where: { $0.id == item.id }) ?? 0
+    }
+
+    /// 加载失败的重试态。
+    private var retryState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.arrow.circlepath")
+                .font(.system(size: 34))
+                .foregroundStyle(.secondary)
+            Text("加载失败")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await load() }
+            } label: {
+                Text("重新加载")
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     var body: some View {
         // ⚠️ iOS 26 Apple Music 专辑/歌单页样式（用户指定一比一）：
         // 封面主色模糊渐变铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
@@ -212,38 +267,44 @@ struct WellPlaylistDetailView: View {
     // MARK: - 搜索行（透明一行：放大镜 + 占位 + 排序「…」，Apple Music 同款无底色）
 
     private var searchRow: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                TextField("搜索歌单内歌曲", text: $searchText)
-                    .font(.system(size: 14))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity)
-
-            // 排序菜单（…）
-            Menu {
-                Picker("排序", selection: $sortMode) {
-                    ForEach(SortMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
+        // ⚠️ 必须包一层 VStack：普通计算属性（非 `body`）不享受隐式返回，
+        //    「HStack 行 + Divider」两条语句直接平铺会报
+        //    "opaque return type ... no return statements"。
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                    TextField("搜索歌单内歌曲", text: $searchText)
+                        .font(.system(size: 14))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, height: 36)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+
+                // 排序菜单（…）
+                Menu {
+                    Picker("排序", selection: $sortMode) {
+                        ForEach(SortMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 36)
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 4)
+
+            Divider().padding(.horizontal, 20)
+                .padding(.bottom, 4)
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 4)
-        Divider().padding(.horizontal, 20)
-        .padding(.bottom, 4)
     }
 
     // MARK: - 歌曲列表（Apple Music 行：44 封面 + 名/歌手 + 右时长，无分隔线）
