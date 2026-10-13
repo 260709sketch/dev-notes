@@ -259,8 +259,8 @@ struct DiscoverView: View {
                     loadedBody
                 }
 
-                // 底栏（迷你播放器 + Tab 胶囊）留白：约 54 + 8 + 64 + 安全区
-                Color.clear.frame(height: 150)
+                // 底栏留白：iOS 26 系统已自动扩展 safe area（见 WellBottomClearance）
+                WellBottomClearance()
             }
             .padding(.top, 6)
         }

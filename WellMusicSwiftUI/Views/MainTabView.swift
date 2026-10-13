@@ -200,6 +200,24 @@ extension MainTabView {
     ]
 }
 
+/// 底栏留白（对应 kumone `PlayerClearanceSpacer` 的逻辑）。
+///
+/// ★ iOS 26+ 原生 TabView 的底部 accessory（MiniPlayer）会**自动扩展内容的
+///   safe area insets** —— 系统已经替页面留好了 tab bar + 播放条的全部空间，
+///   页面只需一点呼吸边距。此时若再手动加 150pt 大留白，滚到底就会在内容与
+///   tab bar 之间多出一整块空白（浅色下即「底部白色矩形」）。
+///   iOS 16-25 的自绘胶囊栏浮在内容**之上**（不扩展 safe area），
+///   必须显式留足（≈ MiniPlayer 54 + 间距 8 + 胶囊 64 + 边距 6 + 呼吸 12）。
+struct WellBottomClearance: View {
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Color.clear.frame(height: 8)
+        } else {
+            Color.clear.frame(height: 150)
+        }
+    }
+}
+
 /// 全局轻提示（自动换源等）
 struct WellToastView: View {
     @ObservedObject private var center = ToastCenter.shared
