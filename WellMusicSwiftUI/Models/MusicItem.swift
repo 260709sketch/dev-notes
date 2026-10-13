@@ -39,6 +39,10 @@ struct MusicItem: Identifiable, Codable, Hashable {
     var albumCoverURL: String?
     var duration: TimeInterval
 
+    /// 平台侧「需付费 / VIP」标记（网易云 `fee`、QQ `pay`、酷狗 `privilege`）。
+    /// 仅供列表行显示 VIP 小徽章，不参与任何播放鉴权逻辑。
+    var isVip: Bool = false
+
     // 各平台专属 ID（备用优先）
     var qqSongMid: String?
     /// QQ 音乐 file.media_mid（部分 vkey 接口需要，缺省时回退 songmid）
@@ -71,6 +75,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
          album: String? = nil,
          albumCoverURL: String? = nil,
          duration: TimeInterval = 0,
+         isVip: Bool = false,
          qqSongMid: String? = nil,
          qqMediaMid: String? = nil,
          neteaseId: String? = nil,
@@ -84,6 +89,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
         self.album = album
         self.albumCoverURL = albumCoverURL
         self.duration = duration
+        self.isVip = isVip
         self.qqSongMid = qqSongMid
         self.qqMediaMid = qqMediaMid
         self.neteaseId = neteaseId

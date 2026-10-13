@@ -92,29 +92,15 @@ struct SearchView: View {
     // MARK: 搜索框
 
     private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("搜索歌曲、歌手、专辑、歌单", text: $searchText)
-                .focused($focused)
-                .submitLabel(.search)
-                .autocorrectionDisabled()
-                .onSubmit { committedQuery = searchText }
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    committedQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
+        WellSearchField(
+            text: $searchText,
+            isFocused: $focused,
+            onSubmit: { committedQuery = searchText },
+            onClear: {
+                searchText = ""
+                committedQuery = ""
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(AppTheme.secondaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        )
         .padding(.horizontal, WellSearchMetrics.contentInset)
         .onChange(of: searchText) { newValue in
             Task {
@@ -127,25 +113,17 @@ struct SearchView: View {
     // MARK: 分段选择
 
     private var platformPicker: some View {
-        Picker("", selection: $model.platform) {
-            ForEach(WellSearchPlatform.allCases) { p in
-                Text(p.rawValue).tag(p)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, WellSearchMetrics.contentInset)
+        WellSegmentedControl(items: WellSearchPlatform.allCases,
+                             title: { $0.rawValue },
+                             selection: $model.platform)
+            .padding(.horizontal, WellSearchMetrics.contentInset)
     }
 
     private var typePicker: some View {
-        Picker("", selection: $model.type) {
-            ForEach(WellSearchType.allCases) { t in
-                Text(t.rawValue).tag(t)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, WellSearchMetrics.contentInset)
+        WellSegmentedControl(items: WellSearchType.allCases,
+                             title: { $0.rawValue },
+                             selection: $model.type)
+            .padding(.horizontal, WellSearchMetrics.contentInset)
     }
 
     // MARK: 空态提示
@@ -231,14 +209,12 @@ struct SearchView: View {
                 Button {
                     PlayerCore.shared.play(queue: tracks, startIndex: index)
                 } label: {
-                    TrackRow(item: item)
-                        .padding(.vertical, 6)
+                    WellSearchTrackRow(item: item)
                         .padding(.horizontal, WellSearchMetrics.contentInset)
-                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 if index < tracks.count - 1 {
-                    Divider().padding(.leading, WellSearchMetrics.contentInset + 58)
+                    Divider().padding(.leading, WellSearchMetrics.contentInset + WellSearchMetrics.trackArtwork + 12)
                 }
             }
         }

@@ -113,6 +113,8 @@ final class NeteaseMusicAPI {
         var ar: [Artist]?
         var al: Album?
         var dt: Int?
+        /// 网易云付费标记：1 = VIP 歌曲、4 = 购买专辑、8 = 低音质免费。仅用于列表行 VIP 徽章。
+        var fee: Int?
         struct Artist: Decodable { var name: String? }
         struct Album: Decodable {
             var name: String?
@@ -878,6 +880,7 @@ final class NeteaseMusicAPI {
             album: song.al?.name,
             albumCoverURL: song.al?.picUrl,
             duration: TimeInterval(song.dt ?? 0) / 1000,
+            isVip: (song.fee ?? 0) == 1 || (song.fee ?? 0) == 4,
             neteaseId: "\(id)"
         )
     }
