@@ -681,33 +681,6 @@ struct AppleMusicPlayerView: View {
                     .ignoresSafeArea()
             }
 
-            // ★ 歌词页展开时：歌词列表浮在**封面的高斯模糊**之上
-            //   （Apple Music 歌词页同款，用户 2026-10-14 要求）。
-            //
-            // 做法与详情页大封面融底一致：原生 `.blur(radius: 80)` 后台一次渲染，
-            // 不引第三方模块；上面再压一条「保持封面色 → 收到底色」的渐变，
-            // 让歌词密集的中下部落回纯净底色，白字可读性不受糊化封面干扰。
-            // 收起歌词页时整层淡出，下面的流体渐变 / 封面模糊背景自然接回。
-            if showLyrics {
-                GeometryReader { geo in
-                    WellRemoteImage(url: coverURL, displaySize: 720)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .blur(radius: 80)
-                        .overlay(
-                            LinearGradient(
-                                stops: lyricsBackdropStops(),
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
-                }
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-                .transition(.opacity)
-            }
-
             // AMLL 歌词只在**展开歌词页时**才创建。
             //
             // ⚠️ 关键：这里**不能**写成「常驻 + opacity 控制」。历史上常驻配合
@@ -723,19 +696,6 @@ struct AppleMusicPlayerView: View {
                     .padding(.horizontal, ScreenAdapter.w(CGFloat(amllHorizPx)))
             }
         }
-        // 歌词页高斯模糊层的淡入淡出（与封面↔歌词页切换同程）。
-        .animation(.easeInOut(duration: 0.3), value: showLyrics)
-    }
-
-    /// 歌词页高斯模糊背景的渐变断点：顶部保留封面的糊化色，
-    /// 约 62% 屏高前收到底色（黑/白随背景模式），底部落在纯净底色上。
-    private func lyricsBackdropStops() -> [Gradient.Stop] {
-        let base = bgMode == .dark ? Color.black : Color.white
-        return [
-            .init(color: .clear, location: 0),
-            .init(color: base.opacity(0.35), location: 0.30),
-            .init(color: base, location: 0.62),
-        ]
     }
 
     // MARK: - 封面页

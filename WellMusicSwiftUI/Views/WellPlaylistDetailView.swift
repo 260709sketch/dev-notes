@@ -103,11 +103,15 @@ struct WellPlaylistDetailView: View {
         // 封面主色模糊渐变铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
         // → 搜索行 → 无分隔线歌曲列表。
         ZStack(alignment: .top) {
-            // ★ 封面高斯模糊背景（Apple Music「每日推荐」同款融底效果）：
-            //   同一张封面铺满**全屏** + 大半径高斯模糊，渐隐从**大封面下缘**
-            //   开始、屏高 80% 前收到底色 —— dock / mini player 落在纯色上。
+            // ★ 封面高斯模糊背景（Apple Music 专辑/歌单页同款）：
+            //   同一张封面铺满**全屏** + 大半径高斯模糊，从**大封面下缘**起一直
+            //   **保留到页面底部** —— 标题块 / 控制行 / 简介 / 搜索 / 歌曲列表
+            //   所有信息都浮在这层糊化封面之上（用户 2026-10-14 明确要求：
+            //   「应用在歌单页面大封面下面、延申到页面底部、要在歌曲所有信息下面」；
+            //   截图（Taylor Swift《Lover》专辑页）里糊化色块极清晰，只压了
+            //   **极轻**一层系统底色（≈0.30）提对比，不再淡成纯背景。
             //   ⚠️ 旧版图层只有 1.9 倍屏宽高，会在底栏上方戛然截止，
-            //   截图表现为「dock 周围一块模糊断带」（2026-10-14 用户反馈）。
+            //   截图表现为「dock 周围一块模糊断带」。
             //   模糊层垫在最底（ZStack 第一层），固定不随滚动（滚动跟随需要
             //   scrollClipDisabled，性能铁律禁用）。
             GeometryReader { geo in
@@ -160,18 +164,21 @@ struct WellPlaylistDetailView: View {
     ///
     /// * `clear` 保持到封面下缘 —— 封面上方区域被封面本身盖住（滚动时才露出），
     ///   下缘处模糊 artwork 与封面同源同位置，只有清晰度突变，颜色连续；
-    /// * 之后经 ~45% 底纹过渡，**屏高 80% 前收到纯底色** —— dock / mini player
-    ///   区域落在纯色上，不会再出现「模糊层在底栏上方截止」的断带；
-    /// * 小屏（封面占屏高比例大）时自动夹取，保证渐隐区间不塌缩。
+    /// * 之后只压**极轻**的一层系统底色（≈0.30，底部 0.38）—— 糊化封面的色块
+    ///   （如 Taylor Swift《Lover》的粉蓝 pastel）从大封面下缘起**清晰地**一直
+    ///   保留到页面底部，垫在歌曲所有信息下面（用户 2026-10-14 发 Apple Music
+    ///   专辑页截图要求 1:1：「这样的大封面下面高斯模糊」）；
+    /// * 不再收到底色：早期版本在屏高 80% 前淡成纯背景，歌曲区看不到模糊；
+    ///   0.55 的白罩也过浓（把糊化色洗白），已按截图调淡；
+    /// * 底部略微加重是给 dock / 底部留白一个稳的落点，避免糊化色在最底端
+    ///   和系统 tab bar 的材质打架。
     private func backdropStops(width: CGFloat, height: CGFloat) -> [Gradient.Stop] {
         let edge = height > 0 ? min(max(width / height, 0.25), 0.6) : 0.45
-        let fadeEnd = min(edge + 0.34, 0.80)
-        let mid = edge + (fadeEnd - edge) * 0.45
         return [
             .init(color: .clear, location: 0),
             .init(color: .clear, location: edge),
-            .init(color: bgFadeColor.opacity(0.45), location: mid),
-            .init(color: bgFadeColor, location: fadeEnd),
+            .init(color: bgFadeColor.opacity(0.30), location: edge + 0.08),
+            .init(color: bgFadeColor.opacity(0.38), location: 1.0),
         ]
     }
 
