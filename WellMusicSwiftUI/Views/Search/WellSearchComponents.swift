@@ -294,24 +294,19 @@ struct WellCoverCard: View {
 
 // MARK: - 歌手卡片（圆形）
 
+/// 歌手卡（对照 kumone：圆形 128pt 封面 + 名字居中）。
 struct WellArtistCard: View {
     let artist: WellArtistSummary
-    var size: CGFloat = WellSearchMetrics.artistSize
+    var size: CGFloat = 128
     var fillWidth: Bool = false
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             artwork
             Text(artist.name)
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(.primary)
-            if let subtitle = artist.subtitle {
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-            }
         }
         .modifier(WellCardSizeModifier(size: size + 12, fillWidth: fillWidth))
         .contentShape(Rectangle())

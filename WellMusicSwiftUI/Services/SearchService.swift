@@ -14,16 +14,17 @@ final class SearchService {
 
     // MARK: 搜索
 
-    func search(keyword: String, platform: WellSearchPlatform, type: WellSearchType) async -> WellSearchResult {
+    /// - Parameter limit: 单类结果的拉取上限（综合页取样用小值，单曲页全量用大值）
+    func search(keyword: String, platform: WellSearchPlatform, type: WellSearchType, limit: Int = 50) async -> WellSearchResult {
         let key = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return WellSearchResult() }
 
         switch type {
         case .all: return await searchAll(key, platform: platform)
-        case .songs: return await songs(key, platform: platform, limit: 50)
-        case .artists: return await artists(key, platform: platform, limit: 50)
-        case .albums: return await albums(key, platform: platform, limit: 50)
-        case .playlists: return await playlists(key, platform: platform, limit: 50)
+        case .songs: return await songs(key, platform: platform, limit: limit)
+        case .artists: return await artists(key, platform: platform, limit: limit)
+        case .albums: return await albums(key, platform: platform, limit: limit)
+        case .playlists: return await playlists(key, platform: platform, limit: limit)
         }
     }
 
