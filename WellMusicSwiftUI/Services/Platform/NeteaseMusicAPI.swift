@@ -493,12 +493,15 @@ final class NeteaseMusicAPI {
 
     // MARK: 详情（点击卡片后展开歌曲列表）
 
-    /// 歌单歌曲
-    /// 歌单简介（详情页「更多」展开用；`api/v6/playlist/detail` 明文可用）
+    /// 歌单简介（详情页「更多」展开用；`api/v6/playlist/detail` 明文可用）。
+    ///
+    /// 非抛错：简介只是详情页的附加信息，网络失败时返回 nil 即可
+    /// （调用方 `WellPlaylistDetailView.load()` 不接 `throws`）。
     func playlistDescription(id: String) async -> String? {
         let params: [String: Any] = ["id": id, "n": 0, "csrf_token": ""]
-        let resp: PlaylistDetailResponse = try await Self.apiRequest(
-            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        guard let resp: PlaylistDetailResponse = try? await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self
+        ) else { return nil }
         return resp.playlist?.description
     }
 
