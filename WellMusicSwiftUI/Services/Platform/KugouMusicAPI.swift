@@ -88,11 +88,25 @@ final class KugouMusicAPI {
         if artist.isEmpty, let fallbackSinger, !fallbackSinger.isEmpty, fallbackSinger != "未知歌手" {
             artist = fallbackSinger
         }
-        let albumId = (dict["album_id"] as? String) ?? (dict["albumid"] as? String)
+        // ⚠️★ 2026-10-14：这段原本是**一个 6 连 `??` 的长表达式**，在 Xcode 26.3 的
+        // 类型检查器上直接超时（CI 日志原文）：
+        //   KugouMusicAPI.swift:91:13: error: the compiler is unable to type-check
+        //   this expression in reasonable time
+        // 原因：`??` 对每个操作数都有「返回 T」与「返回 T?」两个重载，6 连时会给出
+        // 2^5 = 32 种组合，叠加 `as?` 强制转换与 `map { String($0) }` 闭包，约束求解
+        // 直接爆掉（同文件里 4 连的版本都没事）。
+        // 修法：拆成两段**短链**，语义完全不变 —— 依旧是「第一个非 nil 的字符串胜出」，
+        // 且各段的候选键顺序与原表达式逐一对应：
+        //   ① 字符串键：album_id → albumid → AlbumID
+        //   ② 数值键（JSON 里同一字段可能是 Int/Double/String）：AlbumID → album_id → albumid
+        // 显式标注 `String?` 是为了钉死 `??` 的重载选择（去掉推断的歧义）。
+        let albumIdText: String? = (dict["album_id"] as? String)
+            ?? (dict["albumid"] as? String)
             ?? (dict["AlbumID"] as? String)
-            ?? Self.intValue(dict["AlbumID"]).map { String($0) }
+        let albumIdFromNumber: String? = Self.intValue(dict["AlbumID"]).map { String($0) }
             ?? Self.intValue(dict["album_id"]).map { String($0) }
-            ?? Self.intValue(dict["albumid"]).map { String($0) } ?? ""
+            ?? Self.intValue(dict["albumid"]).map { String($0) }
+        let albumId: String = albumIdText ?? albumIdFromNumber ?? ""
         let duration = TimeInterval(Self.intValue(dict["duration"])
             ?? Self.intValue(dict["timelength"])
             ?? Self.intValue(dict["Duration"]) ?? 0)
