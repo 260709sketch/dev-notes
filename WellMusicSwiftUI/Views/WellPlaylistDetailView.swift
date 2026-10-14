@@ -183,8 +183,13 @@ struct WellPlaylistDetailView: View {
     /// 封面两版式（2026-10-14 用户设计稿 IMG_3955）：
     /// * `.centered`（新版，默认）：**居中留白**方图 —— 尺寸量自设计稿
     ///   （885×1920 @2.06x）：边长 = 屏宽 × 0.708 ≈ 304pt（左右留白各 ≈14.3%），
-    ///   顶距导航栏下缘 ≈57pt，干净方图直落背景（无任何渐隐）；
+    ///   干净方图直落背景（无任何渐隐）；
     /// * `.fullWidth`（旧版，设置可切回）：上顶全宽方图 + 下段渐隐融进主色底。
+    ///
+    /// ⚠️ 顶距导航栏下缘：设计稿量得 **57pt**，2026-10-14 17:00 用户实机反馈
+    /// 「大封面往上点，有点靠下了」→ 收到 **28pt**（上移 29pt）。
+    /// 封面下方的一切（标题块 / 三钮 / 搜索行 / 歌曲列表）都在同一个 VStack 里，
+    /// 会跟着一起上移，无需分别调整。
     @ViewBuilder
     private var heroCover: some View {
         switch coverStyle {
@@ -193,7 +198,7 @@ struct WellPlaylistDetailView: View {
                 .frame(width: ScreenAdapter.w(304), height: ScreenAdapter.w(304))
                 .clipped()
                 .frame(maxWidth: .infinity)
-                .padding(.top, 57)
+                .padding(.top, 28)
         case .fullWidth:
             WellRemoteImage(url: headerCoverURL, displaySize: 720)
                 .frame(maxWidth: .infinity)
