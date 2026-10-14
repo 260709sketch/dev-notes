@@ -882,6 +882,14 @@ final class PlayerCore: NSObject, ObservableObject {
         center.nextTrackCommand.isEnabled = true
         center.previousTrackCommand.isEnabled = true
         center.changePlaybackPositionCommand.isEnabled = true
+        // ★★ 2026-10-14 用户：「控制中心在播放歌曲没有五角星收藏按钮」。
+        //
+        //   iOS 的 Now Playing 卡片（控制中心 / 锁屏）**只在 App 注册了 `likeCommand`
+        //   时才会画出那个收藏按钮** —— 光有 play / pause / next / previous 是不会出现的。
+        //   这里把它接到本项目「我喜欢」的收藏状态上；`isActive` 用当前曲目是否已收藏
+        //   来反映（见 `refreshLikeCommand()`），按钮才会呈现选中/未选中两种样子。
+        center.likeCommand.isEnabled = true
+        center.likeCommand.localizedTitle = "收藏"
         center.playCommand.addTarget { [weak self] _ in
             self?.resume(); return .success
         }
@@ -902,6 +910,29 @@ final class PlayerCore: NSObject, ObservableObject {
             self?.seek(to: ev.positionTime)
             return .success
         }
+        center.likeCommand.addTarget { [weak self] _ in
+            guard let self else { return .noActionableNowPlayingItem }
+            return self.handleLikeCommand()
+        }
+    }
+
+    /// 控制中心 / 锁屏「收藏」按钮 → 当前曲目加入/移出「我喜欢」。
+    @discardableResult
+    private func handleLikeCommand() -> MPRemoteCommandHandlerStatus {
+        guard let item = currentItem else { return .noActionableNowPlayingItem }
+        AppState.shared.toggleFavorite(item)
+        refreshLikeCommand()
+        ToastCenter.shared.show(AppState.shared.isFavorite(item) ? "已收藏" : "已取消收藏")
+        return .success
+    }
+
+    /// 让控制中心 / 锁屏的收藏按钮反映**当前曲目是否已收藏**。
+    func refreshLikeCommand() {
+        guard let item = currentItem else {
+            MPRemoteCommandCenter.shared().likeCommand.isActive = false
+            return
+        }
+        MPRemoteCommandCenter.shared().likeCommand.isActive = AppState.shared.isFavorite(item)
     }
 
     private func updateNowPlaying(_ item: MusicItem? = nil) {
@@ -935,6 +966,8 @@ final class PlayerCore: NSObject, ObservableObject {
             center.playbackState = .stopped
         }
         PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration)) state=\(center.playbackState.rawValue) \(AudioSessionManager.stateDescription)")
+        // ④ 收藏按钮状态（控制中心 / 锁屏）：换成别的歌就立刻重算一次
+        refreshLikeCommand()
 
         // ③ 封面图：每首歌只异步拉一次（走 WellImageCache 的缩图缓存，与列表/播放页
         //    共用同一份解码结果），到图后补写同一条信息；失败则保持无封面，不影响显示。

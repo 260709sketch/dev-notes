@@ -1473,27 +1473,56 @@ struct AppleMusicPlayerView: View {
     }
 
     // iOS 原生弹窗输入自定义睡眠定时
+    //
+    // ⚠️★ 2026-10-14 用户：「睡眠定时 → 自定义… 点了没有反应」。两个原因叠加：
+    //   ① **present 目标错了**：播放页是 `fullScreenCover` 呈现的，系统 key window 的
+    //      `rootViewController` **已经 present 了播放页**；再往它上面 present 新控制器，
+    //      UIKit 只会打一行 "already presenting" 日志然后**静默丢弃**。
+    //      修法：沿 `presentedViewController` 链走到**最顶层**的控制器再 present。
+    //   ② **时机错了**：这个回调来自 SwiftUI 的 `Menu`（系统 UIMenu），菜单收起动画还没
+    //      结束时立刻 present，同样会被丢掉。修法：延后一拍（0.35s）再弹。
     private func showCustomSleepTimerAlert() {
-        let alert = UIAlertController(
-            title: "自定义睡眠定时",
-            message: "请输入分钟数（1-600）",
-            preferredStyle: .alert
-        )
-        alert.addTextField { textField in
-            textField.placeholder = "30"
-            textField.keyboardType = .numberPad
-            textField.text = "30"
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "开始", style: .default) { _ in
-            if let text = alert.textFields?.first?.text,
-               let minutes = Int(text), minutes > 0 && minutes <= 600 {
-                player.sleepTimer.schedule(afterMinutes: minutes)
+        // 先把要用的引用取出来（不让闭包去捕获整个视图结构体）
+        let timer = player.sleepTimer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            var presenter: UIViewController?
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            for scene in scenes {
+                if let key = scene.windows.first(where: { $0.isKeyWindow }) {
+                    presenter = key.rootViewController
+                    break
+                }
             }
-        })
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
-            rootVC.present(alert, animated: true)
+            if presenter == nil {
+                for scene in scenes {
+                    if let first = scene.windows.first {
+                        presenter = first.rootViewController
+                        break
+                    }
+                }
+            }
+            guard var top = presenter else { return }
+            // 走到最顶层，否则 alert 会被 fullScreenCover 挡住/丢弃
+            while let presented = top.presentedViewController { top = presented }
+
+            let alert = UIAlertController(
+                title: "自定义睡眠定时",
+                message: "请输入分钟数（1-600）",
+                preferredStyle: .alert
+            )
+            alert.addTextField { textField in
+                textField.placeholder = "30"
+                textField.keyboardType = .numberPad
+                textField.text = "30"
+            }
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+            alert.addAction(UIAlertAction(title: "开始", style: .default) { _ in
+                if let text = alert.textFields?.first?.text,
+                   let minutes = Int(text), minutes > 0 && minutes <= 600 {
+                    timer.schedule(afterMinutes: minutes)
+                }
+            })
+            top.present(alert, animated: true)
         }
     }
 }

@@ -1,7 +1,4 @@
 import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
 
 /// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
 ///
@@ -24,9 +21,6 @@ struct MainTabView: View {
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
 
-    /// 键盘遮挡高度（屏幕底 → 键盘上沿）。用于让迷你播放器跟随键盘上移，而 dock 栏不动。
-    @State private var keyboardHeight: CGFloat = 0
-
     /// 各 Tab 独立的导航路径（类型擦除；push 一律用 destination-based NavigationLink）。
     ///
     /// ⚠️ 导航容器（`NavigationStack`）必须由**这里**统一提供，**不要**写进各页面内部：
@@ -48,16 +42,11 @@ struct MainTabView: View {
                 if hasActiveTrack != value { hasActiveTrack = value }
             }
             .onAppear { hasActiveTrack = PlayerCore.shared.hasActiveTrack }
-            // ★ 2026-10-14 用户：点击搜索框时——dock 栏**不上移**（被键盘盖住即可），
-            //   只有迷你播放器跟随键盘上移。这里只记录键盘遮挡高度，布局在
-            //   `miniPlayerBottomPadding` 里应用。
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-                updateKeyboardHeight(from: note)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                if keyboardHeight != 0 { keyboardHeight = 0 }
-            }
-            // ★ 播放页发出的「跳歌手 / 跳专辑」请求 → 关掉播放页并 push 进当前 Tab
+            // 播放页发出的「跳歌手 / 跳专辑」请求。
+            //
+            // ★ 2026-10-14 起播放器有了**自己的内部导航栈**（见 `NowPlayingRouterView`），
+            //   点歌手/专辑不再走这条通道 —— 这条保留为「跳出播放器、push 进当前 Tab」
+            //   的备用入口，`NowPlayingNavigator` 仍在，未被调用时不产生任何开销。
             .onReceive(NowPlayingNavigator.shared.$pending) { destination in
                 guard let destination else { return }
                 pushNowPlayingDestination(destination)
@@ -123,8 +112,13 @@ struct MainTabView: View {
     /// ⚠️★ 2026-10-14 用户第三轮末：⑥「dock 栏点击切换改成拖动那种」**已按用户要求回退**
     ///   （用户原话「算了你把dock栏切换改回去」）。中间曾实现「横向分页 + 拖动切页」
     ///   （HStack 排布 + `.offset` + 手势），现恢复为**点击切换 + opacity**，与回退前
-    ///   的实现完全一致；同轮其余改动（迷你播放器与 dock 分两层、键盘跟随、
-    ///   播放页跳转）全部保留，未做回退。
+    ///   的实现完全一致；同轮的「播放页跳转」保留。
+    ///
+    /// ⚠️★ 2026-10-14 用户第四轮：「键盘跟随这个回退」—— 原需求 ⑭b 整条回退。
+    ///   中间曾把 dock 栏与迷你播放器拆成两层（dock 恒定 + 迷你播放器单独吃键盘高度），
+    ///   现恢复为**单层 `VStack(spacing: 8)` 整体随键盘上移**，与改造前完全一致；
+    ///   `keyboardHeight` / `miniPlayerBottomPadding` / `dockBasePadding` 与两个键盘
+    ///   通知监听一并删除。
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             // ── 页面层：ZStack + opacity 常驻切换 ──
@@ -135,22 +129,23 @@ struct MainTabView: View {
                 page(.search) { pageContent(for: .search) }
             }
 
-            // ── 迷你播放器：独立一层 ──
-            //   ★ 用户要求「dock 栏取消跟随键盘上来、迷你播放器保持跟随，且迷你播放器的
-            //     跟随位置改到 dock 栏跟随上来的位置」→ 所以两层解耦：dock 栏位置恒定，
-            //     迷你播放器单独吃键盘高度（见 `miniPlayerBottomPadding`）。
-            if hasActiveTrack {
-                MiniPlayerView()
-                    .onTapGesture { showingNowPlaying = true }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, miniPlayerBottomPadding)
-                    .ignoresSafeArea(edges: .bottom)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            // 底栏整体（迷你播放器 + Tab 胶囊）用固定 id，避免随 selectedTab 重建
+            //
+            // ★★ 2026-10-14 用户第四轮：「键盘跟随这个回退」—— 需求 ⑭b 整条回退。
+            //   中间曾把 dock 栏与迷你播放器**拆成两层**（dock 恒定不动、迷你播放器单独
+            //   吃键盘高度 `miniPlayerBottomPadding`）；现恢复为**单层 VStack(spacing: 8)**
+            //   —— 迷你播放器与 dock 栏作为整体一起被键盘顶上去，与改造前完全一致。
+            VStack(spacing: 8) {
+                if hasActiveTrack {
+                    MiniPlayerView()
+                        .onTapGesture { showingNowPlaying = true }
+                        .padding(.horizontal, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
 
-            // ── dock 栏：位置恒定，不随键盘上移 ──
-            // （iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏）
-            WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
+                // iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏
+                WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
+            }
             // 位置（2026-10-14 用户标定）：以**屏幕底**为基准、距底 **42pt**
             //（在 16pt 基础上按用户要求整体**上移 26px**），再叠加设置页
             //「底部栏位置」的微调值。
@@ -208,20 +203,7 @@ struct MainTabView: View {
     /// 播放页跳转目标 → 真实页面。
     @ViewBuilder
     private func nowPlayingDestinationView(_ destination: NowPlayingDestination) -> some View {
-        switch destination.kind {
-        case .artist:
-            WellArtistHomeView(artistId: destination.platformId,
-                               artistName: destination.name,
-                               coverURL: destination.coverURL)
-        case .album:
-            WellPlaylistDetailView(
-                source: .album(id: destination.platformId,
-                               platform: destination.platform,
-                               name: destination.name,
-                               artist: destination.artistName),
-                coverURL: destination.coverURL,
-                creatorName: destination.artistName)
-        }
+        NowPlayingDestinationView(destination: destination)
     }
 
     /// 把播放页请求的跳转 push 进**当前 Tab** 的导航栈，然后清掉请求。
@@ -234,31 +216,6 @@ struct MainTabView: View {
         case .profile: profilePath.append(destination)
         }
         NowPlayingNavigator.shared.consume()
-    }
-
-    /// dock 栏距屏幕底的基准距离（再叠加设置页「底部栏位置」微调；正 = 更靠下）。
-    private var dockBasePadding: CGFloat { 42 - CGFloat(tabBarBottomOffset) }
-
-    /// 迷你播放器的底部内边距。
-    ///
-    /// ★ 用户要求：键盘弹出时 dock 栏**不动**，迷你播放器**跟随**，并停在
-    ///   「dock 栏若跟随键盘时应在的位置」= 紧贴键盘上沿。
-    ///   取两者较大值即可：
-    ///   * 键盘收起 → `dockBasePadding + 72`（72 = dock 内容高 64 + 与迷你播放器的 8pt 间距），
-    ///     即停在 dock 栏正上方，与改造前的相对位置完全一致；
-    ///   * 键盘弹出 → 键盘高度，即贴到键盘上沿。
-    private var miniPlayerBottomPadding: CGFloat {
-        max(dockBasePadding + 72, keyboardHeight)
-    }
-
-    /// 记录键盘遮挡高度（屏幕底 → 键盘上沿）。
-    /// ⚠️ 只在真的变了时才写 `@State`（避免无谓刷新）。
-    private func updateKeyboardHeight(from note: Notification) {
-        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        let screenHeight = UIScreen.main.bounds.height
-        // 键盘完全离屏（隐藏动画过程中）时 minY 已等于屏幕高 → 视为 0
-        let overlap = frame.minY >= screenHeight ? 0 : max(0, screenHeight - frame.minY)
-        if abs(overlap - keyboardHeight) > 0.5 { keyboardHeight = overlap }
     }
 
     /// 每个 Tab 独立的导航路径。
@@ -306,19 +263,63 @@ struct WellToastView: View {
 }
 
 /// 播放页路由：当前只保留 Apple Music 播放器（其余播放器样式已下线）
+///
+/// ★★ 2026-10-14 用户：「播放器界面打开歌手主页怎么自动退出播放器？」
+///
+/// 原先点歌手名 / 专辑名走的是 `NowPlayingNavigator.request(...)` + `onDismiss()`，
+/// 也就是**先把播放页关掉**、再把目标 push 进当前 Tab 的导航栈 —— 用户体验上就是
+/// 「点一下歌手名，播放器没了」。
+///
+/// 现在照 kumone 的做法（`IOSMainWindow.nowPlayingPresentation`）改：
+/// 播放器**自带一个内部 `NavigationStack`**，点歌手 / 专辑直接在播放器里 push，
+/// 播放器不退出；播放器关闭时清空这条内部路径（kumone 的
+/// `.onDisappear { playerNavPath.removeAll() }`）。
 struct NowPlayingRouterView: View {
     let onDismiss: () -> Void
+    @State private var path = NavigationPath()
 
     var body: some View {
-        AppleMusicPlayerView(
-            onOpenDestination: { destination in
-                // ★ 2026-10-14：播放页自己不在任何导航栈里 → 把跳转请求交给主框架，
-                //   由 MainTabView 关掉播放页再把目标 push 进当前 Tab 的导航栈。
-                NowPlayingNavigator.shared.request(destination)
-                onDismiss()
-            },
-            onDismiss: onDismiss
-        )
+        NavigationStack(path: $path) {
+            AppleMusicPlayerView(
+                onOpenDestination: { destination in
+                    // ★ 在播放器**内部** push —— 不退出播放器。
+                    path.append(destination)
+                },
+                onDismiss: onDismiss
+            )
+            .navigationDestination(for: NowPlayingDestination.self) { destination in
+                NowPlayingDestinationView(destination: destination)
+            }
+        }
+        // 播放器关闭时清空内部导航路径，下次打开回到播放器本体
+        .onDisappear { path = NavigationPath() }
+    }
+}
+
+/// 播放页跳转目标 → 真实页面。
+///
+/// 播放器内部导航栈与各 Tab 的导航栈**共用**这一份实现，避免两处漂移。
+struct NowPlayingDestinationView: View {
+    let destination: NowPlayingDestination
+
+    var body: some View {
+        switch destination.kind {
+        case .artist:
+            // ★ 2026-10-14：**必须**把平台传下去。歌手主页原先只查网易云，
+            //   QQ / 酷狗 的歌从播放页点歌手名跳进来会是一张全空的页面。
+            WellArtistHomeView(artistId: destination.platformId,
+                               artistName: destination.name,
+                               coverURL: destination.coverURL,
+                               platform: destination.platform)
+        case .album:
+            WellPlaylistDetailView(
+                source: .album(id: destination.platformId,
+                               platform: destination.platform,
+                               name: destination.name,
+                               artist: destination.artistName),
+                coverURL: destination.coverURL,
+                creatorName: destination.artistName)
+        }
     }
 }
 

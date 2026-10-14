@@ -13,6 +13,9 @@ struct WellArtistHomeView: View {
     let artistId: String
     let artistName: String
     var coverURL: String?
+    /// ★★ 2026-10-14：歌手所属平台。原先本页**只查网易云**，从播放页点歌手名
+    /// 跳进来（QQ / 酷狗歌）必然全空 —— 见 `load()` 里的根因说明。
+    var platform: MusicSource = .netease
 
     @State private var resolvedName: String = ""
     @State private var resolvedCover: String?
@@ -258,33 +261,117 @@ struct WellArtistHomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// 本页对应的搜索平台（QQ / 酷狗 / 网易云）；酷我等其他源没有独立歌手接口，返回 nil。
+    private var searchPlatform: WellSearchPlatform? {
+        switch platform {
+        case .qq: return .qq
+        case .kugou: return .kugou
+        case .netease, .lx, .auto: return .netease
+        default: return nil
+        }
+    }
+
     private func load() async {
         isLoading = true
         failed = false
 
-        // 并发拉热门歌曲 + 专辑（真实接口）。
-        // 热门歌曲：平台返回多少就显示多少（网易云固定 50 首），**不再人为截断**。
-        // 专辑：API 内部 offset 翻页拉全量，并带回平台专辑总数。
-        async let songsTask = try? NeteaseMusicAPI.shared.artistTopSongs(id: artistId)
-        async let albumsTask = try? NeteaseMusicAPI.shared.artistAlbums(id: artistId)
+        // ★★ 2026-10-14 用户：「播放器界面点击歌手名字转跳后，歌手主页没有头像、
+        //    没有歌曲、没有专辑、没有 EP 与单曲」。
+        //
+        //    根因（`PlayerBridgeModels.Track.from(musicItem:)`）：
+        //      * `ArtistRef.id` 是 **`keyOf.hashValue` 拼出来的假 id**，不是平台歌手 id；
+        //      * `singerMid` 被填成了 **歌曲 mid**（`musicItem.qqSongMid`）。
+        //    而本页原先只按「网易云歌手 id」查 → 拿到假 id 必然查空；头像也从来没带过来。
+        //
+        //    修法：进页先用「歌手名 + 平台」解析一次**真实身份**（id / mid / 头像），
+        //    再按平台取热门歌曲与专辑。解析不到时才退回传进来的 id。
+        let sp = searchPlatform
+        var realId = artistId
+        var realMid: String?
+        var resolvedAvatar: String?
 
-        let songs = await songsTask ?? []
-        let albumsResult = await albumsTask
+        if let sp, !artistName.isEmpty {
+            let found = await SearchService.shared
+                .search(keyword: artistName, platform: sp, type: .artists, limit: 10).artists
+            let exact = found.first { $0.name.caseInsensitiveCompare(artistName) == .orderedSame }
+            if let match = exact ?? found.first {
+                if !match.id.isEmpty { realId = match.id }
+                realMid = match.mid
+                resolvedAvatar = match.picURL
+            }
+        }
 
-        hotSongs = songs
-        albums = albumsResult?.albums ?? []
-        platformAlbumCount = albumsResult?.platformAlbumCount
+        let songsResult = await loadTopSongs(id: realId, mid: realMid)
+        let albumsResult = await loadAlbums(id: realId)
+
+        hotSongs = songsResult.songs
+        albums = albumsResult.albums
+        platformAlbumCount = albumsResult.count
         if resolvedName.isEmpty { resolvedName = artistName }
-        if resolvedCover == nil { resolvedCover = coverURL ?? songs.first?.albumCoverURL }
+        if resolvedCover == nil {
+            // ⚠️ 刻意**不写成一串 `??`**：`String? ?? String? ?? ...` 对 `??` 的两个重载
+            //    都有解，表达式一长就会让类型检查器爆炸（本项目在 KugouMusicAPI 上
+            //    踩过一次 `unable to type-check this expression in reasonable time`）。
+            var candidate: String? = coverURL
+            if candidate == nil { candidate = resolvedAvatar }
+            if candidate == nil { candidate = songsResult.avatar }
+            if candidate == nil { candidate = songsResult.songs.first?.albumCoverURL }
+            resolvedCover = candidate
+        }
 
         // 热门歌曲兜底：接口异常时用同名搜索补全（同样封顶 50 首）
-        if hotSongs.isEmpty {
+        if hotSongs.isEmpty, let sp {
             hotSongs = await SearchService.shared
-                .search(keyword: artistName, platform: .netease, type: .songs, limit: 50).songs
+                .search(keyword: artistName, platform: sp, type: .songs, limit: 50).songs
         }
 
         failed = hotSongs.isEmpty && albums.isEmpty
         isLoading = false
+    }
+
+    /// 按平台取歌手热门歌曲；顺带带回平台给的歌手头像（酷狗 `singer/info` 有）。
+    private func loadTopSongs(id: String, mid: String?) async -> (songs: [MusicItem], avatar: String?) {
+        switch platform {
+        case .qq:
+            // QQ 歌手歌曲要的是 **singer mid**（不是歌曲 mid）
+            let key = (mid?.isEmpty == false) ? (mid ?? id) : id
+            if !key.isEmpty,
+               let result = try? await QQMusicAPI.shared.singerSongs(singerMid: key, begin: 0, num: 50),
+               !result.list.isEmpty {
+                return (result.list, nil)
+            }
+        case .kugou:
+            if !id.isEmpty,
+               let detail = try? await KugouMusicAPI.shared.singerDetail(singerId: id),
+               !detail.songs.isEmpty {
+                return (detail.songs, detail.avatar)
+            }
+        default:
+            if !id.isEmpty,
+               let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
+               !list.isEmpty {
+                return (list, nil)
+            }
+        }
+        return ([], nil)
+    }
+
+    /// 按平台取歌手专辑。网易云有真实接口（含平台总数）；QQ / 酷狗退回「按歌手名搜专辑」。
+    private func loadAlbums(id: String) async -> (albums: [WellAlbumSummary], count: Int?) {
+        switch platform {
+        case .qq, .kugou:
+            break
+        default:
+            if !id.isEmpty,
+               let result = try? await NeteaseMusicAPI.shared.artistAlbums(id: id),
+               !result.albums.isEmpty {
+                return (result.albums, result.platformAlbumCount)
+            }
+        }
+        guard let sp else { return ([], nil) }
+        let found = await SearchService.shared
+            .search(keyword: artistName, platform: sp, type: .albums, limit: 50).albums
+        return (found, nil)
     }
 }
 
