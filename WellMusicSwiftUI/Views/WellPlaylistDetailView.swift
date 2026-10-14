@@ -184,29 +184,60 @@ struct WellPlaylistDetailView: View {
 
     // MARK: - 全宽大封面
 
-    /// 全宽方图封面；**下段渐隐**（下半段起 → 底边）溶解进背后的封面主色底 ——
-    /// 参考实拍的关键观感：封面下半段渐渐「化开」蔓延到整页，不是底边一刀切。
+    /// 全宽方图封面：主体全清晰，**底部约 15% 做递进模糊**自然融进主色底。
+    ///
+    /// 2026-10-14 用户指定参考「AMLL 的递进模糊」（实地核查 AMLL 源码：歌词行做
+    /// 逐行 CSS blur —— 未唱的行 5px、已唱的行随距离递增、当前行 0，拖动时全关），
+    /// 比「整段渐隐成纯色」自然。SwiftUI 无原生「空间渐变模糊」，这里用
+    /// **多档模糊带叠层**实现等价效果：同图复制 4 份、各自不同 radius、
+    /// 用交叠窗口的渐变遮罩只露出自己那一段 —— 自浅到深连续过渡。
     private var heroCover: some View {
+        ZStack(alignment: .top) {
+            // ① 清晰主体（顶部 6% 渐入防上推硬边；约 80% 后交给模糊带）
+            coverImage
+                .mask(coverMask([
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.06),
+                    .init(color: .black, location: 0.80),
+                    .init(color: .clear, location: 0.90),
+                ]))
+            // ② 递进模糊带（半径 5 → 28，窗口交叠 → 连续无台阶）
+            coverImage.blur(radius: 5).mask(coverMask([
+                .init(color: .clear, location: 0.78),
+                .init(color: .black, location: 0.84),
+                .init(color: .black, location: 0.88),
+                .init(color: .clear, location: 0.93),
+            ]))
+            coverImage.blur(radius: 10).mask(coverMask([
+                .init(color: .clear, location: 0.85),
+                .init(color: .black, location: 0.90),
+                .init(color: .black, location: 0.93),
+                .init(color: .clear, location: 0.965),
+            ]))
+            coverImage.blur(radius: 18).mask(coverMask([
+                .init(color: .clear, location: 0.90),
+                .init(color: .black, location: 0.945),
+                .init(color: .black, location: 0.965),
+                .init(color: .clear, location: 0.99),
+            ]))
+            coverImage.blur(radius: 28).mask(coverMask([
+                .init(color: .clear, location: 0.95),
+                .init(color: .black, location: 0.98),
+                .init(color: .black, location: 1.0),
+            ]))
+        }
+    }
+
+    /// 封面图本体（各模糊带共用同一份缓存图，只多付 4 次静态模糊的 GPU 代价）。
+    private var coverImage: some View {
         WellRemoteImage(url: headerCoverURL, displaySize: 720)
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fit)
             .clipped()
-            .mask(
-                LinearGradient(
-                    stops: [
-                        // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
-                        // （用户 2026-10-14：「顶部也加一点蔓延往上，避免往上推露出没加」）
-                        .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.06),
-                        // 主体保持全清晰 —— 参考实拍里封面人像从头到脚都是锐利的，
-                        // 之前 0.55 起渐隐会把「人身挡住好多」（用户 2026-10-14 纠错）
-                        .init(color: .black, location: 0.86),
-                        // 最底部一小段收进主色底，底沿无硬线
-                        .init(color: .clear, location: 1.0),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom)
-            )
+    }
+
+    private func coverMask(_ stops: [Gradient.Stop]) -> LinearGradient {
+        LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
     }
 
     /// 悬浮返回按钮：白色圆形磨砂玻璃（与 dock 同材质），位置**对齐原系统导航栏
