@@ -157,6 +157,11 @@ struct AppleMusicPlayerView: View {
     }
 
     /// 播放页内容本体（不含下滑关闭的跟手位移，那部分在薄壳里）。
+    ///
+    /// ⚠️ 必须显式标 `@ViewBuilder`：它从 `body` 里拆出来之后就不再享有
+    /// `View.body` 隐含的 `@ViewBuilder`，而这里开头有两个 `let` 再加一个
+    /// `ZStack`，没有 ViewBuilder 会被判定为「没有 return 语句」而编译失败。
+    @ViewBuilder
     private var playerCanvas: some View {
         // 不用 GeometryReader，避免 fullScreenCover 动画过程中尺寸不正确导致播放器只展开一半
         let screenSize = UIScreen.main.bounds.size

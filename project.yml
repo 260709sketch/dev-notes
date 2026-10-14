@@ -42,6 +42,16 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSupportsIndirectInputEvents: true
+        # ★ 2026-10-15：解锁 ProMotion 高刷（iPhone 上最高 120Hz）。
+        #
+        # Apple 官方文档原文：「If you don't enable this support, Core Animation
+        # won't access higher frame rates (above 60Hz).」
+        # 也就是说：**不加这个键，即使在 120Hz 机型上，SwiftUI 动画、拖拽跟手、
+        # 滚动与 WebView 内的渲染也全部被钉在 60Hz** —— 这正是「别人很顺、
+        # 我们发涩」的直接原因。
+        # 加上之后系统会自动为 SwiftUI / UIKit / CAAnimation 处理好帧率调度，
+        # 无需自己再挂 CADisplayLink；低电量模式下系统仍会自动退回 60Hz。
+        CADisableMinimumFrameDurationOnPhone: true
     settings:
       base:
         SWIFT_VERSION: "5.9"
