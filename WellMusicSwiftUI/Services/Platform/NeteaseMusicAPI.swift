@@ -79,19 +79,23 @@ final class NeteaseMusicAPI {
     /// 客户端 header（`NeteaseCrypto.eapiHeaderPayload`），否则服务端静默忽略。
     private static func eapiRequest<T: Decodable>(_ path: String,
                                                   params: [String: Any],
-                                                  type: T.Type) async throws -> T {
+                                                  type: T.Type,
+                                                  headers extraHeaders: [String: String] = [:]) async throws -> T {
         guard let body = NeteaseCrypto.makeEapiBody(path: path, params: params) else {
             throw NetworkClient.NetworkError.invalidURL
         }
+        // 默认头可被调用点覆盖（听歌上报要换成桌面客户端特征的 Cookie / UA，见 `sendWeblog`）。
+        var headers: [String: String] = [
+            "Referer": "https://music.163.com/",
+            "Origin": "https://music.163.com",
+            "Cookie": NeteaseSession.shared.cookieHeader,
+        ]
+        headers.merge(extraHeaders) { _, new in new }
         let resp = try await NetworkClient.shared.postRaw(
             "https://interface.music.163.com/eapi\(path)",
             body: Data(body.utf8),
             contentType: "application/x-www-form-urlencoded",
-            headers: [
-                "Referer": "https://music.163.com/",
-                "Origin": "https://music.163.com",
-                "Cookie": NeteaseSession.shared.cookieHeader,
-            ]
+            headers: headers
         )
         guard (200..<300).contains(resp.statusCode) else {
             throw NetworkClient.NetworkError.badStatus(resp.statusCode)
@@ -671,7 +675,9 @@ final class NeteaseMusicAPI {
             "header": NeteaseCrypto.eapiHeaderPayload(cookie: cookie),
         ]
         let resp: PlayRecordEapiResponse = try await Self.eapiRequest(
-            "/api/v1/play/record", params: params, type: PlayRecordEapiResponse.self)
+            "/api/v1/play/record", params: params, type: PlayRecordEapiResponse.self,
+            // 参考实现读排行时同样带桌面客户端 UA（Cookie 不覆写，仍是 App 自己的）。
+            headers: ["User-Agent": Self.desktopClientUserAgent])
         let list = (type == 1 ? resp.weekData : resp.allData) ?? []
         return list.compactMap { item in
             guard let song = item.song, let mapped = Self.mapSong(song) else { return nil }
@@ -698,12 +704,43 @@ final class NeteaseMusicAPI {
             "header": NeteaseCrypto.eapiHeaderPayload(cookie: cookie),
         ]
         do {
+            // ★ 2026-10-14：**必须**把 HTTP Cookie 换成桌面客户端特征、并带桌面 macOS UA。
+            //   参考实现 `neteaseScrobble.js` 的原话：「HTTP Cookie 覆写为桌面 macOS 客户端
+            //   特征 os=osx + appver=3.1.17」「否则服务端**静默忽略**」。
+            //   我们此前只发了 App 自己的手机 cookie 与默认 UA —— 服务端照样回 200，
+            //   但排行不涨、最近播放不同步（用户 2026-10-14 反馈的现象）。
             let resp: WeblogResp = try await Self.eapiRequest(
-                "/api/feedback/weblog", params: params, type: WeblogResp.self)
+                "/api/feedback/weblog", params: params, type: WeblogResp.self,
+                headers: [
+                    "Cookie": Self.scrobbleCookie(from: cookie),
+                    "User-Agent": Self.desktopClientUserAgent,
+                ])
             return resp.code == 200
         } catch {
             return false
         }
+    }
+
+    /// 桌面 macOS 客户端 UA（与参考实现 `DESKTOP_UA` 一字不差）。
+    private static let desktopClientUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+        + "Chrome/125.0.0.0 Safari/537.36"
+
+    /// weblog 上报专用 Cookie 覆写：`os=osx` + `appver=3.1.17`（参考实现 `buildScrobbleCookie`）。
+    private static func scrobbleCookie(from cookie: String) -> String {
+        func upsert(_ source: String, key: String, value: String) -> String {
+            var parts = source.split(separator: ";")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            var replaced = false
+            for i in parts.indices where parts[i].lowercased().hasPrefix(key.lowercased() + "=") {
+                parts[i] = "\(key)=\(value)"
+                replaced = true
+            }
+            if !replaced { parts.append("\(key)=\(value)") }
+            return parts.joined(separator: "; ")
+        }
+        return upsert(upsert(cookie, key: "os", value: "osx"), key: "appver", value: "3.1.17")
     }
 
     /// 开始播放上报（写入「最近播放」）。在歌曲开始播放时调用。

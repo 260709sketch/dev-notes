@@ -161,8 +161,8 @@ struct DiscoverView: View {
                     title: "私人漫游",
                     subtitle: "从喜欢的歌开始漫游",
                     icon: "wave.3.right.circle.fill",
-                    gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
-                               Color(red: 0.41, green: 0.28, blue: 0.65)])
+                    gradient: [Color(red: 0.40, green: 0.50, blue: 0.80),
+                               Color(red: 0.60, green: 0.49, blue: 0.84)])
             }
             .buttonStyle(.plain)
             .modifier(WellCardEntrance(index: 1, itemID: "daily-fm"))
@@ -174,8 +174,8 @@ struct DiscoverView: View {
                     title: "心动模式",
                     subtitle: "你的红心歌曲和相似推荐",
                     icon: "heart.circle.fill",
-                    gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
-                               Color(red: 0.98, green: 0.43, blue: 0.35)])
+                    gradient: [Color(red: 0.90, green: 0.47, blue: 0.55),
+                               Color(red: 0.97, green: 0.67, blue: 0.55)])
             }
             .buttonStyle(.plain)
             .modifier(WellCardEntrance(index: 2, itemID: "daily-heartbeat"))
@@ -212,8 +212,8 @@ struct DiscoverView: View {
                         title: "私人漫游",
                         subtitle: "从喜欢的歌开始漫游",
                         icon: "wave.3.right.circle.fill",
-                        gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
-                                   Color(red: 0.41, green: 0.28, blue: 0.65)])
+                        gradient: [Color(red: 0.40, green: 0.50, blue: 0.80),
+                                   Color(red: 0.60, green: 0.49, blue: 0.84)])
                 }
                 .buttonStyle(.plain)
 
@@ -224,8 +224,8 @@ struct DiscoverView: View {
                         title: "心动模式",
                         subtitle: "你的红心歌曲和相似推荐",
                         icon: "heart.circle.fill",
-                        gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
-                                   Color(red: 0.98, green: 0.43, blue: 0.35)])
+                        gradient: [Color(red: 0.90, green: 0.47, blue: 0.55),
+                                   Color(red: 0.97, green: 0.67, blue: 0.55)])
                 }
                 .buttonStyle(.plain)
 
@@ -260,6 +260,14 @@ struct DiscoverView: View {
     /// 心动模式：以「我喜欢」歌单随机种子走 intelligenceList；失败逐级兜底
     /// （相似歌曲 simiSong → 我喜欢歌单随机起播），保证总能出歌。
     /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid。
+    ///
+    /// ★ 2026-10-14 用户反馈「登陆了网易云点击不能播放」→ 根因在**取种子这一步**：
+    /// 之前用 `playlistTracks(id:)`（`n=100_000, s=8`），网易云对 `s=8` 只回 **10 条**、
+    /// 且**忽略 `n`**；那 10 条里若没有可解析的 `neteaseId`，种子就取不到，
+    /// 后面 intelligenceList / simiSongs 全部跳过，最终连「我喜欢随机起播」也因
+    /// 列表为空而落到一句 toast —— 表现就是「点了没反应」。
+    /// 现在改用与「我喜欢」页**同一个**已知可用的取列表接口 `playlistForImport`
+    /// （走 `trackIds` 分块补齐，能拿到完整曲目），种子与兜底队列都稳了。
     private func startHeartbeat() async {
         guard actionLoading == nil else { return }
         actionLoading = "heartbeat"
@@ -271,10 +279,17 @@ struct DiscoverView: View {
         }
         let likedId = "\(uid)"
 
-        // 种子：我喜欢歌单随机一首
+        // 种子：我喜欢歌单随机一首（完整列表，见上方说明）
         var seedId: String?
         var likedTracks: [MusicItem] = []
-        if let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
+        if let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId),
+           !imported.tracks.isEmpty {
+            likedTracks = imported.tracks
+            seedId = likedTracks.randomElement()?.neteaseId
+        }
+        // 兜底一次：极端情况下（大歌单 trackIds 缺失）退回老接口，至少拿到前 10 条
+        if likedTracks.isEmpty,
+           let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
             likedTracks = list
             seedId = list.randomElement()?.neteaseId
         }
@@ -297,8 +312,7 @@ struct DiscoverView: View {
 
         // ③ 最后兜底：我喜欢歌单随机起播（总能出歌）
         if !likedTracks.isEmpty {
-            let shuffled = likedTracks.shuffled()
-            PlayerCore.shared.play(queue: shuffled, startIndex: 0)
+            PlayerCore.shared.play(queue: likedTracks.shuffled(), startIndex: 0)
             ToastCenter.shared.show("已开启心动模式")
             return
         }
@@ -476,6 +490,7 @@ struct WellActionCard: View {
     }
 
     /// 左侧 64pt 图标块：有封面用封面图，无封面用渐变 + 居中白图标
+    /// （图标同样放大 + 降低不透明度，与方卡样式保持一致，见 `WellFeatureCard.artwork`）。
     @ViewBuilder
     private var iconBlock: some View {
         let base = RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -489,8 +504,8 @@ struct WellActionCard: View {
                 .frame(width: 64, height: 64)
                 .overlay {
                     Image(systemName: icon)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
                 }
         }
     }
@@ -537,7 +552,11 @@ struct WellFeatureCard: View {
         .contentShape(Rectangle())
     }
 
-    /// 156pt 方图：有封面用封面图，无封面用渐变 + 居中白图标（44pt）。
+    /// 156pt 方图：有封面用封面图，无封面用渐变 + 居中白图标。
+    ///
+    /// ★ 2026-10-14 用户：「卡片中间的图标放大一点透明点」——
+    /// 图标 44 → **58pt**、白色不透明度 1 → **0.45**（做成淡淡的底纹感，
+    /// 不再是一块抢眼的实心白）。
     @ViewBuilder
     private var artwork: some View {
         let base = RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -551,8 +570,8 @@ struct WellFeatureCard: View {
                 .frame(width: size, height: size)
                 .overlay {
                     Image(systemName: icon)
-                        .font(.system(size: 44, weight: .medium))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 58, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
         }
     }

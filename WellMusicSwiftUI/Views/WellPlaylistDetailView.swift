@@ -267,17 +267,17 @@ struct WellPlaylistDetailView: View {
             .buttonStyle(.plain)
             .disabled(orderedTracks.isEmpty)
 
-            // 播放（白色大胶囊，黑字）
+            // 播放（反色大胶囊：深底白字白胶囊 / 浅底黑字黑胶囊 —— 见 `playCapsule*`）
             Button {
                 guard !orderedTracks.isEmpty else { return }
                 PlayerCore.shared.play(queue: orderedTracks, startIndex: 0)
             } label: {
                 Label("播放", systemImage: "play.fill")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(playCapsuleForeground)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(Color.white, in: Capsule())
+                    .background(playCapsuleBackground, in: Capsule())
             }
             .buttonStyle(.plain)
             .disabled(orderedTracks.isEmpty)
@@ -297,6 +297,19 @@ struct WellPlaylistDetailView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
     }
+
+    /// 页面底色是否偏深（与 `body` 里 `colorScheme` 覆盖的判据完全一致）。
+    ///
+    /// `coverIsDark` 取到过色就用它；还没取到色（nil）时按系统模式兜底
+    /// （深色模式 → 系统底色是深色 → 视为深底，避免深底上出现黑胶囊）。
+    private var pageIsDark: Bool { coverIsDark ?? (systemScheme == .dark) }
+
+    /// 播放胶囊反色（2026-10-14 用户：「白色背景全部播放按钮看不清」）。
+    ///
+    /// 深色底 → 白胶囊黑字（原设计，Apple Music 同款）；
+    /// 浅色底（浅色封面铺底 / 黑封面改白底 / 浅色模式） → 黑胶囊白字，保证可见。
+    private var playCapsuleBackground: Color { pageIsDark ? .white : .black }
+    private var playCapsuleForeground: Color { pageIsDark ? .black : .white }
 
     // MARK: - 简介（两行截断 + 「更多」展开，Apple Music 同款）
 
@@ -478,22 +491,29 @@ struct WellPlaylistDetailView: View {
     ///    （图三《Lover》浅粉底 (231,218,228)；图二绿封面深绿底），
     ///    同时天然保证正文与底色的对比度。取不到封面时保持 nil、回落系统底色。
     ///
-    /// ⚠️ 2026-10-14 用户：黑/褐色封面在「居中留白 + 浅色模式」下背景统一改白色
-    ///    （深色封面压暗后的深色底在浅色下很难看）。见下方 `coverBackdropColor` 的
-    ///    白色兜底分支 —— 这里保留取色，但浅色+居中时不再采用封面色。
+    /// ⚠️ 2026-10-14 用户（第二轮纠错）：白底**不是无条件的**，只在「封面本身是黑/深色」
+    ///    时才是白色。上一版把「居中留白 + 浅色模式」一律改成白底是做错了 ——
+    ///    用户原话：「我说了特殊情况下才会变成白色背景，比如封面取色取到的颜色是黑色，
+    ///    其他的别动」。故此处恢复**深色封面**前置条件（见下方 `boosted` 的明度判定）。
     private func extractCoverBackdrop() async {
-        // ★ 2026-10-14：居中留白 + 浅色模式下，背景统一白色（用户问题3）。
-        //   黑/褐色封面压暗后会得到深色底，浅色模式下突兀 —— 直接白色，文字也保持深色。
-        if coverStyle == .centered, systemScheme == .light {
-            coverBackdropColor = Color(uiColor: .systemBackground)
-            coverIsDark = false
-            return
-        }
         guard let raw = headerCoverURL, !raw.isEmpty else { return }
         guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
         guard let image = await WellImageCache.shared.image(for: url) else { return }
         let boosted = Self.saturated(image.dominantColor(), factor: 1.25)
         let adjusted = Self.lightnessAdjusted(boosted)
+
+        // ★ 2026-10-14：**仅当封面取色本身是黑/深色**（`boosted` 明度 < 0.25）
+        //   且「居中留白 + 浅色模式」时，背景才统一改白色。
+        //   原因：黑封面压暗后得到近黑底，在浅色模式下很突兀；改白底后整页文字转深色。
+        //   其余任何颜色一律走下面原提取色逻辑（用户原话：「其他的别动」）。
+        if coverStyle == .centered, systemScheme == .light, Self.luminance(of: boosted) < 0.25 {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                coverBackdropColor = Color(uiColor: .systemBackground)
+            }
+            coverIsDark = false
+            return
+        }
+
         withAnimation(.easeInOut(duration: 0.25)) {
             coverBackdropColor = Color(uiColor: adjusted)
         }

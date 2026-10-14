@@ -236,15 +236,20 @@ private struct MiniPlayerAccessory: View {
     }
 }
 
-/// 屏下迷你播放条（浮动胶囊：54pt 高胶囊 + 42pt 封面 + 播放/下一首）
+/// 屏下迷你播放条（浮动胶囊：52pt 高胶囊 + 32pt 封面 + 上一首/暂停/下一首 三钮等大）
 ///
 /// ⚠️ 性能约定：本视图**不订阅 PlayerCore**。订阅会让整只胶囊（文字/按钮/阴影）
 /// 随 20Hz 的 currentTime 广播每秒重算 20 次——而它挂在 iOS 26 的系统
 /// bottom accessory 上，每次重算都可能触发系统 chrome 重新布局，直接拖垮滚动帧率。
 ///
-/// 结构（按用户要求）：
+/// 结构（2026-10-14 用户第二轮，按 Apple Music 实机截图 IMG_3964 逐像素标定）：
 /// * **不显示播放进度** —— 顶部不再有 2pt 进度细线；
-/// * **不显示上一首** —— 只保留「播放/暂停 + 下一首」，图标统一 18px；
+/// * 胶囊高 **52pt**（实机量得 156px @3x）；封面 **32×32**（96px @3x），
+///   封面左缘距**胶囊左沿 12pt**（实机量得 72-36=36px @3x）—— 用户要求
+///   「封面往右边移动并且改小点」（原 7pt / 42pt）；
+/// * 右侧 **上一首 / 播放暂停 / 下一首 三钮等大**：18pt 图标 + 34×34 命中框，
+///   钮间距 14pt（钮心间距 48pt，与实机量得的 146px @3x = 48.7pt 一致），
+///   末尾距胶囊右沿 10pt（原 15pt，三钮变宽故收窄）。
 /// * 歌名/封面/播放态 —— 低频信号（currentIndex/queue/isPlaying/hasActiveTrack 投影）落 @State。
 struct MiniPlayerView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -252,15 +257,19 @@ struct MiniPlayerView: View {
     @State private var track: MusicItem?
     @State private var isPlaying = false
 
-    private let capsuleHeight: CGFloat = 54
-    /// 控制图标字号（18px）
+    private let capsuleHeight: CGFloat = 52
+    /// 封面边长（实机量得 96px @3x = 32pt）
+    private let artworkSize: CGFloat = 32
+    /// 控制图标字号（18px，三个钮统一 —— 用户要求「大小一致」）
     private let controlIconSize: CGFloat = 18
+    /// 单个控制钮命中框边长（三钮等大）
+    private let controlHitSize: CGFloat = 34
 
     var body: some View {
         HStack(spacing: 0) {
             // 左：封面 + 歌名/歌手（点击进播放页）
             HStack(spacing: 10) {
-                ArtworkView(url: track?.albumCoverURL, size: 42, cornerRadius: 9)
+                ArtworkView(url: track?.albumCoverURL, size: artworkSize, cornerRadius: 7)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(track?.title ?? "未在播放")
                         .font(.system(size: 16, weight: .medium))
@@ -272,28 +281,27 @@ struct MiniPlayerView: View {
                 }
                 Spacer(minLength: 6)
             }
-            .padding(.leading, 7)
+            .padding(.leading, 12)
 
-            // 右：播放暂停 / 下一首（**不含上一首**）
+            // 右：上一首 / 播放暂停 / 下一首（三钮等大，Apple Music 同款）
             HStack(spacing: 14) {
+                Button {
+                    PlayerCore.shared.previous()
+                } label: {
+                    controlIcon("backward.fill")
+                }
                 Button {
                     PlayerCore.shared.togglePlayPause()
                 } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: controlIconSize, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
+                    controlIcon(isPlaying ? "pause.fill" : "play.fill")
                 }
                 Button {
                     PlayerCore.shared.next()
                 } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: controlIconSize, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .contentShape(Rectangle())
+                    controlIcon("forward.fill")
                 }
             }
-            .padding(.trailing, 15)
+            .padding(.trailing, 10)
             .foregroundStyle(.primary)
         }
         .frame(height: capsuleHeight)
@@ -319,6 +327,14 @@ struct MiniPlayerView: View {
             syncTrack()
             isPlaying = PlayerCore.shared.isPlaying
         }
+    }
+
+    /// 三个控制钮统一样式（同一字号 + 同一命中框 ⇒ 视觉大小完全一致）。
+    private func controlIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: controlIconSize, weight: .semibold))
+            .frame(width: controlHitSize, height: controlHitSize)
+            .contentShape(Rectangle())
     }
 
     private func syncTrack() {

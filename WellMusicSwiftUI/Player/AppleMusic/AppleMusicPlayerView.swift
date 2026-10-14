@@ -101,7 +101,22 @@ struct AppleMusicPlayerView: View {
     /// 是否正在执行下滑关闭拖拽。
     @State private var isDismissDragging = false
 
-    @State private var lyricCenters: [Int: CGFloat] = [:]
+    /// 歌词行中线表。
+    ///
+    /// ⚠️ **刻意不用 `@State`**（2026-10-14 播放器性能排查）。
+    ///
+    /// 滚动歌词时 `LyricLineCenterKey` 这个偏好**每一帧**都会更新（每一行的
+    /// `GeometryReader` 都随滚动重新上报）。把它写进 `@State` 会让 SwiftUI 认为
+    /// 播放页整体失效 → 每一帧重算整棵树（封面插值层、控制栏、背景 representable…），
+    /// 这就是「歌词页下滑掉帧 / 不跟手」的直接来源。
+    ///
+    /// 改成一个**不可观察**的引用盒：数据照收（拖拽时仍要用），但不触发任何视图失效。
+    /// 真正需要驱动界面跟随的只有 `focusedLyricID`（当前高亮行），它只在**跨行**时才变。
+    private final class LyricCenterBox {
+        var value: [Int: CGFloat] = [:]
+    }
+
+    @State private var lyricCentersBox = LyricCenterBox()
     @State private var focusedLyricID: Int?
     @State private var lyricsViewportHeight: CGFloat = 0
     @State private var isDraggingLyrics = false
@@ -1006,8 +1021,18 @@ struct AppleMusicPlayerView: View {
             .gesture(headerDismissGesture, including: showLyrics ? .all : .subviews)
 
             if settings.appleMusicUseAMLL {
-                // AMLL 已在底层渲染歌词，这里只保留头部，剩余空间透明
-                Color.clear.frame(maxHeight: .infinity)
+                // AMLL 已在底层渲染歌词（`playerBackground` 里的 WebView），这里只保留头部。
+                //
+                // ★★ 2026-10-14 用户反馈「歌词页面下滑半天都没用」的**根因**就在这里：
+                //    这块透明填充**默认会被 SwiftUI 当成可点击视图**（和本文件里
+                //    `.opacity(0)` 的封面页吃点击是同一类问题，见第 365 行的说明），
+                //    而它盖在底层 AMLL 的 `WKWebView` 之上 —— 于是歌词页区域的
+                //    **所有触摸都被它吞掉**：既滚不动歌词、也点不了歌词跳转。
+                //    AMLL 页面自己实现了触摸滚动（`scrollView.isScrollEnabled = false`
+                //    + 页面内 touchstart/move 驱动），所以必须把触摸真正递给 WebView。
+                Color.clear
+                    .frame(maxHeight: .infinity)
+                    .allowsHitTesting(false)
             } else if lyrics.isEmpty {
                 emptyLyricsView
             } else {
@@ -1043,7 +1068,9 @@ struct AppleMusicPlayerView: View {
                         }
                     }
                     .onPreferenceChange(LyricLineCenterKey.self) { centers in
-                        lyricCenters = centers
+                        // ⚠️ 写进**不可观察**的盒子（不是 @State）：滚动时这里每帧都会来，
+                        //    写 @State 会让整页每帧重算。详见 `LyricCenterBox` 的说明。
+                        lyricCentersBox.value = centers
                         updateFocusedLyric(from: centers)
                     }
                     .simultaneousGesture(lyricsDragGesture(proxy: proxy))
@@ -1383,9 +1410,15 @@ struct AppleMusicPlayerView: View {
     /// 歌词滚动视口的坐标空间名。
     private static let lyricsViewportSpace = "playerLyricsViewport"
 
-    private func updateFocusedLyric(from centers: [Int: CGFloat]) {        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
+    private func updateFocusedLyric(from centers: [Int: CGFloat]) {
+        guard lyricsViewportHeight > 0, !centers.isEmpty else { return }
         let center = lyricsViewportHeight / 2
-        focusedLyricID = centers.min { abs($0.value - center) < abs($1.value - center) }?.key
+        let newID = centers.min { abs($0.value - center) < abs($1.value - center) }?.key
+        // ⚠️ 只在**跨行**时才写 @State。
+        //    这个函数被 `onPreferenceChange` 以**每帧**的频率调用（滚动中），
+        //    旧写法无条件赋值 `focusedLyricID` → 即使高亮行根本没变，
+        //    整页也被判定失效、每帧重算一次 —— 掉帧的直接来源之一。
+        if newID != focusedLyricID { focusedLyricID = newID }
     }
 
     private func scrollToPlaybackLyric(proxy: ScrollViewProxy, animated: Bool) {
@@ -1403,7 +1436,7 @@ struct AppleMusicPlayerView: View {
             .onChanged { value in
                 isDraggingLyrics = true
                 resumeTask?.cancel()
-                updateFocusedLyric(from: lyricCenters)
+                updateFocusedLyric(from: lyricCentersBox.value)
                 // 下滑隐藏底部控制区域，上滑显示
                 if value.translation.height > 15 {
                     withAnimation(.easeInOut(duration: 0.25)) {
@@ -1513,6 +1546,13 @@ struct AppleMusicPlayerView: View {
 /// ⚠️ 必须放在 `DispatchQueue.main.async`：`makeUIViewController` 时机太早，
 ///    此时 `presentationController` 还没建立，直接取会拿到 nil。
 struct PresentedSurfaceClearer: UIViewControllerRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        /// 是否已经排过「刷透明」的重试序列（只在首次 update 触发一次）。
+        var scheduled = false
+    }
+
     func makeUIViewController(context: Context) -> UIViewController {
         let controller = UIViewController()
         controller.view.backgroundColor = .clear
@@ -1521,14 +1561,30 @@ struct PresentedSurfaceClearer: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
-        DispatchQueue.main.async {
-            var current: UIViewController? = uiViewController
-            while let controller = current {
-                controller.view.backgroundColor = .clear
-                controller.parent?.view.backgroundColor = .clear
-                controller.presentationController?.containerView?.backgroundColor = .clear
-                controller.presentationController?.presentedView?.backgroundColor = .clear
-                current = controller.parent
+        // ⚠️ 2026-10-14 性能修正：**只在第一次**（以及随后几个时间点）做这件事。
+        //
+        // 旧实现每次 `updateUIViewController` 都 `DispatchQueue.main.async` 一次，
+        // 再沿 `parent` 链把每层 view 的 `backgroundColor` 重设一遍。
+        // 而 `updateUIViewController` 会随父视图**每次重算**被调用 ——
+        // 播放页下滑关闭拖拽时就是**每帧**一次，等于每秒几十上百次遍历整条
+        // 呈现视图链并改背景（每次改背景都要重新提交图层属性）→ 直接掉帧。
+        //
+        // 这件事本身是幂等的：宿主链在本次呈现期间不会变，做一次就够。
+        // 但 `presentationController` 是**异步**建立的，太早做会拿到 nil，
+        // 所以改成有界重试（0 / 0.05 / 0.2 / 0.6s）共 4 次，之后不再触碰。
+        guard !context.coordinator.scheduled else { return }
+        context.coordinator.scheduled = true
+        let controller = uiViewController
+        for delay in [0.0, 0.05, 0.2, 0.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                var current: UIViewController? = controller
+                while let controller = current {
+                    controller.view.backgroundColor = .clear
+                    controller.parent?.view.backgroundColor = .clear
+                    controller.presentationController?.containerView?.backgroundColor = .clear
+                    controller.presentationController?.presentedView?.backgroundColor = .clear
+                    current = controller.parent
+                }
             }
         }
     }

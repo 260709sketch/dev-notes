@@ -38,7 +38,8 @@ final class LyricsService {
         var lineOnlyFallback: LyricResult?
 
         for source in fallbacks {
-            guard let result = await fetchFrom(source, item: item), !result.lrc.isEmpty else { continue }
+            guard let raw = await fetchFrom(source, item: item), !raw.lrc.isEmpty else { continue }
+            let result = filterMetadata(in: raw, item: item)
             if let word = result.wordLyric, !word.isEmpty {
                 store(result, for: key)
                 return result
@@ -51,6 +52,24 @@ final class LyricsService {
             return fallback
         }
         return nil
+    }
+
+    /// 剔除「非演唱行」—— 网易云/QQ 歌词**开头**那一串带正常时间戳的职员表
+    /// （`[00:00.00] 作词 : xxx` / `[0,1000](0,1000,0) 作词 : xxx`）。
+    ///
+    /// 用户 2026-10-14：「刚听歌打开歌词界面歌词**全是艺术家名字**」——
+    /// 时间戳为 0 的职员表行抢在真正的第一句前面霸屏。规则移植自参考实现的
+    /// `stripLyricMetadata`（就是参考里 AMLL 歌词视图用的那套），详见 `LyricsLineFilter`。
+    ///
+    /// ⚠️ 放在这个**唯一收口点**：四个平台、逐行/逐字都从这里出去，
+    /// 于是缓存里存的也是过滤后的结果，后续复听不再重复过滤。
+    private func filterMetadata(in result: LyricResult, item: MusicItem) -> LyricResult {
+        var filtered = result
+        filtered.lrc = LyricsLineFilter.filter(result.lrc, item: item)
+        if let word = result.wordLyric {
+            filtered.wordLyric = LyricsLineFilter.filter(word, item: item)
+        }
+        return filtered
     }
 
     /// 写入缓存（顺序去重 + 上限裁剪）。

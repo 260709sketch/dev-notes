@@ -701,9 +701,17 @@ struct DynamicCoverPlayer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PlayerContainerView, context: Context) {
-        // 每次视图更新时立即同步frame，确保视频和封面大小完全同步
-        uiView.setNeedsLayout()
-        uiView.layoutIfNeeded()
+        // ⚠️ 2026-10-14 性能修正：只有**尺寸真的变了**才强制同步布局。
+        //
+        // `updateUIView` 会随父视图每次重算被调用 —— 播放页下滑关闭拖拽时就是
+        // **每帧**一次；旧实现无条件 `setNeedsLayout() + layoutIfNeeded()`，
+        // 等于每帧强制跑一次同步布局，是「下滑不跟手 / 掉帧」的来源之一。
+        // 拖拽时视图只是被 `.offset` 平移，bounds 根本不变，这次布局纯属浪费。
+        if uiView.bounds.size != context.coordinator.lastLaidOutSize {
+            context.coordinator.lastLaidOutSize = uiView.bounds.size
+            uiView.setNeedsLayout()
+            uiView.layoutIfNeeded()
+        }
         // 确保视频始终在播放
         if context.coordinator.player?.timeControlStatus != .playing {
             context.coordinator.player?.play()
@@ -738,6 +746,8 @@ struct DynamicCoverPlayer: UIViewRepresentable {
         var containerView: PlayerContainerView?
         var looper: AVPlayerLooper?
         var statusObserver: NSKeyValueObservation?
+        /// 上一次强制同步布局时的尺寸（见 `updateUIView`：尺寸没变就不再强制布局）
+        var lastLaidOutSize: CGSize = .zero
     }
 }
 

@@ -535,10 +535,15 @@ struct RecentPlaysView: View {
 ///
 /// 与「我喜欢」的区别：那个是**实时**拉网易云红心歌单，这个是 App 本地收藏列表
 /// （含非网易云来源的歌曲）。两者数据来源不同，按用户要求并存、不做合并。
+///
+/// ⚠️ 2026-10-14 用户（第二轮）：「收藏歌曲改成和**我的歌单**一样的页面」——
+/// 故弃用原来的 `List + TrackRow`，改走 `WellMyPlaylistDetailView` 的
+/// `.tracks` 分支（小封面 120pt + 红渐变「播放全部」+ 歌曲行），
+/// 与「我喜欢」「最近播放」完全同一版式。
+/// 唯一取舍：新页面的歌曲行**不再带侧滑删除**（「我的歌单」页本来就没有）——
+/// 取消收藏仍可从播放页的收藏按钮操作。
 struct LocalFavoriteSongsView: View {
     @EnvironmentObject private var appState: AppState
-    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
-    private var player: PlayerCore { PlayerCore.shared }
 
     var body: some View {
         Group {
@@ -547,25 +552,16 @@ struct LocalFavoriteSongsView: View {
                                 title: "还没有收藏歌曲",
                                 note: "在歌曲上点收藏后会出现在这里")
             } else {
-                List(appState.favoriteTracks) { item in
-                    TrackRow(item: item)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            player.play(queue: appState.favoriteTracks,
-                                        startIndex: appState.favoriteTracks.firstIndex(of: item) ?? 0)
-                        }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                appState.favoriteTracks.removeAll { MusicItem.isSame($0, item) }
-                            } label: {
-                                Label("移除", systemImage: "trash")
-                            }
-                        }
-                }
-                .listStyle(.plain)
+                // 本地收藏没有歌单封面 → 用**首曲封面**当 header 封面
+                // （与 `WellPlaylistDetailView.dailyMode` 每日推荐同一约定）。
+                WellMyPlaylistDetailView(
+                    source: .tracks(name: "收藏歌曲",
+                                    coverURL: appState.favoriteTracks.first?.albumCoverURL,
+                                    creatorName: nil,
+                                    tracks: appState.favoriteTracks))
             }
         }
-        .navigationTitle("收藏歌曲")
+        .navigationTitle(appState.favoriteTracks.isEmpty ? "收藏歌曲" : "")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
