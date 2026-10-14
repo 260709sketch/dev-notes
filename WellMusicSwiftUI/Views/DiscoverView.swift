@@ -133,7 +133,9 @@ struct DiscoverView: View {
 
     /// 封面方卡样式：`WellShelf` 统一边缘内衬与懒加载，行高与推荐歌单一致（220）。
     private var dailyCoverSection: some View {
-        WellShelf(title: "推荐", showsHeader: false, rowHeight: 220) {
+        // ⚠️ 参数必须按 WellShelf 的声明顺序：title → rowHeight → showsHeader
+        //    （memberwise init 对顺序敏感，错序会报 "argument ... must precede ..."）。
+        WellShelf(title: "推荐", rowHeight: 220, showsHeader: false) {
             // 每日推荐：点击打开**歌单页面**（WellPlaylistDetailView 歌单页样式，
             // 数据走 dailyRecommendSongs），不是直接播放
             NavigationLink {

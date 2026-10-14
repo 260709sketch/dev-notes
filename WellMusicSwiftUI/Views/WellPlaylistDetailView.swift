@@ -174,7 +174,9 @@ struct WellPlaylistDetailView: View {
         let system: UIColor = colorScheme == .dark ? .black : .white
         guard let extracted = coverTint else { return system }
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        guard extracted.getRed(&r, &g, &b, &a), a > 0.01 else { return system }
+        // ⚠️ UIColor 的解构 API 参数标签是必需的（getRed(_:green:blue:alpha:)），
+        //    少写标签会报「missing argument labels 'green:blue:alpha:' in call」。
+        guard extracted.getRed(&r, green: &g, blue: &b, alpha: &a), a > 0.01 else { return system }
         // Rec. 709 相对明度近似
         let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
         if colorScheme == .light, luminance < 0.22 {
@@ -468,7 +470,8 @@ struct WellPlaylistDetailView: View {
     /// 由 `backdropTintUIColor` 回落系统底色。
     private func extractCoverTint() async {
         guard let raw = headerCoverURL, !raw.isEmpty else { return }
-        let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64))
+        // `WellArtworkURL.resolved` 返回 `URL?`（地址非法时为 nil），必须先解包
+        guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
         guard let image = await WellImageCache.shared.image(for: url) else { return }
         coverTint = image.dominantColor()
     }
