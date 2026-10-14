@@ -100,31 +100,10 @@ struct WellPlaylistDetailView: View {
 
     var body: some View {
         // ⚠️ iOS 26 Apple Music 专辑/歌单页样式（用户指定一比一，实机对照截图定稿）：
-        // 糊化封面铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
-        // → 搜索行 → 无分隔线歌曲列表。
+        // 糊化封面垫满整页 + 全宽大封面（下段溶解进背景）→ 居中标题块
+        // → shuffle/播放/收藏 三钮 → 搜索行 → 无分隔线歌曲列表。
         ZStack(alignment: .top) {
-            // ★ 封面高斯模糊背景（Apple Music 专辑/歌单页 1:1，2026-10-14 实机对照定稿）：
-            //   同一张封面铺满**全屏** + 高斯模糊，从大封面下缘起一直保留到页面
-            //   底部 —— 标题块 / 控制行 / 简介 / 搜索 / 歌曲列表所有信息都浮在
-            //   这层糊化封面之上。**背景就是糊化封面本身、不压任何色层** ——
-            //   参考实拍：模糊的颜色完全由封面自身决定（蓝封面出蓝底、粉封面出
-            //   粉底），且始终鲜明；此前加过的系统白罩（0.55→0.30）与
-            //   「封面提取主色压层」实机都被洗成灰调（用户对比截图否掉）。
-            //   收尾的饱和度增强（1.25）用于抵消高斯模糊的「去色」效应 ——
-            //   保持「颜色取决于封面」的同时让色块和实拍一样鲜明。
-            //   ⚠️ 旧版图层只有 1.9 倍屏宽高，会在底栏上方戛然截止，
-            //   截图表现为「dock 周围一块模糊断带」。
-            //   模糊层垫在最底（ZStack 第一层），固定不随滚动（滚动跟随需要
-            //   scrollClipDisabled，性能铁律禁用）。
-            GeometryReader { geo in
-                WellRemoteImage(url: headerCoverURL, displaySize: 720)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-                    .blur(radius: 55)
-                    .saturation(1.25)
-            }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+            backdropLayer
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -154,13 +133,108 @@ struct WellPlaylistDetailView: View {
         }
     }
 
+    // MARK: - 背景（Apple Music 同款「封面下段溶解」结构）
+    //
+    // 2026-10-14 用户放大对照实拍指出：Apple Music 的模糊**不是**在封面底边
+    // 之下另起一块，而是封面**下半段就渐渐化开**、越往下越糊，封面本体溶解进
+    // 模糊里（过渡浑然一体）。为此背景由两块拼接而成：
+    //
+    //   ① 与封面**同框同位**的糊化副本（溶解区的「底」——内容与封面逐像素对齐，
+    //      封面底段渐隐时露出的是同一张图的同一位置，不会错位/重影）；
+    //   ② 封面**底部带的镜像下延**（翻转后纵向拉伸），把封面之下的屏幕空间填满，
+    //      接缝处两边都是图的第 100% 行、内容完全连续，模糊后不可分辨。
+    //
+    // 两块都固定（不随滚动），垫在最底（ZStack 第一层）。
+    // ⚠️ 模糊层曾经历：系统白罩 0.55/0.30、「封面提取主色压层」——实机都被洗成
+    //    灰调被用户否掉。现在**不压任何色层**，颜色完全由封面像素决定；
+    //    saturation(1.25) 只用于抵消高斯模糊的去色效应。
+
+    /// 封面在屏幕上的静止 y（滚动到顶时封面的顶边位置）。
+    ///
+    /// 由 `heroCover` 的背景 GeometryReader 测量，**只接受见过的最大值** ——
+    /// 向下滚动时封面 y 变小、回到顶部时最大，所以最大值就是静止位置。
+    /// 未测量出来前用 `backdropFallbackCoverTop` 兜底（首帧）。
+    @State private var coverTopOnScreen: CGFloat = 0
+
+    /// 测量未完成时的封面顶边估算（刘海屏：安全区 ≈59 + 导航栏 44）。
+    private static let backdropFallbackCoverTop: CGFloat = 103
+    /// 镜像下延取封面图底部多少比例（0.22 = 底部 22% 带翻转后纵向拉伸）。
+    private static let backdropMirrorBand: CGFloat = 0.22
+    /// 糊化层的高斯模糊半径与饱和度补偿（见上方结构说明）。
+    private static let backdropBlurRadius: CGFloat = 55
+    private static let backdropSaturation: Double = 1.25
+
+    /// 固定背景层：① 同框糊化副本 + ② 底带镜像下延。
+    private var backdropLayer: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let coverHeight = width   // 大封面是等宽方图
+            let coverTop = coverTopOnScreen > 0 ? coverTopOnScreen : Self.backdropFallbackCoverTop
+            let remaining = max(0, geo.size.height - coverTop - coverHeight)
+            let mirrorScale = remaining > 0
+                ? remaining / (Self.backdropMirrorBand * coverHeight)
+                : 0
+            ZStack(alignment: .top) {
+                // ① 与封面同框同位的糊化副本 —— 封面下段渐隐时露出的「底」
+                WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                    .frame(width: width, height: coverHeight)
+                    .clipped()
+                    .blur(radius: Self.backdropBlurRadius)
+                    .saturation(Self.backdropSaturation)
+                    .offset(y: coverTop)
+
+                // ② 封面底部带的镜像下延 —— 填满封面之下到屏幕底部
+                //    （offset 上移一整张 → 以图底边为轴翻转放大 → 顶部裁到所需高度；
+                //     竖向拉伸把底部窄带铺满剩余空间，模糊后是平滑的色彩延续）
+                WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                    .frame(width: width, height: coverHeight)
+                    .clipped()
+                    .offset(y: -coverHeight)
+                    .scaleEffect(x: 1, y: -mirrorScale, anchor: .top)
+                    .frame(width: width, height: remaining, alignment: .top)
+                    .clipped()
+                    .blur(radius: Self.backdropBlurRadius)
+                    .saturation(Self.backdropSaturation)
+                    .offset(y: coverTop + coverHeight)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
     // MARK: - 全宽大封面
 
+    /// 全宽方图封面；**下段渐隐**（约下半段起 → 底边）溶解进背后的糊化副本 ——
+    /// Apple Music 的关键观感：模糊从封面下半段就渐渐开始，而不是底边一刀切。
     private var heroCover: some View {
         WellRemoteImage(url: headerCoverURL, displaySize: 720)
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fit)
             .clipped()
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.56),
+                        .init(color: .clear, location: 0.96),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom)
+            )
+            .background(
+                // 测量封面静止时的屏幕位置（给固定背景层的 ① 号糊化副本对齐用；
+                // 只取最大值，滚动中的较小值会被 noteCoverTop 忽略）
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { noteCoverTop(proxy.frame(in: .global).minY) }
+                        .onChange(of: proxy.frame(in: .global).minY) { noteCoverTop($0) }
+                }
+            )
+    }
+
+    private func noteCoverTop(_ y: CGFloat) {
+        guard y.isFinite, y > coverTopOnScreen else { return }
+        coverTopOnScreen = y
     }
 
     // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
