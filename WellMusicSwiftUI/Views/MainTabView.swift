@@ -117,7 +117,11 @@ struct MainTabView: View {
                 // iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏
                 WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
             }
-            .padding(.bottom, 6)
+            // 位置按参考实拍标定（2026-10-14 用户：原位置太靠上）：
+            // 以**屏幕底**为基准、距底 16pt —— 与 Apple Music 的底栏落点一致。
+            // （ignoresSafeArea 让基准不再受底部安全区影响；两种语义下都稳定成立。）
+            .padding(.bottom, 16)
+            .ignoresSafeArea(edges: .bottom)
             .id("well.bottomDock")
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)

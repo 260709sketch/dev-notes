@@ -76,7 +76,11 @@ extension UIImage {
         }
         ctx.draw(resized, in: CGRect(x: 0, y: 0, width: width, height: height))
         for i in stride(from: 0, to: data.count, by: 4) {
-            let b = Double(data[i]), g = Double(data[i + 1]), r = Double(data[i + 2])
+            // ⚠️ 字节序（2026-10-14 修复）：`premultipliedLast` 在 iOS 上的内存布局是
+            //    **RGBA**（R 在低位），与同项目 FluidGradientBackground 的读取顺序一致。
+            //    旧代码把 data[i] 当 B、data[i+2] 当 R 读 —— 红蓝通道互换，
+            //    粉色封面会提取成偏蓝色（用户实机发现「哪里来的蓝色」的根因）。
+            let r = Double(data[i]), g = Double(data[i + 1]), b = Double(data[i + 2])
             totalR += r; totalG += g; totalB += b; count += 1
         }
         guard count > 0 else { return UIColor(red: 0.12, green: 0.10, blue: 0.14, alpha: 1) }

@@ -20,6 +20,8 @@ struct WellPlaylistDetailView: View {
     var dailyMode: Bool = false
 
     @EnvironmentObject private var appState: AppState
+    /// 悬浮返回按钮用（页面已去掉系统导航栏，见 body 的 toolbar 隐藏）。
+    @Environment(\.dismiss) private var dismiss
 
     /// 歌单内排序方式
     enum SortMode: String, CaseIterable, Identifiable {
@@ -116,10 +118,18 @@ struct WellPlaylistDetailView: View {
                     Color.clear.frame(height: 170)
                 }
             }
+            // 内容顶到屏幕最上沿（参考实拍：无系统导航栏、封面从状态栏下就铺满）。
+            .ignoresSafeArea(edges: .top)
             // ★ 深色封面自动识别：封面偏暗时整页文字转白（用户 2026-10-14 要求）。
-            //   只强制 content 的配色方案，不影响外面系统导航栏的样式。
+            //   只强制 content 的配色方案；悬浮返回按钮在 ScrollView 之外、不受影响。
             .environment(\.colorScheme, coverIsDark == true ? .dark : systemScheme)
+
+            // 悬浮返回按钮（白色圆形磨砂玻璃，与 dock 同材质；
+            // 后续接入 iOS 26 液态玻璃后交给系统自动渲染 —— 用户 2026-10-14 约定）。
+            backFloatingButton
         }
+        // 去掉系统导航栏（用户 2026-10-14：参考实拍顶部没有导航栏）。
+        .toolbar(.hidden, for: .navigationBar)
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
@@ -175,13 +185,43 @@ struct WellPlaylistDetailView: View {
             .mask(
                 LinearGradient(
                     stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.55),
-                        .init(color: .clear, location: 0.97),
+                        // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
+                        // （用户 2026-10-14：「顶部也加一点蔓延往上，避免往上推露出没加」）
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.06),
+                        // 主体保持全清晰 —— 参考实拍里封面人像从头到脚都是锐利的，
+                        // 之前 0.55 起渐隐会把「人身挡住好多」（用户 2026-10-14 纠错）
+                        .init(color: .black, location: 0.86),
+                        // 最底部一小段收进主色底，底沿无硬线
+                        .init(color: .clear, location: 1.0),
                     ],
                     startPoint: .top,
                     endPoint: .bottom)
             )
+    }
+
+    /// 悬浮返回按钮：白色圆形磨砂玻璃（与 dock 同材质），左上角浮在封面上。
+    ///
+    /// 承接原系统导航栏的返回职责（页面已隐藏 toolbar）。用 GeometryReader 读
+    /// 自身位置的 safeAreaInsets —— 无论父层是否忽略安全区，按钮都落在状态栏下方；
+    /// 后续接入 iOS 26 液态玻璃后由系统自动渲染（用户 2026-10-14 约定）。
+    private var backFloatingButton: some View {
+        GeometryReader { g in
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 40, height: 40)
+                    // 与 dock 栏同材质（WellTabBar 用 .regularMaterial）
+                    .background(.regularMaterial, in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 14)
+            .padding(.top, g.safeAreaInsets.top + 6)
+        }
     }
 
     // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
@@ -430,19 +470,21 @@ struct WellPlaylistDetailView: View {
     /// 取封面主色（`dominantColor()`，32×32 平均色）作为纯色背景。
     ///
     /// 走 `WellImageCache` 的 **64pt 小图请求**（192px 档，与货架缩图共用缓存），
-    /// 不为取色单独拉大图；提一点饱和度（平均色容易发灰，参考实拍的底色很鲜明）；
-    /// 同时按明度判定「是否深色封面」——深色封面整页文字转白。
-    /// 取不到（无封面 / 图床 403）时保持 nil，回落系统底色。
+    /// 不为取色单独拉大图。两步调色（2026-10-14 按参考实拍标定）：
+    /// 1. 提饱和度 ×1.25（32×32 平均色容易发灰）；
+    /// 2. **明度自适应**：亮色往白掺 35%、暗色往黑掺 45% —— 贴参考实拍
+    ///    （图三《Lover》浅粉底 (231,218,228)；图二绿封面深绿底），
+    ///    同时天然保证正文与底色的对比度。取不到封面时保持 nil、回落系统底色。
     private func extractCoverBackdrop() async {
         guard let raw = headerCoverURL, !raw.isEmpty else { return }
         guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
         guard let image = await WellImageCache.shared.image(for: url) else { return }
-        let base = image.dominantColor()
-        let boosted = Self.saturated(base, factor: 1.25)
+        let boosted = Self.saturated(image.dominantColor(), factor: 1.25)
+        let adjusted = Self.lightnessAdjusted(boosted)
         withAnimation(.easeInOut(duration: 0.25)) {
-            coverBackdropColor = Color(uiColor: boosted)
+            coverBackdropColor = Color(uiColor: adjusted)
         }
-        coverIsDark = Self.luminance(of: boosted) < 0.5
+        coverIsDark = Self.luminance(of: adjusted) < 0.5
     }
 
     /// 提饱和度（HSB 途径；失败时原样返回）。
@@ -450,6 +492,22 @@ struct WellPlaylistDetailView: View {
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         guard color.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return color }
         return UIColor(hue: h, saturation: min(s * factor, 1), brightness: b, alpha: 1)
+    }
+
+    /// 明度自适应：亮色往白掺 35%、暗色往黑掺 45%、中间调原样（见 extractCoverBackdrop）。
+    private static func lightnessAdjusted(_ color: UIColor) -> UIColor {
+        let lum = luminance(of: color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
+        if lum > 0.62 {
+            let t: CGFloat = 0.35
+            return UIColor(red: r + (1 - r) * t, green: g + (1 - g) * t, blue: b + (1 - b) * t, alpha: 1)
+        }
+        if lum < 0.40 {
+            let t: CGFloat = 0.45
+            return UIColor(red: r * (1 - t), green: g * (1 - t), blue: b * (1 - t), alpha: 1)
+        }
+        return color
     }
 
     /// Rec.709 相对明度（取不到分量时按亮色处理）。
