@@ -78,7 +78,19 @@ final class PlayerCore: NSObject, ObservableObject {
 
     // MARK: 对外状态
 
-    @Published var queue: [MusicItem] = []
+    @Published var queue: [MusicItem] = [] {
+        didSet { queueRevision &+= 1 }
+    }
+
+    /// 队列版本号：`queue` 每次被写入就 +1。
+    ///
+    /// 用途（2026-10-14 16:18 掉帧排查）：`PlayerService.syncFromCore()` 在 **10Hz** 轮询里
+    /// 原本**无条件**把整个队列搬成 `[Track]` 再深比较一遍 —— `Track.from` 每首都要算
+    /// 三次 `keyOf` 的字符串哈希（还含两次字符串插值），队列 1000 首时单次就是数毫秒，
+    /// 而且是每秒 10 次的固定开销，主线程被反复占块 → 「每个页面上下滑动都掉帧」。
+    /// 有版本号之后，轮询只要比对一次 Int（O(1)），队列真的变了才重建。
+    private(set) var queueRevision: Int = 0
+
     @Published var currentIndex: Int? = nil
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
@@ -473,8 +485,11 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 上一 tick 的渲染态（检测「刚开始渲染」的上升沿，见 tick()）
     private var wasRenderingAudio = false
 
-    /// 上次音频会话类别巡检的时刻（限频 5s/次 —— 见 tick() 的守卫；
-    /// 20Hz 全速自愈会在类别持续偏离时反复打断音频会话 → 卡顿掉帧）
+    /// 上次**音频会话巡检**的时刻（限频 5s/次 —— 见 tick() 的守卫）。
+    ///
+    /// ⚠️ 2026-10-14 16:18 修正：这个闸门现在同时约束「读取」与「自愈」。原先读取
+    /// （`AVAudioSession.category`）在闸门之外、每 tick 都做，20Hz 跨进程查询常驻 →
+    /// 播放中每个页面都掉帧。自愈时机不变：本来也只有闸门放行的那一次才可能自愈。
     private var lastSessionGuardAt: TimeInterval = 0
 
     /// 上次断流自动恢复的时刻（冷却防死循环）
@@ -576,13 +591,22 @@ final class PlayerCore: NSObject, ObservableObject {
         //   会话 —— 实机表现就是「更新之后好卡掉帧」（2026-10-14 用户反馈）。
         //   空闲时（无活跃曲目）不巡检，避免无谓的后台扰动。
         if hasActiveTrack {
-            let session = AVAudioSession.sharedInstance()
             let now = Date().timeIntervalSinceReferenceDate
-            if session.category != .playback, now - lastSessionGuardAt > 5 {
+            // ⚠️★ 时间闸门必须**盖住读取本身**（2026-10-14 16:18 第二轮排查）：
+            //   `AVAudioSession.category` 不是内存里的缓存值，读一次要问音频系统
+            //   （mediaserverd）。上一版只把「自愈动作」限频到 5s，读取仍留在 20Hz ——
+            //   播放期间每秒 20 次主线程跨进程查询常驻，与 10Hz 的输出延迟测量叠加，
+            //   这正是「每个页面滑动都掉帧」里最可疑的一项。
+            //   现在把闸门提到读取之前（一次闸门 = 一次读取），自愈时机与限频语义不变
+            //   —— 因为原先自愈本来就被同一个 5s 条件挡着。
+            if now - lastSessionGuardAt > 5 {
                 lastSessionGuardAt = now
-                PlayerDiag.log("音频会话类别巡检发现偏离（\(session.category.rawValue)）→ 拉回 playback")
-                AudioSessionManager.activate()
-                updateNowPlaying()
+                let session = AVAudioSession.sharedInstance()
+                if session.category != .playback {
+                    PlayerDiag.log("音频会话类别巡检发现偏离（\(session.category.rawValue)）→ 拉回 playback")
+                    AudioSessionManager.activate()
+                    updateNowPlaying()
+                }
             }
         }
         // ★ 音频真正开始渲染的那一刻（上升沿）重新激活会话并补写 NowPlaying：

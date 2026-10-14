@@ -241,13 +241,20 @@ struct SearchView: View {
         }
     }
 
+    /// 专辑入口统一走 `WellPlaylistDetailView`（大封面歌单页样式）。
+    ///
+    /// 用户 2026-10-14 16:18：「搜索页面搜索出来的专辑点击进去不是歌单页面的样子」。
+    /// 原本这里跳 `WellSearchDetailView`（旧版 List + 96pt 小封面），是全项目唯一的例外——
+    /// 「歌手主页 → 专辑」（`WellArtistHomeView.albumShelf`）早就走的是歌单页样式。
+    /// 现在两处一致；`creatorName` 传专辑歌手名，与歌手主页那处保持同款头部。
     private func albumCards(_ items: some Collection<WellAlbumSummary>, fillWidth: Bool = false) -> some View {
         ForEach(Array(items)) { album in
             NavigationLink {
-                WellSearchDetailView(
+                WellPlaylistDetailView(
                     source: .album(id: album.id, platform: album.platform,
                                    name: album.name, artist: album.artistName),
-                    coverURL: album.picURL)
+                    coverURL: album.picURL,
+                    creatorName: album.artistName)
             } label: {
                 WellCoverCard(coverURL: album.picURL, title: album.name,
                               subtitle: album.artistName, fillWidth: fillWidth)

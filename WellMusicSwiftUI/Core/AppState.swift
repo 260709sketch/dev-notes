@@ -56,9 +56,21 @@ final class AppState: ObservableObject {
     /// 当前歌曲（播放内核维护，此处在 UI 侧映射）
     @Published var currentTrack: MusicItem?
     /// 当前逐行歌词
-    @Published var currentLrc: [LrcLine] = []
+    @Published var currentLrc: [LrcLine] = [] {
+        didSet { lyricsRevision &+= 1 }
+    }
     /// 当前逐字歌词（存在即优先渲染）
-    @Published var currentWordLyric: [WordLyricLine] = []
+    @Published var currentWordLyric: [WordLyricLine] = [] {
+        didSet { lyricsRevision &+= 1 }
+    }
+
+    /// 歌词版本号：`currentLrc` / `currentWordLyric` 任一被写入就 +1。
+    ///
+    /// 用途（2026-10-14 16:18 掉帧排查）：`PlayerService.syncFromCore()` 原先每 100ms
+    /// **无条件**重建一次 `ParsedLyrics`（逐字歌词下要建上千个 (字符,起,止) 元组、
+    /// 逐行拼回整行、还在 lrc 里线性找翻译 = 行×行），重建完却只在行数变化时才采用。
+    /// 改成版本号闸门后，只在歌词真的换了一首时才做这件事。
+    private(set) var lyricsRevision: Int = 0
 
     private init() {
         lyricOffset = defaults.object(forKey: "lyric.offset") == nil

@@ -125,9 +125,11 @@ struct WellPlaylistDetailView: View {
         // 「把导航栏弄回来，撇掉现在自己做的返回按钮」）。
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
-        // 导航栏材质（用户 2026-10-14 要求）：进入页面即为**毛玻璃**（系统 chrome 材质），
-        // 不是滚动边缘的透明态 —— `.visible` 让标准背景（模糊玻璃）常显。
-        .toolbarBackground(.visible, for: .navigationBar)
+        // 导航栏材质（用户 2026-10-14 16:18 要求：改回 **iOS 原生**行为）：
+        //   内容停在顶部时导航栏**透明**（不压住封面），向下滚动后**现出毛玻璃**。
+        // 这正是系统默认的滚动边缘规则（scrollEdge 透明 / standard 材质），
+        // 所以交回系统判定（`.automatic`）即可 —— 上一版写死 `.visible` 会让毛玻璃常显。
+        .modifier(NativeNavigationBarBackground())
         .overlay {
             if isLoading && tracks.isEmpty {
                 ProgressView()
@@ -228,9 +230,11 @@ struct WellPlaylistDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        // 新版居中版式：封面与标题之间大留白（设计稿量得 ≈88pt，减去文字行高上沿）；
-        // 旧版维持原 18pt。
-        .padding(.top, coverStyle == .centered ? 82 : 18)
+        // 新版居中版式：封面下沿 → 标题只留一条小缝。
+        // 15:47 的设计稿曾量得 ≈88pt（大留白），2026-10-14 16:18 用户实机要求
+        // 「歌单名字上面那些上去，离封面有一点缝隙就好了」→ 收到 24pt；
+        // 旧版（全宽铺满）维持原 18pt。
+        .padding(.top, coverStyle == .centered ? 24 : 18)
         .padding(.bottom, 16)
     }
 
@@ -506,6 +510,27 @@ struct WellPlaylistDetailView: View {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return 1 }
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+}
+
+// MARK: - 导航栏背景（原生滚动行为）
+
+/// 导航栏背景交回**系统按滚动位置自行决定**：内容在顶部 → 透明；向下滚动 → 毛玻璃。
+///
+/// 三个取值的语义区别（这是要害）：
+/// * `.visible` —— 背景**常显**（上一版用的就是这个，所以没滚动也是毛玻璃）；
+/// * `.hidden`  —— 背景**常隐**（永远透明）；
+/// * `.automatic` —— 按**系统规则**，也就是 iOS 原生那套滚动边缘行为。本页要的就是它。
+///
+/// iOS 18 起有专门的 `toolbarBackgroundVisibility`，iOS 16–17 用 `toolbarBackground`，
+/// 两者同名取值语义一致，故按可用版本二选一。
+private struct NativeNavigationBarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.toolbarBackgroundVisibility(.automatic, for: .navigationBar)
+        } else {
+            content.toolbarBackground(.automatic, for: .navigationBar)
+        }
     }
 }
 

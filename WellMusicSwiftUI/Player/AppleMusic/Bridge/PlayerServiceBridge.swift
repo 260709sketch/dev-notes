@@ -220,14 +220,45 @@ final class PlayerService: ObservableObject {
     /// 现在由这里自动补上，用户的偏移只作为**额外**微调。
     @Published private(set) var outputLatency: TimeInterval = 0
 
-    /// 重新测量输出延迟。由 0.1s 同步 tick 调用（一次属性读，很便宜）。
-    func refreshOutputLatency() {
+    /// 上次实测输出延迟的时刻（限频闸门，见 `refreshOutputLatency`）。
+    private var lastLatencyMeasureAt: TimeInterval = 0
+    /// 输出路由变化观察者（插拔耳机 / 连蓝牙 / 切 AirPlay → 立刻重测）
+    private var routeObserver: NSObjectProtocol?
+
+    /// 重新测量输出延迟。
+    ///
+    /// ⚠️ 必须**限频**（2026-10-14 16:18 掉帧排查）：`outputLatency` / `ioBufferDuration`
+    /// 不是内存里的缓存值，读一次要走音频系统查询。旧版挂在 10Hz 轮询上无条件测 →
+    /// 每秒 10 次主线程查询常驻。
+    ///
+    /// 但这个量**只在输出路由变化时才变**（插拔耳机 / 连蓝牙 / 切 AirPlay），
+    /// 所以改成三层：
+    /// * 路由变化通知 → `force` 立即重测（响应性不降，见 `observeRouteChanges`）；
+    /// * 换歌时 `force` 重测（起播那一刻歌词偏移最需要准）；
+    /// * 平时每 2s 兜底一次（防漏通知 / 系统异常）。
+    func refreshOutputLatency(force: Bool = false) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard force || now - lastLatencyMeasureAt >= 2 else { return }
+        lastLatencyMeasureAt = now
         let session = AVAudioSession.sharedInstance()
         let measured = session.outputLatency + session.ioBufferDuration
         let clamped = measured.isFinite ? max(0, min(measured, 3)) : 0
         // 抖动 < 1ms 不写 @Published，避免无谓的视图重算
         if abs(clamped - outputLatency) > 0.001 {
             outputLatency = clamped
+        }
+    }
+
+    /// 监听输出路由变化，立刻重测输出延迟。
+    ///
+    /// 这是「把轮询降频」的前提：降频有代价（可能滞后），用通知把这个代价抹掉。
+    private func observeRouteChanges() {
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshOutputLatency(force: true) }
         }
     }
 
@@ -261,15 +292,22 @@ final class PlayerService: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         self.syncTimer = t
+
+        // 输出路由变化 → 立刻重测输出延迟（把 10Hz 轮询降频的前提，见 refreshOutputLatency）
+        observeRouteChanges()
     }
 
     // MARK: - Sync from PlayerCore
 
+    /// 上一次搬运时用到的版本号（队列 / 歌词）。见各自 `@Published` 的 `didSet`。
+    private var lastQueueRevision = -1
+    private var lastLyricsRevision = -1
+
     private func syncFromCore() {
         let core = PlayerCore.shared
 
-        // 输出延迟：每 tick 重新测量（属性读很便宜，只在变化 >1ms 时才写 @Published）。
-        // 切换输出设备（插拔耳机 / 连蓝牙 / 切 AirPlay）后值会变，靠这里自动跟上。
+        // 输出延迟：走限频闸门（路由变化 / 换歌时 force，见 refreshOutputLatency）。
+        // 切换输出设备（插拔耳机 / 连蓝牙 / 切 AirPlay）后会立刻重测，靠这里自动跟上。
         refreshOutputLatency()
 
         // isPlaying
@@ -301,6 +339,8 @@ final class PlayerService: ObservableObject {
             if lastTrackKeyOf != item.keyOf {
                 lastTrackKeyOf = item.keyOf
                 currentTrack = Track.from(musicItem: item)
+                // 换歌 → 强制重测输出延迟（起播那一刻歌词偏移最需要准）
+                refreshOutputLatency(force: true)
             }
         } else {
             if lastTrackKeyOf != nil || currentTrack != nil {
@@ -309,10 +349,15 @@ final class PlayerService: ObservableObject {
             }
         }
 
-        // queue 同步
-        let newQueue = coreQueue.map { Track.from(musicItem: $0) }
-        if queue != newQueue {
-            queue = newQueue
+        // queue 同步（★ 2026-10-14 16:18：用版本号闸门，只在队列真的变过时重建）
+        //
+        // 旧版**无条件** `coreQueue.map { Track.from(...) }` 之后再深比较：
+        // `Track.from` 每首都要算三次 `keyOf` 字符串哈希（含两次字符串插值），
+        // 队列 1000 首时单次数毫秒 —— 而这是 **10Hz 常驻**，主线程每 100ms 被占一块，
+        // 表现就是「每个页面上下滑动都掉帧」。现在比对一次 Int 就结束。
+        if lastQueueRevision != core.queueRevision {
+            lastQueueRevision = core.queueRevision
+            queue = coreQueue.map { Track.from(musicItem: $0) }
         }
 
         // currentIndex
@@ -334,11 +379,18 @@ final class PlayerService: ObservableObject {
             if shuffleEnabled { shuffleEnabled = false }
         }
 
-        // lyrics
-        let lrc = AppState.shared.currentLrc
-        let wordLyric = AppState.shared.currentWordLyric
-        let parsed = ParsedLyrics.from(lrc: lrc, wordLyric: wordLyric)
-        if lyrics?.lines.count != parsed.lines.count {
+        // lyrics（★ 2026-10-14 16:18：用版本号闸门，只在歌词真的换了才重建）
+        //
+        // `ParsedLyrics.from` 是重活：逐字歌词下每行都要建一个 words 元组数组、
+        // 把字符拼回整行，还要在 lrc 里线性找翻译（行×行）。旧版**每 100ms 重建一次
+        // 再丢掉**，只有行数不同时才采用 —— 纯浪费。
+        // 顺带修掉一个老毛病：以前「行数恰好相同」的新歌词会被静默丢弃，换歌后可能
+        // 残留上一首的歌词；现在按版本号判断，换了一定会更新。
+        let appState = AppState.shared
+        if lastLyricsRevision != appState.lyricsRevision {
+            lastLyricsRevision = appState.lyricsRevision
+            let parsed = ParsedLyrics.from(lrc: appState.currentLrc,
+                                           wordLyric: appState.currentWordLyric)
             lyrics = parsed.isEmpty ? nil : parsed
             lyricsCursor.updateLyrics(parsed)
         }
