@@ -474,6 +474,10 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 上一 tick 的渲染态（检测「刚开始渲染」的上升沿，见 tick()）
     private var wasRenderingAudio = false
 
+    /// 上次音频会话类别巡检的时刻（限频 5s/次 —— 见 tick() 的守卫；
+    /// 20Hz 全速自愈会在类别持续偏离时反复打断音频会话 → 卡顿掉帧）
+    private var lastSessionGuardAt: TimeInterval = 0
+
     /// 上次断流自动恢复的时刻（冷却防死循环）
     private var lastAutoReloadAt: TimeInterval = 0
 
@@ -564,15 +568,23 @@ final class PlayerCore: NSObject, ObservableObject {
         if rendering != isRenderingAudio {
             isRenderingAudio = rendering
         }
-        // ★ 音频会话守卫（2026-10-14 加固）：mpv 的 AudioUnit 音频输出在初始化 /
-        //   seek / 重建时可能把会话类别改跑（或缺 options 的旧代码路径残留）；
-        //   只要类别不是 `.playback`，系统就不把本 App 当「媒体播放」——
-        //   控制中心/锁屏整块不出现。每 tick 廉价巡检（一次属性读），
-        //   一跑偏立刻拉回并补写 NowPlaying；若因会话忙拉回失败，下一 tick 自动重试。
-        let session = AVAudioSession.sharedInstance()
-        if session.category != .playback {
-            AudioSessionManager.activate()
-            updateNowPlaying()
+        // ★ 音频会话守卫（2026-10-14 加固 + 限频修复）：
+        //   mpv 的 AudioUnit 音频输出在初始化 / seek / 重建时可能把会话类别改跑，
+        //   类别不是 `.playback` 时系统不认「媒体播放」——控制中心/锁屏不出现。
+        //
+        //   ⚠️ 必须**限频（5s/次）**：若类别被持续改跑、自愈又失败，20Hz 的
+        //   setCategory/setActive（外加 nowPlayingInfo 写入）会反复打断音频
+        //   会话 —— 实机表现就是「更新之后好卡掉帧」（2026-10-14 用户反馈）。
+        //   空闲时（无活跃曲目）不巡检，避免无谓的后台扰动。
+        if hasActiveTrack {
+            let session = AVAudioSession.sharedInstance()
+            let now = Date().timeIntervalSinceReferenceDate
+            if session.category != .playback, now - lastSessionGuardAt > 5 {
+                lastSessionGuardAt = now
+                PlayerDiag.log("音频会话类别巡检发现偏离（\(session.category.rawValue)）→ 拉回 playback")
+                AudioSessionManager.activate()
+                updateNowPlaying()
+            }
         }
         // ★ 音频真正开始渲染的那一刻（上升沿）重新激活会话并补写 NowPlaying：
         //   mpv 的音频输出链路可能在 updateNowPlaying 之后才异步初始化（甚至

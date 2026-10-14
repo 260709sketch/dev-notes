@@ -617,6 +617,10 @@ struct WellDetailSongRow: View {
 struct SwipeBackEnabler: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var navigationController: UINavigationController?
+        /// 已找到并接管手势（只在真正挂上后置位 —— 首次查找可能因层级
+        /// 未就绪失败，此时保持 false 让后续更新重试；挂上后不再重复查找，
+        /// 避免每次 SwiftUI 更新都走一遍主队列任务）。
+        var didAttach = false
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             (navigationController?.viewControllers.count ?? 0) > 1
@@ -632,6 +636,7 @@ struct SwipeBackEnabler: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        guard !context.coordinator.didAttach else { return }
         DispatchQueue.main.async {
             // 手动沿 parent 链向上找 UINavigationController（SwiftUI 的
             // representable 直接取 navigationController 不一定命中）。
@@ -642,6 +647,7 @@ struct SwipeBackEnabler: UIViewControllerRepresentable {
             guard let nav = node as? UINavigationController,
                   let gesture = nav.interactivePopGestureRecognizer else { return }
             context.coordinator.navigationController = nav
+            context.coordinator.didAttach = true
             gesture.delegate = context.coordinator
             gesture.isEnabled = true
         }
