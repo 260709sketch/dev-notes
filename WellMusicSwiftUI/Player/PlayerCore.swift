@@ -2,23 +2,86 @@ import AVFoundation
 import MediaPlayer
 import SwiftUI
 
-/// 音频会话配置（后台播放 + 锁屏控制）。
+/// 音频会话配置（后台播放 + 锁屏 / 控制中心）。
 ///
-/// ⚠️ 2026-10-14 修「控制中心不显示正在播放的歌曲」：`.playback` **不传任何
-/// category options**。旧代码带过 `.allowBluetoothA2DP` + `.allowAirPlay`：
-///   * `allowAirPlay`：Apple 文档明确「只能显式用于 PlayAndRecord 类别」，
-///     对 playback 系统本就隐式开启；显式传入在部分 iOS 版本上直接让
-///     `setCategory` 抛错；
-///   * `allowBluetoothA2DP`：文档明确 ambient/soloAmbient/playback 三类
-///     **自动**路由 A2DP，该选项只为 playAndRecord 准备。
-/// 抛出的错误被 `try?` 吞掉后，类别停留在默认 `.soloAmbient` —— 歌照样能放
-/// （铃声开关开着时），但系统不认「正在播放媒体」，控制中心 / 锁屏 / 灵动岛
-/// 什么都没有。这正是用户反馈的症状。
+/// ## 历史坑一：非法的 category options（已修）
+///
+/// 旧代码在 `.playback` 上带过 `.allowBluetoothA2DP` + `.allowAirPlay`：
+/// `allowAirPlay` 文档明确「只能显式用于 PlayAndRecord」，`allowBluetoothA2DP`
+/// 文档明确 ambient/soloAmbient/playback 三类**自动**路由 A2DP —— 显式传入在
+/// 部分 iOS 版本上直接让 `setCategory` 抛错；错误被 `try?` 吞掉后类别停留在
+/// 默认 `.soloAmbient`，歌能放但系统不认「正在播放媒体」。
+///
+/// ## ★★ 历史坑二（2026-10-14 定位，本轮根因）：mpv 把会话改成「可混音」★★
+///
+/// 修掉坑一之后控制中心**仍然**不显示。真正的原因不在我们这边 ——
+/// mpv 的 audiounit 音频输出（`audio/out/ao_audiounit.m`）会在 AO 初始化时
+/// **自己改写会话**：
+///
+/// ```objc
+/// AVAudioSessionCategoryOptions options = 0;
+/// if (!(ao->init_flags & AO_INIT_EXCLUSIVE))
+///     options |= AVAudioSessionCategoryOptionMixWithOthers;   // ← 默认带混音
+/// [instance setCategory:AVAudioSessionCategoryPlayback withOptions:options error:nil];
+/// [instance setMode:AVAudioSessionModeMoviePlayback error:nil];
+/// [instance setActive:YES error:nil];
+/// ```
+///
+/// 三重要命之处：
+/// 1. AO 是在 `engine.load()` 时才创建的 → 这句**晚于**我们起播前的 `activate()`，
+///    我们设的配置被它整块覆盖；
+/// 2. 覆盖后类别**仍然是 `.playback`**，所以旧巡检 `category != .playback`
+///    恒为假 —— 自愈永远不会触发，问题看起来「查不出原因」；
+/// 3. 覆盖后会话带上了 `.mixWithOthers`。**iOS 只把非混音的音频会话认作
+///    Now Playing 应用**，可混音的 App 被当成「背景音源」→ 控制中心 / 锁屏 /
+///    灵动岛一概不出卡片（歌照样正常播放）。
+///
+/// 两条修复一起上：
+/// * 根因侧：mpv 加 `audio-exclusive=yes`（见 `MPVEngine.start()`），它会置位
+///   `AO_INIT_EXCLUSIVE`，mpv 自己就以 `options: 0` 设置会话；
+/// * 应用侧：本类型的判据从「类别」扩展为「**类别 + 混音选项**」，并统一用
+///   kumone / Beans 一致的 `.playback + .default + .longFormAudio + options: []`
+///   重写会话 —— 即使 mpv 之后因格式变化重建 AO 又改跑会话，巡检也能在 5s 内拉回。
 enum AudioSessionManager {
+    /// 目标会话参数。
+    ///
+    /// * `mode: .default` —— 纯音乐播放（mpv 会把它改成 `.moviePlayback`，
+    ///   那是给视频用的；我们重写时按音乐类 App 的正确取值拉回）；
+    /// * `policy: .longFormAudio` —— 音乐 / 有声书这类「长时间播放」的路由策略，
+    ///   与 kumone、Beans 完全一致（见 `.wip/km/.../PlayerService.swift`
+    ///   与 `.wip/beans_inner/Beans/PlayerManager.swift` 的
+    ///   `applyAudioMixPreference`）；
+    /// * `options: []` —— **绝不可带 `.mixWithOthers`**，见上文坑二。
+    static let targetMode: AVAudioSession.Mode = .default
+    static let targetPolicy: AVAudioSession.RouteSharingPolicy = .longFormAudio
+
+    /// 把会话写成目标形态（会抛错，由调用方决定怎么记录）。
+    static func apply(to session: AVAudioSession) throws {
+        try session.setCategory(.playback, mode: targetMode, policy: targetPolicy, options: [])
+    }
+
+    /// 当前会话是否**偏离**目标形态。
+    ///
+    /// ⚠️ 判据必须包含 `categoryOptions.contains(.mixWithOthers)`：
+    /// 只判类别的话，「类别是 playback、但被 mpv 加上了混音」这种最要命的情形
+    /// 会被判为「正常」—— 这正是坑二能长期潜伏的原因。
+    static var needsRepair: Bool {
+        let session = AVAudioSession.sharedInstance()
+        return session.category != .playback
+            || session.categoryOptions.contains(.mixWithOthers)
+    }
+
+    /// 诊断串：类别 + 选项 + 模式（日志里一眼看出是不是混音态）。
+    static var stateDescription: String {
+        let session = AVAudioSession.sharedInstance()
+        let mixing = session.categoryOptions.contains(.mixWithOthers) ? "混音(致命)" : "非混音"
+        return "cat=\(session.category.rawValue) \(mixing) opts=\(session.categoryOptions.rawValue) mode=\(session.mode.rawValue)"
+    }
+
     static func configure() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default)
+            try apply(to: session)
         } catch {
             PlayerDiag.log("音频会话类别设置失败：\(error.localizedDescription)")
         }
@@ -31,15 +94,15 @@ enum AudioSessionManager {
 
     /// 激活会话（每次起播前调用）。
     ///
-    /// 顺手自愈：类别若被其他组件（如 MPV 音频输出初始化）改跑，拉回 `.playback`，
-    /// 避免「某次之后控制中心突然不显示」的幽灵问题。
+    /// 顺手自愈：会话若被其他组件（MPV 音频输出初始化——见坑二）改跑，
+    /// 拉回目标形态，避免「某次之后控制中心突然不显示」的幽灵问题。
     static func activate() {
         let session = AVAudioSession.sharedInstance()
-        if session.category != .playback {
-            let previous = session.category
+        if needsRepair {
+            let before = stateDescription
             do {
-                try session.setCategory(.playback, mode: .default)
-                PlayerDiag.log("音频会话类别自 \(previous.rawValue) 拉回 playback")
+                try apply(to: session)
+                PlayerDiag.log("音频会话已拉回目标形态：\(before) → \(stateDescription)")
             } catch {
                 PlayerDiag.log("音频会话类别修复失败：\(error.localizedDescription)")
             }
@@ -682,8 +745,10 @@ final class PlayerCore: NSObject, ObservableObject {
             isRenderingAudio = rendering
         }
         // ★ 音频会话守卫（加固 + 限频修复）：
-        //   mpv 的 AudioUnit 音频输出在初始化 / seek / 重建时可能把会话类别改跑，
-        //   类别不是 `.playback` 时系统不认「媒体播放」——控制中心/锁屏不出现。
+        //   mpv 的 AudioUnit 音频输出在 AO 初始化 / seek / 重建时会把会话改跑，
+        //   类别不是 `.playback` **或**被加上了 `.mixWithOthers` 时，系统不认
+        //   「媒体播放」——控制中心 / 锁屏不出现（后者是 2026-10-14 定位的真根因，
+        //   详见 `AudioSessionManager` 的注释）。
         //
         //   ⚠️ 必须**限频（5s/次）**：若类别被持续改跑、自愈又失败，20Hz 的
         //   setCategory/setActive（外加 nowPlayingInfo 写入）会反复打断音频
@@ -700,9 +765,8 @@ final class PlayerCore: NSObject, ObservableObject {
             //   —— 因为原先自愈本来就被同一个 5s 条件挡着。
             if now - lastSessionGuardAt > 5 {
                 lastSessionGuardAt = now
-                let session = AVAudioSession.sharedInstance()
-                if session.category != .playback {
-                    PlayerDiag.log("音频会话类别巡检发现偏离（\(session.category.rawValue)）→ 拉回 playback")
+                if AudioSessionManager.needsRepair {
+                    PlayerDiag.log("音频会话巡检发现偏离（\(AudioSessionManager.stateDescription)）→ 拉回目标形态")
                     AudioSessionManager.activate()
                     updateNowPlaying()
                 }
@@ -870,7 +934,7 @@ final class PlayerCore: NSObject, ObservableObject {
         } else {
             center.playbackState = .stopped
         }
-        PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration)) state=\(center.playbackState.rawValue) cat=\(AVAudioSession.sharedInstance().category.rawValue)")
+        PlayerDiag.log("NowPlaying 更新 title=\(song.title) playing=\(isPlaying) dur=\(String(format: "%.1f", duration)) state=\(center.playbackState.rawValue) \(AudioSessionManager.stateDescription)")
 
         // ③ 封面图：每首歌只异步拉一次（走 WellImageCache 的缩图缓存，与列表/播放页
         //    共用同一份解码结果），到图后补写同一条信息；失败则保持无封面，不影响显示。

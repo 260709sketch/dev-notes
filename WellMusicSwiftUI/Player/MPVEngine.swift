@@ -72,6 +72,33 @@ final class MPVEngine: @unchecked Sendable {
         // 与 AVPlayer/CoreAudio 的路径一致，不做播放器层的强制重采样）
         mpv_set_option_string(h, "audio-samplerate", "")
 
+        // ★★ 独占音频会话（2026-10-14「控制中心 / 锁屏不显示歌曲」的根因修复）★★
+        //
+        // mpv 的 audiounit 音频输出在 AO 初始化时会**自己**改写 AVAudioSession
+        // （`audio/out/ao_audiounit.m`）：
+        //
+        //     AVAudioSessionCategoryOptions options = 0;
+        //     if (!(ao->init_flags & AO_INIT_EXCLUSIVE))
+        //         options |= AVAudioSessionCategoryOptionMixWithOthers;
+        //     [instance setCategory:AVAudioSessionCategoryPlayback withOptions:options error:nil];
+        //     [instance setMode:AVAudioSessionModeMoviePlayback error:nil];
+        //     [instance setActive:YES error:nil];
+        //
+        // 即：**不给这个选项时，它会带上 `.mixWithOthers`（可混音）**。
+        // 而 iOS 只把「非混音」的音频会话认作 Now Playing 应用 —— 会话一旦可混音，
+        // 系统就认为本 App 只是「背景音源」，控制中心 / 锁屏 / 灵动岛一概不出卡片
+        // （歌照样能放，用户看到的就是「控制中心什么都不显示」）。
+        //
+        // 更隐蔽的是：这个覆盖发生在 `engine.load()` 之后（AO 在加载时才创建），
+        // 我们起播前设的 `.playback` 被它覆盖；而覆盖后的类别**仍然是 `.playback`**，
+        // 于是应用层旧巡检 `category != .playback` 恒为假 → 自愈永远不会触发。
+        //
+        // `audio-exclusive=yes` 是 mpv 为这件事准备的正规开关（docs 明确「目前仅
+        // coreaudio / audiounit 实现」），它让 `AO_INIT_EXCLUSIVE` 置位 →
+        // mpv 自己就以 `options: 0` 设置会话，不再引入混音。
+        // 这与 kumone / Beans 的 `options: []` 完全一致（音乐类 App 的既定行为）。
+        mpv_set_option_string(h, "audio-exclusive", "yes")
+
         // ⚠️ 默认 User-Agent：mpv 自报 "libmpv 0.x"，网易云 CDN 会识别并掐断连接
         // （表现为播放十几秒就断流切歌；QQ 的 CDN 无此策略）。伪装成浏览器。
         // 官方平台 URL 的 headers 为空（ResolvePlayback 仅自定义音源带头），
@@ -85,6 +112,14 @@ final class MPVEngine: @unchecked Sendable {
             handle = nil
             return
         }
+
+        // 回读「独占音频会话」是否真的生效：该开关决定 mpv 会不会把会话改写成
+        // 可混音（.mixWithOthers）—— 一旦可混音，控制中心 / 锁屏就不显示本 App。
+        // 若某个 mpv 版本没有这个选项，这里会立刻暴露（日志显示「不可读」），
+        // 此时由 `AudioSessionManager` 的会话巡检兜底修复。
+        var exclusiveFlag: CInt = -1
+        let exclusiveReadable = mpv_get_property(h, "audio-exclusive", MPV_FORMAT_FLAG, &exclusiveFlag) >= 0
+        PlayerDiag.log("mpv 就绪：audio-exclusive=\(exclusiveReadable ? (exclusiveFlag != 0 ? "yes" : "no") : "选项不可读")")
 
         loopRunning = true
         startEventLoop()
