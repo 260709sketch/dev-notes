@@ -159,12 +159,33 @@ struct WellPlaylistDetailView: View {
     @State private var coverIsDark: Bool?
     /// 封面主色纯色铺底（取色完成前用系统底色兜底）。
     @State private var coverBackdropColor: Color?
+    /// 封面**底部条带**的平均色（背景顶端过渡带用，见 backdropLayer）。
+    @State private var coverEdgeColor: Color?
 
-    /// 背景层：封面主色纯色铺满全屏（垫在最底、不随滚动）。
+    /// 背景层：封面主色纯色铺底 + 顶端「封面底边同色」过渡带。
+    ///
+    /// 过渡带是「自然」的关键（2026-10-14 第二轮实机反馈「接缝太丑」）：
+    /// 若背景只是一个与封面底边无关的纯色，深色封面（如人物）淡进浅色底时，
+    /// 接缝处会出现一条浑浊的「泥带」。把背景顶部先染成**封面底部条带的
+    /// 同一颜色**（位置≈封面下缘 53% 屏高处）、再向下渐回主色 —— 接缝两侧
+    /// 颜色一致，封面「化开」进背景的过程就顺了。
     private var backdropLayer: some View {
-        (coverBackdropColor ?? Color(uiColor: .systemBackground))
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        ZStack(alignment: .top) {
+            (coverBackdropColor ?? Color(uiColor: .systemBackground))
+                .ignoresSafeArea()
+            if let edgeColor = coverEdgeColor {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.42),
+                        .init(color: edgeColor, location: 0.53),
+                        .init(color: .clear, location: 0.86),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom)
+                    .ignoresSafeArea()
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: - 全宽大封面
@@ -186,26 +207,26 @@ struct WellPlaylistDetailView: View {
                     .init(color: .black, location: 0.80),
                     .init(color: .clear, location: 0.90),
                 ]))
-            // ② 递进模糊带（半径 5 → 28，窗口交叠 → 连续无台阶）
-            coverImage.blur(radius: 5).mask(coverMask([
+            // ② 递进模糊带（半径 4 → 22，窗口交叠 → 连续无台阶；2026-10-14 二轮反馈后整体调柔）
+            coverImage.blur(radius: 4).mask(coverMask([
                 .init(color: .clear, location: 0.78),
                 .init(color: .black, location: 0.84),
                 .init(color: .black, location: 0.88),
                 .init(color: .clear, location: 0.93),
             ]))
-            coverImage.blur(radius: 10).mask(coverMask([
+            coverImage.blur(radius: 8).mask(coverMask([
                 .init(color: .clear, location: 0.85),
                 .init(color: .black, location: 0.90),
                 .init(color: .black, location: 0.93),
                 .init(color: .clear, location: 0.965),
             ]))
-            coverImage.blur(radius: 18).mask(coverMask([
+            coverImage.blur(radius: 14).mask(coverMask([
                 .init(color: .clear, location: 0.90),
                 .init(color: .black, location: 0.945),
                 .init(color: .black, location: 0.965),
                 .init(color: .clear, location: 0.99),
             ]))
-            coverImage.blur(radius: 28).mask(coverMask([
+            coverImage.blur(radius: 22).mask(coverMask([
                 .init(color: .clear, location: 0.95),
                 .init(color: .black, location: 0.98),
                 .init(color: .black, location: 1.0),
@@ -482,10 +503,47 @@ struct WellPlaylistDetailView: View {
         guard let image = await WellImageCache.shared.image(for: url) else { return }
         let boosted = Self.saturated(image.dominantColor(), factor: 1.25)
         let adjusted = Self.lightnessAdjusted(boosted)
+        // 底部条带色**不做明度/饱和调整** —— 它的职责是与封面底边像素一致，
+        // 让「封面 → 背景」的接缝两侧同色（见 backdropLayer 的说明）。
+        let edge = Self.bottomBandColor(of: image)
         withAnimation(.easeInOut(duration: 0.25)) {
             coverBackdropColor = Color(uiColor: adjusted)
+            coverEdgeColor = edge.map { Color(uiColor: $0) }
         }
         coverIsDark = Self.luminance(of: adjusted) < 0.5
+    }
+
+    /// 封面**底部条带**（底约 18%）的平均色 —— 背景过渡带与封面底边对齐用。
+    ///
+    /// ⚠️ 字节序：`premultipliedLast` 的内存布局是 **RGBA**（r 在 `data[i]`）——
+    /// 与 AppTheme.dominantColor 的修复保持一致，勿写反。
+    /// ⚠️ 方向：CGBitmapContext 内存第 0 行 = 图像**顶部**，底部条带取最后 6 行。
+    private static func bottomBandColor(of image: UIImage) -> UIColor? {
+        guard let cgImage = image.cgImage else { return nil }
+        let size = 32
+        var data = [UInt8](repeating: 0, count: size * size * 4)
+        guard let ctx = CGContext(
+            data: &data, width: size, height: size, bitsPerComponent: 8,
+            bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = .low
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
+        var totalR = 0.0, totalG = 0.0, totalB = 0.0, count = 0
+        for y in 26..<size {
+            for x in 0..<size {
+                let i = (y * size + x) * 4
+                totalR += Double(data[i])
+                totalG += Double(data[i + 1])
+                totalB += Double(data[i + 2])
+                count += 1
+            }
+        }
+        guard count > 0 else { return nil }
+        return UIColor(red: CGFloat(totalR / Double(count) / 255.0),
+                       green: CGFloat(totalG / Double(count) / 255.0),
+                       blue: CGFloat(totalB / Double(count) / 255.0),
+                       alpha: 1)
     }
 
     /// 提饱和度（HSB 途径；失败时原样返回）。
