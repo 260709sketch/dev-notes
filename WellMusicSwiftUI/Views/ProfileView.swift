@@ -1,22 +1,16 @@
 import SwiftUI
 
-/// 我的 Tab：网易云账号卡片 + 自建歌单 + 网易云内容入口 + 设置入口
+/// 我的 Tab：网易云账号登录入口（导航栏右侧）+ 自建歌单 + 网易云内容入口 + 设置入口
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var session = NeteaseSession.shared
     @State private var showingSettings = false
+    @State private var showingLogin = false
 
     var body: some View {
         NavigationStack {
             List {
-                // 网易云账号卡片（未登录时点击即弹登录页；已登录显示头像昵称与退出）
-                Section {
-                    NeteaseAccountCard()
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-
                 Section {
                     NavigationLink { MyPlaylistsView() } label: {
                         Label("我的歌单", systemImage: "music.note.list")
@@ -52,9 +46,52 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("我的")
+            // ★ 2026-10-14 用户：登录卡片移除，登录入口放到「我的」大标题右侧。
+            //   未登录显示与 dock 栏「我的」同款人形图标，登录后显示网易云头像。
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    accountEntryButton
+                }
+            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $showingLogin) {
+                NeteaseLoginSheet()
+            }
+        }
+    }
+
+    // MARK: 登录入口（大标题右侧图标）
+
+    /// 未登录 = 人形图标（与 dock 栏「我的」同款 `person.crop.circle`）；
+    /// 登录后 = 网易云头像。
+    @ViewBuilder
+    private var accountEntryButton: some View {
+        Button {
+            if session.isLoggedIn {
+                // 已登录：点击进入账号详情（当前仅轻提示，后续再加功能，用户要求先别动）
+            } else {
+                showingLogin = true
+            }
+        } label: {
+            if let account = session.account, session.isLoggedIn, let urlString = account.avatarURL, let url = URL(string: urlString), !urlString.isEmpty {
+                WellAsyncImage(url: url) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 24))
+                }
+                .frame(width: 30, height: 30)
+                .clipShape(Circle())
+            } else {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.primary)
+            }
+        }
+        .buttonStyle(.plain)
+        .task {
+            // 进页面顺手校验一次票据：过期自动回到未登录态
+            if session.isLoggedIn { await session.refreshAccount() }
         }
     }
 }
@@ -208,9 +245,8 @@ struct PlaylistDetailView: View {
 // 所以直接复用歌单详情接口拉全部已赞歌曲，不需要单独的 like 列表接口。
 
 struct NeteaseLikedSongsView: View {
-    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
-    private var player: PlayerCore { PlayerCore.shared }
-
+    @State private var name = "我喜欢"
+    @State private var coverURL: String?
     @State private var tracks: [MusicItem] = []
     @State private var isLoading = true
     @State private var notLoggedIn = false
@@ -227,17 +263,14 @@ struct NeteaseLikedSongsView: View {
             } else if tracks.isEmpty {
                 tipView("还没有喜欢的歌曲", "在网易云里给歌曲点红心后会出现在这里")
             } else {
-                List(tracks) { item in
-                    TrackRow(item: item)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            player.play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
-                        }
-                }
-                .listStyle(.plain)
+                // 复用「我的歌单」截图版式（小封面 + 红「播放全部」+ 歌曲列表）。
+                // 标题由 WellMyPlaylistDetailView 统一留空（歌单页样式不含导航栏标题）。
+                WellMyPlaylistDetailView(
+                    source: .tracks(name: name, coverURL: coverURL,
+                                    creatorName: "网易云音乐", tracks: tracks))
             }
         }
-        .navigationTitle("我喜欢")
+        .navigationTitle(isLoading || notLoggedIn || failed || tracks.isEmpty ? "我喜欢" : "")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
@@ -262,6 +295,8 @@ struct NeteaseLikedSongsView: View {
         do {
             let imported = try await NeteaseMusicAPI.shared.playlistForImport(id: "\(uid)")
             tracks = imported.tracks
+            if !imported.name.isEmpty { name = imported.name }
+            coverURL = imported.coverURL
         } catch {
             failed = true
         }
@@ -375,8 +410,6 @@ struct NeteasePlayRecordView: View {
 // MARK: - 最近播放（网易云云端优先，本地历史兜底）
 
 struct RecentPlaysView: View {
-    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
-    private var player: PlayerCore { PlayerCore.shared }
     @EnvironmentObject private var appState: AppState
 
     /// 网易云云端最近播放（登录时拉取；与 RN 版 v90 同款接口）
@@ -401,18 +434,14 @@ struct RecentPlaysView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(displayTracks) { item in
-                    TrackRow(item: item)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            player.play(queue: displayTracks,
-                                        startIndex: displayTracks.firstIndex(of: item) ?? 0)
-                        }
-                }
-                .listStyle(.plain)
+                // 复用「我的歌单」截图版式；封面取最近一首的封面
+                WellMyPlaylistDetailView(
+                    source: .tracks(name: "最近播放",
+                                    coverURL: displayTracks.first?.albumCoverURL,
+                                    creatorName: nil, tracks: displayTracks))
             }
         }
-        .navigationTitle("最近播放")
+        .navigationTitle(isLoading || displayTracks.isEmpty ? "最近播放" : "")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }

@@ -401,6 +401,18 @@ final class SettingsManager: ObservableObject {
     /// 断开蓝牙耳机 / 拔出耳机时自动暂停播放（默认开启）
     @AppStorage("wellmusic.player.bluetoothAutoPause") var bluetoothAutoPause: Bool = true
 
+    /// 启动时恢复上次播放（默认关闭）。
+    ///
+    /// 开启后：冷启动自动恢复上次退出前的播放列表 + 当前曲目 + 播放位置，
+    /// 并对当前曲目**重新解析播放地址**（音源链接有有效期，不能用过期链接）。
+    @AppStorage("wellmusic.player.restoreLastPlayback") var restoreLastPlayback: Bool = false
+
+    /// 预加载下一首（默认开启）。
+    ///
+    /// 播放到 5s 时后台解析下一首地址，命中即可秒切。关闭后不再预解析，
+    /// 切歌时才按需解析（省流量/省电，但「下一首」会慢一拍）。
+    @AppStorage("wellmusic.player.preloadNext") var preloadNextEnabled: Bool = true
+
     @AppStorage("wellmusic.player.swipeSwitchSong") var swipeSwitchSong: Bool = true
 
     /// 无损/高音质

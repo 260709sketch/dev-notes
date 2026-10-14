@@ -69,6 +69,39 @@ final class NeteaseMusicAPI {
         return decoded
     }
 
+    // MARK: 通道（eapi / interface.music.163.com）
+
+    /// eapi POST（`interface.music.163.com/eapi<path>`，params=hex 表单）。
+    ///
+    /// 与明文 `apiRequest` 并存：听歌排行 `/api/v1/play/record`、听歌上报
+    /// `/api/feedback/weblog` 这些**登录态强绑定**的接口，明文 `api/*` 拿不到，
+    /// 必须走 eapi（参考源码 `neteaseScrobble.js` 同款）。eapi 加密体里要带
+    /// 客户端 header（`NeteaseCrypto.eapiHeaderPayload`），否则服务端静默忽略。
+    private static func eapiRequest<T: Decodable>(_ path: String,
+                                                  params: [String: Any],
+                                                  type: T.Type) async throws -> T {
+        guard let body = NeteaseCrypto.makeEapiBody(path: path, params: params) else {
+            throw NetworkClient.NetworkError.invalidURL
+        }
+        let resp = try await NetworkClient.shared.postRaw(
+            "https://interface.music.163.com/eapi\(path)",
+            body: Data(body.utf8),
+            contentType: "application/x-www-form-urlencoded",
+            headers: [
+                "Referer": "https://music.163.com/",
+                "Origin": "https://music.163.com",
+                "Cookie": NeteaseSession.shared.cookieHeader,
+            ]
+        )
+        guard (200..<300).contains(resp.statusCode) else {
+            throw NetworkClient.NetworkError.badStatus(resp.statusCode)
+        }
+        guard let decoded = NetworkClient.decode(type, from: resp.data) else {
+            throw NetworkClient.NetworkError.noData
+        }
+        return decoded
+    }
+
     /// 取响应头（键名大小写不敏感）。
     private static func headerValue(_ headers: [String: String], _ name: String) -> String? {
         if let exact = headers[name] { return exact }
@@ -611,9 +644,11 @@ final class NeteaseMusicAPI {
         let playCount: Int
     }
 
-    private struct PlayRecordResponse: Decodable {
+    /// eapi `/api/v1/play/record` 响应：`weekData` / `allData`，每项 `song` + `playCount`。
+    private struct PlayRecordEapiResponse: Decodable {
         var code: Int?
-        var list: [Item]?
+        var weekData: [Item]?
+        var allData: [Item]?
         struct Item: Decodable {
             var playCount: Int?
             var score: Int?
@@ -622,15 +657,76 @@ final class NeteaseMusicAPI {
     }
 
     /// 听歌排行（网易云「我听过的歌」）。
-    /// type: 0 = 所有时间，1 = 最近一周。需要登录 Cookie（apiRequest 自动携带）。
+    /// type: 0 = 所有时间（allData），1 = 最近一周（weekData）。
+    ///
+    /// 2026-10-14 用户反馈「听歌排行不显示数据」→ 根因：旧的明文 `api/user/playrecord`
+    /// 登录态拿不到排行；换成参考源码 `neteaseScrobble.js` 同款的 **eapi `/api/v1/play/record`**。
     func playRecord(uid: Int, type: Int) async throws -> [PlayRecordItem] {
-        let resp: PlayRecordResponse = try await Self.apiRequest(
-            "api/user/playrecord", params: ["uid": uid, "type": type, "csrf_token": ""],
-            type: PlayRecordResponse.self)
-        return (resp.list ?? []).compactMap { item in
+        let cookie = NeteaseSession.shared.cookieHeader
+        // eapi 加密体内要嵌套 `header`（含 os=pc + MUSIC_U/__csrf），否则服务端静默忽略
+        let params: [String: Any] = [
+            "uid": String(uid),
+            "type": type,
+            "total": "true",
+            "header": NeteaseCrypto.eapiHeaderPayload(cookie: cookie),
+        ]
+        let resp: PlayRecordEapiResponse = try await Self.eapiRequest(
+            "/api/v1/play/record", params: params, type: PlayRecordEapiResponse.self)
+        let list = (type == 1 ? resp.weekData : resp.allData) ?? []
+        return list.compactMap { item in
             guard let song = item.song, let mapped = Self.mapSong(song) else { return nil }
             return PlayRecordItem(song: mapped, playCount: item.playCount ?? 0)
         }
+    }
+
+    // MARK: 听歌上报（weblog：让网易云侧同步「听歌排行」与「最近播放」）
+
+    /// weblog 上报的响应（`/api/feedback/weblog`）。
+    private struct WeblogResp: Decodable { var code: Int? }
+
+    /// 上报一条 weblog。eapi `/api/feedback/weblog`，与参考 `neteaseScrobble.js` 同款。
+    ///
+    /// 两个 action 配合：`startplay` 写入「最近播放」；`play` 累加「听歌排行」次数与时长。
+    /// 无登录态时直接返回 false（不报错，静默跳过）。
+    private func sendWeblog(_ logs: [[String: Any]]) async -> Bool {
+        guard NeteaseSession.shared.isLoggedIn else { return false }
+        let cookie = NeteaseSession.shared.cookieHeader
+        let logsString = (try? JSONSerialization.data(withJSONObject: logs))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let params: [String: Any] = [
+            "logs": logsString,
+            "header": NeteaseCrypto.eapiHeaderPayload(cookie: cookie),
+        ]
+        do {
+            let resp: WeblogResp = try await Self.eapiRequest(
+                "/api/feedback/weblog", params: params, type: WeblogResp.self)
+            return resp.code == 200
+        } catch {
+            return false
+        }
+    }
+
+    /// 开始播放上报（写入「最近播放」）。在歌曲开始播放时调用。
+    func scrobbleStart(neteaseTrackId: String) async {
+        guard let nid = Int(neteaseTrackId) else { return }
+        await sendWeblog([
+            ["action": "startplay", "json": [
+                "id": nid, "type": "song", "mainsite": "1", "mainsiteWeb": "1",
+                "content": "id=0",
+            ]],
+        ])
+    }
+
+    /// 播放完成 / 切歌上报（累加「听歌排行」次数与时长）。
+    func scrobbleFinish(neteaseTrackId: String, seconds: Int) async {
+        guard let nid = Int(neteaseTrackId), seconds > 0 else { return }
+        await sendWeblog([
+            ["action": "play", "json": [
+                "download": 0, "end": "playend", "id": nid, "sourceId": "0",
+                "time": seconds, "type": "song", "wifi": 0, "source": "list",
+                "mainsite": "1", "mainsiteWeb": "1", "content": "id=0",
+            ]],
+        ])
     }
 
     /// 云端「最近播放」（`/api/play-record/song/list`，与 RN 版 v90 同款接口）。

@@ -22,6 +22,21 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // ★ 2026-10-14 用户：账号分组放在播放分组上面
+                Section("账号") {
+                    NavigationLink {
+                        NeteaseAccountSettingsView()
+                    } label: {
+                        HStack {
+                            Text("NetEase Cloud ID")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(NeteaseSession.shared.isLoggedIn ? "已登录" : "未登录")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("音频") {
                     // 「播放音质」：点击弹出小卡片选择，不再是整页跳转（需求 22）
                     Button {
@@ -37,6 +52,13 @@ struct SettingsView: View {
                     }
 
                     Toggle("断开蓝牙自动暂停", isOn: $settings.bluetoothAutoPause)
+                }
+
+                Section("播放") {
+                    // 启动恢复上次播放（2026-10-14 用户要求）
+                    Toggle("启动恢复上次播放", isOn: $settings.restoreLastPlayback)
+                    // 预加载下一首（2026-10-14 用户要求提供开关）
+                    Toggle("预加载下一首", isOn: $settings.preloadNextEnabled)
                 }
 
                 Section("自定义音源") {

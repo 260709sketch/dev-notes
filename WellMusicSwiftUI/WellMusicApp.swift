@@ -36,6 +36,9 @@ struct WellMusicApp: App {
                 .task {
                     // 恢复已导入的自定义音源并重新激活
                     await WellLXSourceStore.shared.bootstrapIfNeeded()
+                    // 启动恢复上次播放（设置里可开关；默认关）。恢复列表与位置，
+                    // 播放地址会重新解析（不会用过期的音源链接）。
+                    PlayerCore.shared.restorePlaybackIfNeeded()
                 }
         }
     }

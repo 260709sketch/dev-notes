@@ -77,6 +77,13 @@ struct WellMyPlaylistDetailView: View {
             _creatorName = State(initialValue: creator)
             _trackTotal = State(initialValue: 0)
             _isLoading = State(initialValue: true)
+        case .tracks(let name, let cover, let creator, let list):
+            _tracks = State(initialValue: list)
+            _title = State(initialValue: name)
+            _coverURL = State(initialValue: cover)
+            _creatorName = State(initialValue: creator)
+            _trackTotal = State(initialValue: list.count)
+            _isLoading = State(initialValue: false)
         }
     }
 
@@ -328,4 +335,6 @@ enum WellMyPlaylistSource {
     case local(Playlist)
     /// 网易云账号里的歌单（`api/user/playlist` 返回），曲目按需异步拉
     case netease(id: String, name: String, coverURL: String?, creatorName: String?)
+    /// 直接吃内存里的曲目列表（「我喜欢」「最近播放」「收藏歌曲」复用同一版式）
+    case tracks(name: String, coverURL: String?, creatorName: String?, tracks: [MusicItem])
 }

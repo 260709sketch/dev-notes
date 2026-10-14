@@ -197,6 +197,8 @@ struct WellPlaylistDetailView: View {
             WellRemoteImage(url: headerCoverURL, displaySize: 720)
                 .frame(width: ScreenAdapter.w(304), height: ScreenAdapter.w(304))
                 .clipped()
+                // ★ 2026-10-14 用户问题4：大封面四角改圆角，参考发现页歌单卡片圆角（10）
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
         case .fullWidth:
@@ -475,7 +477,18 @@ struct WellPlaylistDetailView: View {
     /// 2. **明度自适应**：亮色往白掺 35%、暗色往黑掺 45% —— 贴参考实拍
     ///    （图三《Lover》浅粉底 (231,218,228)；图二绿封面深绿底），
     ///    同时天然保证正文与底色的对比度。取不到封面时保持 nil、回落系统底色。
+    ///
+    /// ⚠️ 2026-10-14 用户：黑/褐色封面在「居中留白 + 浅色模式」下背景统一改白色
+    ///    （深色封面压暗后的深色底在浅色下很难看）。见下方 `coverBackdropColor` 的
+    ///    白色兜底分支 —— 这里保留取色，但浅色+居中时不再采用封面色。
     private func extractCoverBackdrop() async {
+        // ★ 2026-10-14：居中留白 + 浅色模式下，背景统一白色（用户问题3）。
+        //   黑/褐色封面压暗后会得到深色底，浅色模式下突兀 —— 直接白色，文字也保持深色。
+        if coverStyle == .centered, systemScheme == .light {
+            coverBackdropColor = Color(uiColor: .systemBackground)
+            coverIsDark = false
+            return
+        }
         guard let raw = headerCoverURL, !raw.isEmpty else { return }
         guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
         guard let image = await WellImageCache.shared.image(for: url) else { return }

@@ -288,7 +288,14 @@ final class PlayerCore: NSObject, ObservableObject {
                     hasActiveTrack = true
                     updateNowPlaying(item)
                     AppState.shared.recordHistory(item)
+                    // ★ 网易云听歌上报：先结算上一首，再开始这一首。
+                    //   只有网易云来源（且登录）才会真正发请求；其他平台静默跳过。
+                    //   切歌 / 播完自动下一首 / 手动点歌都汇聚到 playCurrentItem，
+                    //   所以在这里做一次即可覆盖全部场景（对齐参考 neteaseScrobble 的 switch）。
+                    reportScrobbleStart(item)
                     loadLyrics(for: item)
+                    // 持久化播放快照（供「启动恢复上次播放」；低频，不在 tick 里做）
+                    persistPlaybackState()
                 }
             } catch {
                 isLoading = false
@@ -336,6 +343,8 @@ final class PlayerCore: NSObject, ObservableObject {
         engine.setPaused(true)
         isPlaying = false
         updateNowPlaying()
+        // 暂停时保存精确位置，供「启动恢复上次播放」从暂停处续播
+        persistPlaybackState()
     }
 
     func resume() {
@@ -502,6 +511,87 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 是否已成功向系统写入过 NowPlaying 信息（用于 tick 兜底补写）
     private var hasPublishedNowPlaying = false
 
+    // MARK: 网易云听歌上报（scrobble）状态
+
+    /// 当前曲目的网易云 song id（只有网易云来源的歌才会上报）。
+    private var scrobbleNeteaseId: Int?
+    /// 当前曲目开始播放的时刻（用于算「播放了多少秒」再上报）。
+    private var scrobbleStartedAt: Date?
+
+    // MARK: 播放状态持久化（启动恢复上次播放）
+
+    /// 可恢复的播放快照（队列 + 当前曲目索引 + 播放位置）。
+    ///
+    /// ⚠️ 不存 `MusicItem.playURL` 之外的解析结果 —— 音源链接有有效期，
+    /// 恢复时**必须重新解析**（见 `restorePlaybackIfNeeded`），否则拿过期链接播放必失败。
+    private struct PlaybackSnapshot: Codable {
+        var queue: [MusicItem]
+        var currentIndex: Int
+        var currentTime: TimeInterval
+    }
+
+    private static let snapshotKey = "wellmusic.player.lastSnapshot"
+
+    /// 把当前播放状态写入 UserDefaults（低频调用，绝不在 20Hz tick 里做）。
+    private func persistPlaybackState() {
+        guard !queue.isEmpty, let idx = currentIndex, queue.indices.contains(idx) else {
+            UserDefaults.standard.removeObject(forKey: Self.snapshotKey)
+            return
+        }
+        let snapshot = PlaybackSnapshot(queue: queue, currentIndex: idx, currentTime: currentTime)
+        if let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: Self.snapshotKey)
+        }
+    }
+
+    /// 冷启动时恢复上次播放（开关开启 + 有快照才做）。
+    ///
+    /// 恢复的是**列表与位置**，播放地址一律重新解析（`playCurrentItem` 内部
+    /// 走 `MusicURLResolver`，不会用到任何过期链接）。
+    func restorePlaybackIfNeeded() {
+        guard SettingsManager.shared.restoreLastPlayback else { return }
+        guard let data = UserDefaults.standard.data(forKey: Self.snapshotKey),
+              let snapshot = try? JSONDecoder().decode(PlaybackSnapshot.self, from: data),
+              !snapshot.queue.isEmpty else { return }
+        // 有活跃曲目就不再重复恢复（避免覆盖用户当前播放）
+        guard !hasActiveTrack else { return }
+        queue = snapshot.queue
+        currentIndex = snapshot.queue.indices.contains(snapshot.currentIndex)
+            ? snapshot.currentIndex : 0
+        // seekTo 要落到有效位置：位置贴近结尾时从头播，避免「一恢复就结束」
+        let dur = snapshot.queue[currentIndex ?? 0].duration
+        let seekTo = (dur > 0 && snapshot.currentTime >= dur - 3) ? 0 : snapshot.currentTime
+        playCurrentItem(seekTo: seekTo, autoPlay: true)
+    }
+
+    // MARK: 网易云听歌上报（scrobble）
+
+    /// 开始播一首歌：先结算上一首（若还在），再对当前曲目发起 `startplay` 上报。
+    ///
+    /// 语义对齐参考 `neteaseScrobble.scrobbleSwitch`：
+    /// `startplay` → 写入网易云「最近播放」；`play` → 累加「听歌排行」次数与时长。
+    /// 只处理网易云来源（`neteaseId` 可解析成 Int）且已登录，否则静默跳过。
+    private func reportScrobbleStart(_ item: MusicItem) {
+        // 结算上一首
+        if let prevId = scrobbleNeteaseId, let started = scrobbleStartedAt {
+            let seconds = Int(Date().timeIntervalSince(started))
+            if seconds > 0 {
+                Task { await NeteaseMusicAPI.shared.scrobbleFinish(neteaseTrackId: String(prevId), seconds: seconds) }
+            }
+        }
+        scrobbleNeteaseId = nil
+        scrobbleStartedAt = nil
+
+        // 开始这一首（只有网易云来源才上报）
+        let unwrapped = item.source == .lx ? item.unwrappedFromCustomSource() : item
+        guard unwrapped.source == .netease,
+              let nid = unwrapped.neteaseId, let _ = Int(nid),
+              NeteaseSession.shared.isLoggedIn else { return }
+        scrobbleNeteaseId = Int(nid)
+        scrobbleStartedAt = Date()
+        Task { await NeteaseMusicAPI.shared.scrobbleStart(neteaseTrackId: nid) }
+    }
+
     /// 曲目结束处理。
     ///
     /// ## 设计原则（2026-10-13 重构）
@@ -645,6 +735,7 @@ final class PlayerCore: NSObject, ObservableObject {
         //   改成「每首当前曲目最多尝试一次」：任何播放模式下都恒定只发一次；
         //   顺带去掉随机模式下「预加载的那首其实不是真正下一首」的无效功。
         if hasActiveTrack, !isLoading, !isScrubbing, currentTime >= 5,
+           SettingsManager.shared.preloadNextEnabled,
            let playingKey = currentItem?.keyOf, preloadAttemptedTrackKey != playingKey {
             preloadAttemptedTrackKey = playingKey
             preloadNext()
