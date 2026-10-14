@@ -58,7 +58,24 @@ final class LyricsCursor: ObservableObject {
     }
 
     func updateProgress(_ time: TimeInterval, offset: TimeInterval) {
-        guard !lyrics.lines.isEmpty else { activeIndex = nil; return }
+        // ⚠️★ 2026-10-14 用户：「睡眠定时我怎么刚打开自己就关闭了」——根因就在这一行。
+        //
+        // 本类型存在的**全部意义**就是「只在当前行号真的变化时才通知」
+        // （`syncFromCore` 以 10Hz 调本方法；见 `AppleMusicPlayerView.currentPlaybackLyricIndex`
+        // 的注释：靠这个把播放页重算频率从 20Hz 降到「一句歌词一次」）。
+        //
+        // 但原先这里是 `guard !lyrics.lines.isEmpty else { activeIndex = nil; return }` ——
+        // 无条件赋值。`@Published` **不比较新旧值**，每次赋值都会发
+        // `objectWillChange`。于是只要**歌词为空**（这首歌没有歌词 / 歌词尚未加载完），
+        // 播放页顶层（观察了 `lyricsCursor`）就以 **10Hz** 全量重算：
+        //   * AMLL 的 WKWebView / WebGL 背景 / 控制栏全部陪跑（白耗电 + 掉帧）；
+        //   * 正在展开的 `Menu` 会被 SwiftUI 重建而**立刻收起** —— 而「睡眠定时」
+        //     是三点菜单里**唯一**的子菜单，所以只有它暴露症状（普通按钮点了就走，不受影响）。
+        // 修法：和下面那段一样，比较后再写。
+        guard !lyrics.lines.isEmpty else {
+            if activeIndex != nil { activeIndex = nil }
+            return
+        }
         let adjusted = time + offset
         var idx = 0
         for (i, line) in lyrics.lines.enumerated() {

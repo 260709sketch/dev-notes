@@ -307,34 +307,7 @@ struct AppleMusicPlayerView: View {
             }
 
             // 睡眠定时
-            Menu {
-                ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
-                    Button("\(minutes) 分钟") {
-                        player.sleepTimer.schedule(afterMinutes: minutes)
-                    }
-                    .disabled(!player.hasCurrentTrack)
-                }
-                Button {
-                    showCustomSleepTimerAlert()
-                } label: {
-                    Label("自定义...", systemImage: "slider.horizontal.3")
-                }
-                .disabled(!player.hasCurrentTrack)
-                Button {
-                    player.sleepTimer.scheduleAtEndOfCurrentTrack()
-                } label: {
-                    Label("当前歌曲结束时停止", systemImage: "music.note")
-                }
-                .disabled(!player.hasCurrentTrack)
-                if player.sleepTimer.state.isActive {
-                    Divider()
-                    Button("取消睡眠定时", role: .destructive) {
-                        player.sleepTimer.cancel()
-                    }
-                }
-            } label: {
-                Label("睡眠定时", systemImage: player.sleepTimer.state.isActive ? "timer.circle.fill" : "timer")
-            }
+            SleepTimerMenu(timer: player.sleepTimer, onCustom: { showCustomSleepTimerAlert() })
 
             // 复制链接
             Button {
@@ -1521,6 +1494,56 @@ struct AppleMusicPlayerView: View {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
             rootVC.present(alert, animated: true)
+        }
+    }
+}
+
+// MARK: - 睡眠定时子菜单
+
+/// 三点菜单里的「睡眠定时」。
+///
+/// ⚠️★ 2026-10-14 用户：「睡眠定时我怎么刚打开自己就关闭了」。
+///
+/// 单独抽成一个视图，是为了让它**自己订阅** `SleepTimer`：
+/// `AppleMusicPlayerView` 观察的是 `player`（`PlayerService`），而 `sleepTimer` 是
+/// `PlayerService` 里**另一个** `ObservableObject` —— 在顶层读
+/// `player.sleepTimer.state` 并不会订阅它的变化（`@EnvironmentObject` 只跟踪
+/// `PlayerService.objectWillChange`）。后果是设好定时之后：
+///   * 菜单左侧图标不会变成 `timer.circle.fill`；
+///   * 「取消睡眠定时」那一行也不会出现；
+/// 看起来就是「刚打开自己又关了」。放在这里用 `@ObservedObject` 订阅，状态一变立刻反映，
+/// 同时把重算范围收敛到这一棵小子树（不放回播放页顶层，避免又一次全页重算）。
+private struct SleepTimerMenu: View {
+    @EnvironmentObject private var player: PlayerService
+    @ObservedObject var timer: SleepTimer
+    let onCustom: () -> Void
+
+    var body: some View {
+        Menu {
+            ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
+                Button("\(minutes) 分钟") {
+                    timer.schedule(afterMinutes: minutes)
+                }
+                .disabled(!player.hasCurrentTrack)
+            }
+            Button(action: onCustom) {
+                Label("自定义...", systemImage: "slider.horizontal.3")
+            }
+            .disabled(!player.hasCurrentTrack)
+            Button {
+                timer.scheduleAtEndOfCurrentTrack()
+            } label: {
+                Label("当前歌曲结束时停止", systemImage: "music.note")
+            }
+            .disabled(!player.hasCurrentTrack)
+            if timer.state.isActive {
+                Divider()
+                Button("取消睡眠定时", role: .destructive) {
+                    timer.cancel()
+                }
+            }
+        } label: {
+            Label("睡眠定时", systemImage: timer.state.isActive ? "timer.circle.fill" : "timer")
         }
     }
 }
