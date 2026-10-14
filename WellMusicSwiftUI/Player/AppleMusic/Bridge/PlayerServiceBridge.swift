@@ -76,60 +76,76 @@ final class LyricsCursor: ObservableObject {
 
 // MARK: - SleepTimer
 /// 睡眠定时器：schedule(afterMinutes:) / scheduleAtEndOfCurrentTrack() / cancel()
+///
+/// ★ 2026-10-14 用户：「修复下睡眠定时」。原实现有两处硬伤：
+///   ① 「当前歌曲结束时停止」是用 `duration - currentTime` **猜一个倒计时** ——
+///      duration 还没读到时 remaining = 0，点一下就会立刻暂停；换歌/暂停也会算错。
+///   ② 用 `Timer` 计时，且没有任何防竞态手段。
+///   现改成 kumone 那套真实状态机（`Core/Player/SleepTimer.swift`）：
+///   * `.countdown(deadline:)` 用 `Task.sleep` 计时（可取消 + generation 防竞态），
+///     状态里带 deadline，UI 可以据此显示「剩余 xx」；
+///   * `.endOfCurrentTrack` **不再自己计时**，只置状态；真正的触发由播放内核在
+///     本曲自然播完时调用 `consumeEndOfCurrentTrack()` 完成
+///     （见 `PlayerCore.handleTrackEnded`）。
 @MainActor
 final class SleepTimer: ObservableObject {
-    struct State {
-        var isActive: Bool = false
-        var fireDate: Date?
-        var endOfTrackMode: Bool = false
+    enum State: Equatable {
+        case inactive
+        case countdown(deadline: Date)
+        case endOfCurrentTrack
+
+        var isActive: Bool { self != .inactive }
     }
 
-    @Published var state = State()
+    @Published private(set) var state: State = .inactive
 
-    private var timer: Timer?
-    private var endObserver: NSObjectProtocol?
+    private var deadlineTask: Task<Void, Never>?
+    private var generation = 0
 
     func schedule(afterMinutes minutes: Int) {
-        cancel()
-        state.isActive = true
-        state.endOfTrackMode = false
-        state.fireDate = Date().addingTimeInterval(TimeInterval(minutes) * 60)
+        guard minutes > 0 else { return }
 
-        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes) * 60, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.fireSleep()
+        generation += 1
+        let scheduledGeneration = generation
+        deadlineTask?.cancel()
+
+        let seconds = TimeInterval(minutes * 60)
+        state = .countdown(deadline: Date().addingTimeInterval(seconds))
+        deadlineTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            } catch {
+                return   // 被 cancel() / 重新 schedule 打断
             }
+            guard let self, !Task.isCancelled, self.generation == scheduledGeneration else { return }
+            self.deadlineTask = nil
+            self.state = .inactive
+            // 到点语义 = 暂停播放
+            PlayerCore.shared.pause()
         }
     }
 
+    /// 「当前歌曲结束时停止」：只置状态，触发点在曲末。
     func scheduleAtEndOfCurrentTrack() {
-        cancel()
-        state.isActive = true
-        state.endOfTrackMode = true
-        state.fireDate = nil
-
-        // 监听 AVPlayer 播放结束
-        // 此处通过 PlayerCore 的 end 间接触发；简化实现：使用 duration - currentTime
-        let core = PlayerCore.shared
-        let remaining = max(0, core.duration - core.currentTime)
-        state.fireDate = Date().addingTimeInterval(remaining)
-
-        timer = Timer.scheduledTimer(withTimeInterval: remaining, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.fireSleep()
-            }
-        }
+        generation += 1
+        deadlineTask?.cancel()
+        deadlineTask = nil
+        state = .endOfCurrentTrack
     }
 
     func cancel() {
-        timer?.invalidate()
-        timer = nil
-        state = State()
+        generation += 1
+        deadlineTask?.cancel()
+        deadlineTask = nil
+        state = .inactive
     }
 
-    private func fireSleep() {
-        PlayerCore.shared.pause()
+    /// 由播放内核在本曲**自然播完**时调用。
+    /// 返回 true = 应该暂停，且**不要**切下一首。
+    func consumeEndOfCurrentTrack() -> Bool {
+        guard state == .endOfCurrentTrack else { return false }
         cancel()
+        return true
     }
 }
 

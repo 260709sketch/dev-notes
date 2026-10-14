@@ -17,7 +17,7 @@ import UIKit
 
 /// Apple Music 风格全屏播放页：封面模糊背景 + 大封面/歌词页切换 + 底部控制栏。
 struct AppleMusicPlayerView: View {
-    let onOpenDestination: (Destination) -> Void
+    let onOpenDestination: (NowPlayingDestination) -> Void
     let onDismiss: () -> Void
 
     /// 底部安全区域间距（不用 GeometryReader，避免 fullScreenCover 动画过程中尺寸不正确）
@@ -272,14 +272,15 @@ struct AppleMusicPlayerView: View {
                 Label("评论", systemImage: "bubble.left")
             }
 
-            // 下一首播放
-            Button {
-                if let t = track {
-                    player.addToPlayNext(track: t)
-                    ToastCenter.shared.show("已添加到下一首播放")
+            // 查看专辑
+            // ★ 2026-10-14 用户：「移除下一首播放，新增查看专辑」。
+            //   跳转统一走 `onOpenDestination` → 由 MainTabView 关掉播放页并 push。
+            if let t = track, let albumDestination = NowPlayingDestination.album(from: t) {
+                Button {
+                    onOpenDestination(albumDestination)
+                } label: {
+                    Label("查看专辑", systemImage: "square.stack")
                 }
-            } label: {
-                Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
             }
 
             // 加入歌单

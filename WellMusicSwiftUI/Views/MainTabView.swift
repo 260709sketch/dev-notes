@@ -60,6 +60,11 @@ struct MainTabView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
                 if keyboardHeight != 0 { keyboardHeight = 0 }
             }
+            // ★ 播放页发出的「跳歌手 / 跳专辑」请求 → 关掉播放页并 push 进当前 Tab
+            .onReceive(NowPlayingNavigator.shared.$pending) { destination in
+                guard let destination else { return }
+                pushNowPlayingDestination(destination)
+            }
     }
 
     @ViewBuilder
@@ -94,18 +99,20 @@ struct MainTabView: View {
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
                 // 原生 TabView 不提供导航容器，这里由 MainTabView 统一补上
                 //（页面自身不带 NavigationStack）。
-                NavigationStack(path: $radioPath) { DiscoverView() }
+                // 页面内容统一走 `pageContent`，这样「播放页跳歌手/专辑」的
+                // navigationDestination 两个分支共用同一份实现。
+                NavigationStack(path: $radioPath) { pageContent(for: .radio) }
             }
             Tab("精选", systemImage: "sparkles.rectangle.stack.fill", value: WellTab.square) {
-                NavigationStack(path: $squarePath) { PlaylistSquareView() }
+                NavigationStack(path: $squarePath) { pageContent(for: .square) }
             }
             Tab(value: WellTab.search, role: .search) {
-                NavigationStack(path: $searchPath) { SearchView() }
+                NavigationStack(path: $searchPath) { pageContent(for: .search) }
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
-                NavigationStack(path: $profilePath) { ProfileView() }
+                NavigationStack(path: $profilePath) { pageContent(for: .profile) }
             }
         }
     }
@@ -180,14 +187,53 @@ struct MainTabView: View {
 
     /// 各 Tab 的页面内容。
     /// 导航容器由 pager 统一提供（见 `customTabInterface`），页面自身不带 NavigationStack。
+    ///
+    /// ★ 2026-10-14：挂上播放页的跳转目标（歌手主页 / 专辑详情）。
+    ///   播放页是 fullScreenCover，自己不在导航栈里，只能把目标 push 到这里。
     @ViewBuilder
     private func pageContent(for tab: WellTab) -> some View {
-        switch tab {
-        case .radio: DiscoverView()
-        case .square: PlaylistSquareView()
-        case .search: SearchView()
-        case .profile: ProfileView()
+        Group {
+            switch tab {
+            case .radio: DiscoverView()
+            case .square: PlaylistSquareView()
+            case .search: SearchView()
+            case .profile: ProfileView()
+            }
         }
+        .navigationDestination(for: NowPlayingDestination.self) { destination in
+            nowPlayingDestinationView(destination)
+        }
+    }
+
+    /// 播放页跳转目标 → 真实页面。
+    @ViewBuilder
+    private func nowPlayingDestinationView(_ destination: NowPlayingDestination) -> some View {
+        switch destination.kind {
+        case .artist:
+            WellArtistHomeView(artistId: destination.platformId,
+                               artistName: destination.name,
+                               coverURL: destination.coverURL)
+        case .album:
+            WellPlaylistDetailView(
+                source: .album(id: destination.platformId,
+                               platform: destination.platform,
+                               name: destination.name,
+                               artist: destination.artistName),
+                coverURL: destination.coverURL,
+                creatorName: destination.artistName)
+        }
+    }
+
+    /// 把播放页请求的跳转 push 进**当前 Tab** 的导航栈，然后清掉请求。
+    private func pushNowPlayingDestination(_ destination: NowPlayingDestination) {
+        showingNowPlaying = false
+        switch selectedTab {
+        case .radio: radioPath.append(destination)
+        case .square: squarePath.append(destination)
+        case .search: searchPath.append(destination)
+        case .profile: profilePath.append(destination)
+        }
+        NowPlayingNavigator.shared.consume()
     }
 
     /// 页序（与底部栏 `glassTabItems` 一致）：发现 → 精选 → 搜索 → 我的。
@@ -302,8 +348,11 @@ struct NowPlayingRouterView: View {
 
     var body: some View {
         AppleMusicPlayerView(
-            onOpenDestination: { _ in
-                // 目标页（歌手/专辑）在后续迭代接入
+            onOpenDestination: { destination in
+                // ★ 2026-10-14：播放页自己不在任何导航栈里 → 把跳转请求交给主框架，
+                //   由 MainTabView 关掉播放页再把目标 push 进当前 Tab 的导航栈。
+                NowPlayingNavigator.shared.request(destination)
+                onDismiss()
             },
             onDismiss: onDismiss
         )

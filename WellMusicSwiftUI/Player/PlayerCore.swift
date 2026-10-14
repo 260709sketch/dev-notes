@@ -631,6 +631,15 @@ final class PlayerCore: NSObject, ObservableObject {
         let nearEnd = duration > 0 && currentTime >= duration - 5
         if reason == .eof, nearEnd {
             PlayerDiag.log("自然播完 pos=\(String(format: "%.1f", currentTime)) dur=\(String(format: "%.1f", duration)) → 下一首")
+            // ★ 2026-10-14 用户：「修复睡眠定时」。
+            //   「当前歌曲结束时停止」原先是在 UI 侧用 `duration - currentTime` 猜倒计时，
+            //   duration 未就绪时会立刻暂停。真正的触发点就在**这里**：
+            //   本曲自然播完时先问睡眠定时是否处于「本曲结束」模式 —— 是则暂停且不切歌。
+            if PlayerService.shared.sleepTimer.consumeEndOfCurrentTrack() {
+                PlayerDiag.log("睡眠定时：本曲已结束 → 暂停（不切下一首）")
+                pause()
+                return
+            }
             next()
             return
         }

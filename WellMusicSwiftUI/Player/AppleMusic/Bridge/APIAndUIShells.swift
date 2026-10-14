@@ -339,76 +339,107 @@ struct AddToPlaylistSheet: View {
 }
 
 // MARK: - NowPlayingTrackDestinationLinks
-/// 歌曲详情页的跳转链接（艺术家、专辑）
+/// 歌曲详情页的跳转链接（歌手 / 专辑）。
+///
+/// ★ 2026-10-14 用户：「所有歌曲播放器界面可以通过点击歌手名字转跳歌手主页，
+///   并且多名歌手要能识别弹窗，弹窗要和三个点菜单弹窗一样（系统原生 Menu）」。
+///   结构照 kumone 的 `NowPlayingTrackDestinationLinks`：
+///   * 单名歌手 → 名字直接可点，跳歌手主页；
+///   * 多名歌手 → **原生 Menu** 弹出歌手清单，选谁跳谁，label 显示「A / B」；
+///   * 专辑名独立可点（下划线），跳专辑详情。
+///
+/// ⚠️ 跳转不是就地 push：播放页是 fullScreenCover，自己不在导航栈里。
+///   这里只把请求交给 `NowPlayingNavigator`，由 `MainTabView` 关掉播放页后再 push。
 struct NowPlayingTrackDestinationLinks: View {
     let track: Track
     let font: Font
     let color: Color
-    let onOpenDestination: (Destination) -> Void
+    let onOpenDestination: (NowPlayingDestination) -> Void
 
     init(track: Track,
          font: Font,
          color: Color,
-         onOpenDestination: @escaping (Destination) -> Void) {
+         onOpenDestination: @escaping (NowPlayingDestination) -> Void) {
         self.track = track
         self.font = font
         self.color = color
         self.onOpenDestination = onOpenDestination
     }
 
+    private var artists: [ArtistRef] {
+        track.artists.filter { !$0.name.isEmpty }
+    }
+
+    /// 可跳转的歌手（id / mid 至少有一个可用）。
+    private var clickableArtists: [(artist: ArtistRef, destination: NowPlayingDestination)] {
+        artists.compactMap { artist in
+            NowPlayingDestination.artist(from: track, artist: artist)
+                .map { (artist, $0) }
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 6) {
-            // 艺术家
-            ForEach(track.artists, id: \.id) { artist in
+        HStack(spacing: 4) {
+            artistsArea
+
+            if let album = NowPlayingDestination.album(from: track) {
+                if !artists.isEmpty {
+                    Text("—")
+                        .font(font)
+                        .foregroundStyle(color.opacity(0.75))
+                }
                 Button {
-                    let summary = ArtistSummary(
-                        id: artist.id,
-                        name: artist.name,
-                        picUrl: nil,
-                        sourcePlatform: track.sourcePlatform,
-                        singerMid: artist.singerMid
-                    )
-                    if let mid = artist.singerMid {
-                        onOpenDestination(.artistWithMid(artist.id, mid, summary))
-                    } else {
-                        onOpenDestination(.artist(artist.id))
-                    }
+                    onOpenDestination(album)
                 } label: {
-                    Text(artist.name)
+                    Text(track.album.name)
                         .font(font)
                         .foregroundStyle(color)
+                        .underline()
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("打开专辑：\(track.album.name)")
             }
-
-            if !track.artists.isEmpty {
-                Text("·")
-                    .font(font)
-                    .foregroundStyle(.secondary.opacity(0.6))
-            }
-
-            // 专辑
-            Button {
-                let summary = AlbumSummary(
-                    id: track.album.id,
-                    name: track.album.name,
-                    picUrl: track.album.picUrl,
-                    sourcePlatform: track.sourcePlatform,
-                    albumMid: track.album.albumMid
-                )
-                if let mid = track.album.albumMid {
-                    onOpenDestination(.albumWithMid(track.album.id, mid, summary))
-                } else {
-                    onOpenDestination(.album(track.album.id))
-                }
-            } label: {
-                Text(track.album.name)
-                    .font(font)
-                    .foregroundStyle(.secondary)
-                    .underline()
-            }
-            .buttonStyle(.plain)
         }
         .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private var artistsArea: some View {
+        let clickable = clickableArtists
+
+        if artists.isEmpty {
+            Text(track.artistNames)
+                .font(font)
+                .foregroundStyle(color)
+        } else if clickable.count > 1 {
+            // 多名可跳转歌手 → 原生菜单选一个（与播放器三点菜单同一种弹窗）
+            Menu {
+                ForEach(Array(clickable.enumerated()), id: \.offset) { item in
+                    Button(item.element.artist.name) {
+                        onOpenDestination(item.element.destination)
+                    }
+                }
+            } label: {
+                Text(artists.map(\.name).joined(separator: " / "))
+                    .font(font)
+                    .foregroundStyle(color)
+            }
+            .accessibilityLabel("选择歌手")
+        } else if let only = clickable.first {
+            // 单个可跳转歌手 → 直接点
+            Button {
+                onOpenDestination(only.destination)
+            } label: {
+                Text(artists.map(\.name).joined(separator: " / "))
+                    .font(font)
+                    .foregroundStyle(color)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开歌手：\(only.artist.name)")
+        } else {
+            Text(artists.map(\.name).joined(separator: " / "))
+                .font(font)
+                .foregroundStyle(color)
+        }
     }
 }

@@ -10,8 +10,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var lxStore = WellLXSourceStore.shared
 
-    @State private var showingQualitySheet = false
-
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
         let value = settings.tabBarBottomOffset
@@ -38,18 +36,15 @@ struct SettingsView: View {
                 }
 
                 Section("音频") {
-                    // 「播放音质」：点击弹出小卡片选择，不再是整页跳转（需求 22）
-                    Button {
-                        showingQualitySheet = true
-                    } label: {
-                        HStack {
-                            Text("播放音质")
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Text(appState.audioQuality.displayName)
-                                .foregroundStyle(.secondary)
+                    // ★ 2026-10-14 用户：「设置播放音质点击之后要和三个点菜单弹窗一样」。
+                    //   改成系统**原生下拉菜单**（Picker + .menu）：点一下直接弹出菜单，
+                    //   不再走底部玻璃卡片 sheet。与 kumone 设置页的「音质」Picker 一致。
+                    Picker("播放音质", selection: $appState.audioQuality) {
+                        ForEach(WellAudioQuality.allCases) { quality in
+                            Text(quality.displayName).tag(quality)
                         }
                     }
+                    .pickerStyle(.menu)
 
                     Toggle("断开蓝牙自动暂停", isOn: $settings.bluetoothAutoPause)
                 }
@@ -136,10 +131,6 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") { dismiss() }
                 }
-            }
-            .sheet(isPresented: $showingQualitySheet) {
-                QualitySelectorSheet()
-                    .environmentObject(appState)
             }
         }
     }
