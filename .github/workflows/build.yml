@@ -11,7 +11,21 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    # ⚠️★ 2026-10-14：从 `macos-26` 换到 `macos-15`。
+    #
+    # 原因：`macos-26` 是 **preview 镜像**，运行器池很小 —— 今天连续三次 run
+    # （#174 / #178 两轮）的作业**排队整整 15 分钟后被直接取消**，steps 列表为空
+    # （= 从未被分配运行器），而 GitHub 状态页全绿、仓库是公开仓库（Actions 免费
+    # 无额度限制）。即：不是编译失败，也不是我们的代码问题，是拿不到机器。
+    #
+    # 为什么换 macos-15 不会丢 iOS 26 SDK：
+    #   * 我们下面「Select Xcode」是取 `/Applications/Xcode_*.app` 里**最新**的一个；
+    #   * 镜像 macos-15（20260824.0482.1）已安装 Xcode **26.3 / 26.2 / 26.1.1 / 26.0.1**
+    #     （默认是 16.4，但会被上面的「取最新」覆盖成 26.3）；
+    #   * 因此 `#available(iOS 26.0, *)` 那些 API（tabViewBottomAccessory /
+    #     tabBarMinimizeBehavior / Tab(role: .search)）照样编得过。
+    # 而 macos-15 是 GA 正式镜像，池子大得多 -> 几乎不会卡在排队。
+    runs-on: macos-15
     timeout-minutes: 40
 
     steps:
@@ -46,7 +60,7 @@ jobs:
           done
 
       # 1) 单元测试：验证播放器移植的常量/几何/派生逻辑（各平台映射含音质档位）
-      #    注意：macos-26 runner 上模拟器机型随 Xcode 版本变化（当前无 iPhone 16，只有 16e/17 系），
+      #    注意：runner 上模拟器机型随 Xcode 版本变化（当前无 iPhone 16，只有 16e/17 系），
       #    因此不硬编码机型名，改为自动挑第一个可用的 iPhone 模拟器（优先 16 系）。
       - name: Run unit tests
         run: |
