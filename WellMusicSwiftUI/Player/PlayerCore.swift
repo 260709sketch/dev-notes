@@ -143,6 +143,9 @@ final class PlayerCore: NSObject, ObservableObject {
     private override init() {
         super.init()
         AudioSessionManager.configure()
+        // 老 API 补充注册（现代 iOS 下为幂等空操作）：部分版本对非 AVPlayer 内核
+        // 的后台遥控注册更保守，留着无害（2026-10-14 「控制中心不显示」加固项）。
+        _ = UIApplication.shared.beginReceivingRemoteControlEvents()
         engine.start()
         engine.onTrackEnded = { [weak self] reason in
             Task { @MainActor in self?.handleTrackEnded(reason) }
@@ -560,6 +563,16 @@ final class PlayerCore: NSObject, ObservableObject {
         if rendering != isRenderingAudio {
             isRenderingAudio = rendering
         }
+        // ★ 音频会话守卫（2026-10-14 加固）：mpv 的 AudioUnit 音频输出在初始化 /
+        //   seek / 重建时可能把会话类别改跑（或缺 options 的旧代码路径残留）；
+        //   只要类别不是 `.playback`，系统就不把本 App 当「媒体播放」——
+        //   控制中心/锁屏整块不出现。每 tick 廉价巡检（一次属性读），
+        //   一跑偏立刻拉回并补写 NowPlaying；若因会话忙拉回失败，下一 tick 自动重试。
+        let session = AVAudioSession.sharedInstance()
+        if session.category != .playback {
+            AudioSessionManager.activate()
+            updateNowPlaying()
+        }
         // ★ 音频真正开始渲染的那一刻（上升沿）重新激活会话并补写 NowPlaying：
         //   mpv 的音频输出链路可能在 updateNowPlaying 之后才异步初始化（甚至
         //   重置会话类别），而「有声音可闻」才是控制中心认账的时刻 —— 在这里
@@ -643,6 +656,17 @@ final class PlayerCore: NSObject, ObservableObject {
 
     private func setupRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
+        // ★ 显式启用全部命令（2026-10-14 加固，「控制中心不显示」排查项之一）。
+        //
+        // 只 addTarget 不显式 isEnabled = true 时，部分 iOS 版本会把命令视为
+        // 「未启用」—— 系统据此判定 App 不提供媒体控制，控制中心的播放卡片
+        // 整块不出现。addTarget 与 isEnabled 两道都要有。
+        center.playCommand.isEnabled = true
+        center.pauseCommand.isEnabled = true
+        center.togglePlayPauseCommand.isEnabled = true
+        center.nextTrackCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
             self?.resume(); return .success
         }
