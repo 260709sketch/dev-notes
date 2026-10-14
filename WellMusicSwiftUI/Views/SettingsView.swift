@@ -95,12 +95,6 @@ struct SettingsView: View {
                         Text("1.0.0 (SwiftUI)")
                             .foregroundStyle(.secondary)
                     }
-                    // 播放诊断（2026-10-14）：控制中心 / 掉帧排查面板
-                    NavigationLink {
-                        WellPlayerDiagnosticsView()
-                    } label: {
-                        Label("播放诊断", systemImage: "stethoscope")
-                    }
                 }
             }
             .navigationTitle("设置")

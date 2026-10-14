@@ -14,8 +14,6 @@ struct MainTabView: View {
 
     /// 底部栏位置微调（设置页「界面 → 底部栏位置」；正 = 更靠下、负 = 更靠上）。
     @AppStorage("wellmusic.tabbar.bottomOffset") private var tabBarBottomOffset: Double = 0
-    /// 悬浮帧率徽章（「播放诊断」页里开启；排障用）。
-    @AppStorage("wellmusic.debug.fpsOverlay") private var fpsOverlay = false
 
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
@@ -34,13 +32,6 @@ struct MainTabView: View {
     var body: some View {
         tabInterface
             .modifier(HiddenChromeBackgroundModifier())
-            .overlay(alignment: .bottomTrailing) {
-                if fpsOverlay {
-                    FPSBadge()
-                        .padding(.trailing, 14)
-                        .padding(.bottom, 150)   // 底栏（dock+迷你播放器）上方
-                }
-            }
             .overlay(alignment: .top) { WellToastView() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })

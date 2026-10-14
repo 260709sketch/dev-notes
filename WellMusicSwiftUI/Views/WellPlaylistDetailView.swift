@@ -125,6 +125,9 @@ struct WellPlaylistDetailView: View {
         // 「把导航栏弄回来，撇掉现在自己做的返回按钮」）。
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
+        // 导航栏材质（用户 2026-10-14 要求）：进入页面即为**毛玻璃**（系统 chrome 材质），
+        // 不是滚动边缘的透明态 —— `.visible` 让标准背景（模糊玻璃）常显。
+        .toolbarBackground(.visible, for: .navigationBar)
         .overlay {
             if isLoading && tracks.isEmpty {
                 ProgressView()

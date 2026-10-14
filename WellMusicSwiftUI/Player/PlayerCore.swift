@@ -477,10 +477,6 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 20Hz 全速自愈会在类别持续偏离时反复打断音频会话 → 卡顿掉帧）
     private var lastSessionGuardAt: TimeInterval = 0
 
-    /// 诊断：「播放诊断」页展示的会话守卫自愈统计。
-    private(set) var sessionGuardHealCount = 0
-    private(set) var lastSessionGuardHealAt: Date?
-
     /// 上次断流自动恢复的时刻（冷却防死循环）
     private var lastAutoReloadAt: TimeInterval = 0
 
@@ -584,8 +580,6 @@ final class PlayerCore: NSObject, ObservableObject {
             let now = Date().timeIntervalSinceReferenceDate
             if session.category != .playback, now - lastSessionGuardAt > 5 {
                 lastSessionGuardAt = now
-                sessionGuardHealCount += 1
-                lastSessionGuardHealAt = Date()
                 PlayerDiag.log("音频会话类别巡检发现偏离（\(session.category.rawValue)）→ 拉回 playback")
                 AudioSessionManager.activate()
                 updateNowPlaying()
@@ -598,10 +592,6 @@ final class PlayerCore: NSObject, ObservableObject {
         if rendering, !wasRenderingAudio {
             AudioSessionManager.activate()
             updateNowPlaying()
-            // ★ 竞态保险（2026-10-14 控制中心排查）：会话激活与 NowPlaying 首写
-            //   可能与系统「认定本 App 为 Now Playing 应用」的判定存在时序竞争 ——
-            //   起播后 1s / 3s 各再补写一次（幂等操作，代价一条属性字典写入）。
-            scheduleNowPlayingRepushes()
         }
         wasRenderingAudio = rendering
         // isPlaying 以引擎真实状态校正（例如系统打断 / 音频路由变化导致的暂停）
@@ -675,17 +665,6 @@ final class PlayerCore: NSObject, ObservableObject {
     }
 
     // MARK: NowPlaying + 远程控制
-
-    /// 起播后 1s / 3s 各补写一次 NowPlaying（仍为同一首歌时）——见 tick 上升沿说明。
-    private func scheduleNowPlayingRepushes() {
-        let key = currentItem?.keyOf
-        for delay in [1.0, 3.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, self.hasActiveTrack, self.currentItem?.keyOf == key else { return }
-                self.updateNowPlaying()
-            }
-        }
-    }
 
     private func setupRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
