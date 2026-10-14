@@ -169,31 +169,44 @@ struct WellPlaylistDetailView: View {
             .allowsHitTesting(false)
     }
 
-    // MARK: - 全宽大封面
+    // MARK: - 封面（两版式，设置可切换）
 
-    /// 全宽方图封面；**下段渐隐**（下半段起 → 底边）溶解进背后的封面主色底 ——
-    /// 参考实拍的关键观感：封面下半段渐渐「化开」蔓延到整页，不是底边一刀切。
+    /// 封面版式（设置 → 界面 →「歌单封面样式」；默认新版居中留白）。
+    @AppStorage("wellmusic.playlist.coverStyle") private var coverStyle: WellPlaylistCoverStyle = .centered
+
+    /// 封面两版式（2026-10-14 用户设计稿 IMG_3955）：
+    /// * `.centered`（新版，默认）：**居中留白**方图 —— 尺寸量自设计稿
+    ///   （885×1920 @2.06x）：边长 = 屏宽 × 0.708 ≈ 304pt（左右留白各 ≈14.3%），
+    ///   顶距导航栏下缘 ≈57pt，干净方图直落背景（无任何渐隐）；
+    /// * `.fullWidth`（旧版，设置可切回）：上顶全宽方图 + 下段渐隐融进主色底。
+    @ViewBuilder
     private var heroCover: some View {
-        WellRemoteImage(url: headerCoverURL, displaySize: 720)
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
-            .clipped()
-            .mask(
-                LinearGradient(
-                    stops: [
-                        // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
-                        // （用户 2026-10-14：「顶部也加一点蔓延往上，避免往上推露出没加」）
-                        .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.06),
-                        // 主体保持全清晰 —— 参考实拍里封面人像从头到脚都是锐利的，
-                        // 之前 0.55 起渐隐会把「人身挡住好多」（用户 2026-10-14 纠错）
-                        .init(color: .black, location: 0.86),
-                        // 最底部一小段收进主色底，底沿无硬线
-                        .init(color: .clear, location: 1.0),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom)
-            )
+        switch coverStyle {
+        case .centered:
+            WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                .frame(width: ScreenAdapter.w(304), height: ScreenAdapter.w(304))
+                .clipped()
+                .frame(maxWidth: .infinity)
+                .padding(.top, 57)
+        case .fullWidth:
+            WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fit)
+                .clipped()
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.06),
+                            // 主体保持全清晰；最底部一小段收进主色底，底沿无硬线
+                            .init(color: .black, location: 0.86),
+                            .init(color: .clear, location: 1.0),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                )
+        }
     }
 
     // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
@@ -215,7 +228,9 @@ struct WellPlaylistDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 18)
+        // 新版居中版式：封面与标题之间大留白（设计稿量得 ≈88pt，减去文字行高上沿）；
+        // 旧版维持原 18pt。
+        .padding(.top, coverStyle == .centered ? 82 : 18)
         .padding(.bottom, 16)
     }
 

@@ -203,6 +203,24 @@ enum WellDailyCardStyle: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - WellPlaylistCoverStyle
+/// 歌单/专辑详情页的封面版式（用户 2026-10-14 设计稿新增，设置里可切换）。
+enum WellPlaylistCoverStyle: String, CaseIterable, Identifiable {
+    /// 新版（设计稿默认）：封面居中、左右留白，标题与封面之间大留白。
+    case centered
+    /// 旧版：封面上顶全宽，下段渐隐融进主色底。
+    case fullWidth
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .centered: return "居中留白"
+        case .fullWidth: return "全宽铺满"
+        }
+    }
+}
+
 // MARK: - NowPlayingMode
 /// 「正在播放」页的形态。回迁自 Kumone / wellam 的 NowPlayingMode。
 ///
@@ -273,6 +291,9 @@ final class SettingsManager: ObservableObject {
 
     /// 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡样式（封面方卡 / 经典横卡）
     @AppStorage("wellmusic.discover.dailyCardStyle") var dailyCardStyle: WellDailyCardStyle = .cover
+
+    /// 歌单/专辑详情页封面样式（2026-10-14 用户设计稿：默认新版居中留白，旧版全宽可切回）。
+    @AppStorage("wellmusic.playlist.coverStyle") var playlistCoverStyle: WellPlaylistCoverStyle = .centered
 
     // MARK: - Lyrics
 

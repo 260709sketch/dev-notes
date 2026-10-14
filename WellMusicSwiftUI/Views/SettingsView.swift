@@ -76,6 +76,14 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.navigationLink)
 
+                    // 歌单封面样式（2026-10-14 用户设计稿：新版居中留白 / 旧版全宽铺满）
+                    Picker("歌单封面样式", selection: $settings.playlistCoverStyle) {
+                        ForEach(WellPlaylistCoverStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+
                     // 底部栏（dock + 迷你播放器）纵向位置自由微调（2026-10-14 用户要求）
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
