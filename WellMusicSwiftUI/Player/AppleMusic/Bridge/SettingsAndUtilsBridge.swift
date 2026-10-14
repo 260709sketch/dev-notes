@@ -263,16 +263,16 @@ final class SettingsManager: ObservableObject {
     /// 应用外观主题（深色 / 浅色 / 跟随系统）
     @AppStorage("wellmusic.appTheme") var appTheme: WellAppTheme = .system
 
+    // MARK: - 底部栏
+
+    /// 底部栏（dock + 迷你播放器）纵向位置微调（pt；正 = 更靠下）。
+    /// 基准位置在 `MainTabView`（距屏幕底 42pt），本值在其上叠加。
+    @AppStorage("wellmusic.tabbar.bottomOffset") var tabBarBottomOffset: Double = 0
+
     // MARK: - 发现页
 
     /// 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡样式（封面方卡 / 经典横卡）
     @AppStorage("wellmusic.discover.dailyCardStyle") var dailyCardStyle: WellDailyCardStyle = .cover
-
-    // MARK: - 底部栏
-
-    /// 底部栏（dock + 迷你播放器）纵向位置微调（pt；正 = 更靠下）。
-    /// 基准位置在 `MainTabView`（距屏幕底 16pt），本值在其上叠加。
-    @AppStorage("wellmusic.tabbar.bottomOffset") var tabBarBottomOffset: Double = 0
 
     // MARK: - Lyrics
 

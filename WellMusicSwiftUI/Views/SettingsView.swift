@@ -84,7 +84,7 @@ struct SettingsView: View {
                             Text(tabBarOffsetText)
                                 .foregroundStyle(.secondary)
                         }
-                        Slider(value: $settings.tabBarBottomOffset, in: -20...24, step: 2)
+                        Slider(value: $settings.tabBarBottomOffset, in: -30...30, step: 2)
                     }
                 }
 

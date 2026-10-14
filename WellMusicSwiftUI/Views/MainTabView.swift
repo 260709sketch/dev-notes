@@ -120,11 +120,11 @@ struct MainTabView: View {
                 // iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏
                 WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
             }
-            // 位置按参考实拍标定（2026-10-14 用户：原位置太靠上）：
-            // 以**屏幕底**为基准、距底 16pt（与 Apple Music 的底栏落点一致），
-            // 再叠加设置页的「底部栏位置」微调值（正 = 更靠下）。
+            // 位置（2026-10-14 用户标定）：以**屏幕底**为基准、距底 **42pt**
+            //（在 16pt 基础上按用户要求整体**上移 26px**），再叠加设置页
+            //「底部栏位置」的微调值（正 = 更靠下、负 = 更靠上）。
             // （ignoresSafeArea 让基准不再受底部安全区影响；两种语义下都稳定成立。）
-            .padding(.bottom, 16 + CGFloat(tabBarBottomOffset))
+            .padding(.bottom, 42 + CGFloat(tabBarBottomOffset))
             .ignoresSafeArea(edges: .bottom)
             .id("well.bottomDock")
         }

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// 歌单 / 专辑 / 歌手详情页 —— 页面结构按 Apple Music 专辑页样式，代码按本项目重写。
 ///
@@ -121,9 +120,9 @@ struct WellPlaylistDetailView: View {
             //   只强制 content 的配色方案，不影响系统导航栏。
             .environment(\.colorScheme, coverIsDark == true ? .dark : systemScheme)
         }
-        // 系统导航栏（2026-10-14 用户要求加回）：标题 + 返回键 + 左滑返回全部回归原生；
-        // 曾经的「隐藏导航栏 + 悬浮磨砂返回钮 + SwipeBackEnabler 左滑桥」整套替换方案
-        // 已全部移除（悬浮钮定位、手势恢复都不再需要）。
+        // 系统导航栏（2026-10-14 用户要求）：标题 + 标准返回键 + 左滑返回全部原生；
+        // 曾经的「隐藏导航栏 + 自绘悬浮返回钮」方案已整体移除（用户 2026-10-14：
+        // 「把导航栏弄回来，撇掉现在自己做的返回按钮」）。
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
@@ -159,91 +158,39 @@ struct WellPlaylistDetailView: View {
     @State private var coverIsDark: Bool?
     /// 封面主色纯色铺底（取色完成前用系统底色兜底）。
     @State private var coverBackdropColor: Color?
-    /// 封面**底部条带**的平均色（背景顶端过渡带用，见 backdropLayer）。
-    @State private var coverEdgeColor: Color?
 
-    /// 背景层：封面主色纯色铺底 + 顶端「封面底边同色」过渡带。
-    ///
-    /// 过渡带是「自然」的关键（2026-10-14 第二轮实机反馈「接缝太丑」）：
-    /// 若背景只是一个与封面底边无关的纯色，深色封面（如人物）淡进浅色底时，
-    /// 接缝处会出现一条浑浊的「泥带」。把背景顶部先染成**封面底部条带的
-    /// 同一颜色**（位置≈封面下缘 53% 屏高处）、再向下渐回主色 —— 接缝两侧
-    /// 颜色一致，封面「化开」进背景的过程就顺了。
+    /// 背景层：封面主色纯色铺满全屏（垫在最底、不随滚动）。
     private var backdropLayer: some View {
-        ZStack(alignment: .top) {
-            (coverBackdropColor ?? Color(uiColor: .systemBackground))
-                .ignoresSafeArea()
-            if let edgeColor = coverEdgeColor {
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.42),
-                        .init(color: edgeColor, location: 0.53),
-                        .init(color: .clear, location: 0.86),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom)
-                    .ignoresSafeArea()
-            }
-        }
-        .allowsHitTesting(false)
+        (coverBackdropColor ?? Color(uiColor: .systemBackground))
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 
     // MARK: - 全宽大封面
 
-    /// 全宽方图封面：主体全清晰，**底部约 15% 做递进模糊**自然融进主色底。
-    ///
-    /// 2026-10-14 用户指定参考「AMLL 的递进模糊」（实地核查 AMLL 源码：歌词行做
-    /// 逐行 CSS blur —— 未唱的行 5px、已唱的行随距离递增、当前行 0，拖动时全关），
-    /// 比「整段渐隐成纯色」自然。SwiftUI 无原生「空间渐变模糊」，这里用
-    /// **多档模糊带叠层**实现等价效果：同图复制 4 份、各自不同 radius、
-    /// 用交叠窗口的渐变遮罩只露出自己那一段 —— 自浅到深连续过渡。
+    /// 全宽方图封面；**下段渐隐**（下半段起 → 底边）溶解进背后的封面主色底 ——
+    /// 参考实拍的关键观感：封面下半段渐渐「化开」蔓延到整页，不是底边一刀切。
     private var heroCover: some View {
-        ZStack(alignment: .top) {
-            // ① 清晰主体（顶部 6% 渐入防上推硬边；约 80% 后交给模糊带）
-            coverImage
-                .mask(coverMask([
-                    .init(color: .clear, location: 0),
-                    .init(color: .black, location: 0.06),
-                    .init(color: .black, location: 0.80),
-                    .init(color: .clear, location: 0.90),
-                ]))
-            // ② 递进模糊带（半径 4 → 22，窗口交叠 → 连续无台阶；2026-10-14 二轮反馈后整体调柔）
-            coverImage.blur(radius: 4).mask(coverMask([
-                .init(color: .clear, location: 0.78),
-                .init(color: .black, location: 0.84),
-                .init(color: .black, location: 0.88),
-                .init(color: .clear, location: 0.93),
-            ]))
-            coverImage.blur(radius: 8).mask(coverMask([
-                .init(color: .clear, location: 0.85),
-                .init(color: .black, location: 0.90),
-                .init(color: .black, location: 0.93),
-                .init(color: .clear, location: 0.965),
-            ]))
-            coverImage.blur(radius: 14).mask(coverMask([
-                .init(color: .clear, location: 0.90),
-                .init(color: .black, location: 0.945),
-                .init(color: .black, location: 0.965),
-                .init(color: .clear, location: 0.99),
-            ]))
-            coverImage.blur(radius: 22).mask(coverMask([
-                .init(color: .clear, location: 0.95),
-                .init(color: .black, location: 0.98),
-                .init(color: .black, location: 1.0),
-            ]))
-        }
-    }
-
-    /// 封面图本体（各模糊带共用同一份缓存图，只多付 4 次静态模糊的 GPU 代价）。
-    private var coverImage: some View {
         WellRemoteImage(url: headerCoverURL, displaySize: 720)
             .frame(maxWidth: .infinity)
             .aspectRatio(1, contentMode: .fit)
             .clipped()
-    }
-
-    private func coverMask(_ stops: [Gradient.Stop]) -> LinearGradient {
-        LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
+                        // （用户 2026-10-14：「顶部也加一点蔓延往上，避免往上推露出没加」）
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.06),
+                        // 主体保持全清晰 —— 参考实拍里封面人像从头到脚都是锐利的，
+                        // 之前 0.55 起渐隐会把「人身挡住好多」（用户 2026-10-14 纠错）
+                        .init(color: .black, location: 0.86),
+                        // 最底部一小段收进主色底，底沿无硬线
+                        .init(color: .clear, location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom)
+            )
     }
 
     // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
@@ -503,47 +450,10 @@ struct WellPlaylistDetailView: View {
         guard let image = await WellImageCache.shared.image(for: url) else { return }
         let boosted = Self.saturated(image.dominantColor(), factor: 1.25)
         let adjusted = Self.lightnessAdjusted(boosted)
-        // 底部条带色**不做明度/饱和调整** —— 它的职责是与封面底边像素一致，
-        // 让「封面 → 背景」的接缝两侧同色（见 backdropLayer 的说明）。
-        let edge = Self.bottomBandColor(of: image)
         withAnimation(.easeInOut(duration: 0.25)) {
             coverBackdropColor = Color(uiColor: adjusted)
-            coverEdgeColor = edge.map { Color(uiColor: $0) }
         }
         coverIsDark = Self.luminance(of: adjusted) < 0.5
-    }
-
-    /// 封面**底部条带**（底约 18%）的平均色 —— 背景过渡带与封面底边对齐用。
-    ///
-    /// ⚠️ 字节序：`premultipliedLast` 的内存布局是 **RGBA**（r 在 `data[i]`）——
-    /// 与 AppTheme.dominantColor 的修复保持一致，勿写反。
-    /// ⚠️ 方向：CGBitmapContext 内存第 0 行 = 图像**顶部**，底部条带取最后 6 行。
-    private static func bottomBandColor(of image: UIImage) -> UIColor? {
-        guard let cgImage = image.cgImage else { return nil }
-        let size = 32
-        var data = [UInt8](repeating: 0, count: size * size * 4)
-        guard let ctx = CGContext(
-            data: &data, width: size, height: size, bitsPerComponent: 8,
-            bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-        ctx.interpolationQuality = .low
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
-        var totalR = 0.0, totalG = 0.0, totalB = 0.0, count = 0
-        for y in 26..<size {
-            for x in 0..<size {
-                let i = (y * size + x) * 4
-                totalR += Double(data[i])
-                totalG += Double(data[i + 1])
-                totalB += Double(data[i + 2])
-                count += 1
-            }
-        }
-        guard count > 0 else { return nil }
-        return UIColor(red: CGFloat(totalR / Double(count) / 255.0),
-                       green: CGFloat(totalG / Double(count) / 255.0),
-                       blue: CGFloat(totalB / Double(count) / 255.0),
-                       alpha: 1)
     }
 
     /// 提饱和度（HSB 途径；失败时原样返回）。

@@ -1,7 +1,6 @@
 import AVFoundation
 import MediaPlayer
 import SwiftUI
-import UIKit
 
 /// 音频会话配置（后台播放 + 锁屏控制）。
 ///
@@ -568,7 +567,7 @@ final class PlayerCore: NSObject, ObservableObject {
         if rendering != isRenderingAudio {
             isRenderingAudio = rendering
         }
-        // ★ 音频会话守卫（2026-10-14 加固 + 限频修复）：
+        // ★ 音频会话守卫（加固 + 限频修复）：
         //   mpv 的 AudioUnit 音频输出在初始化 / seek / 重建时可能把会话类别改跑，
         //   类别不是 `.playback` 时系统不认「媒体播放」——控制中心/锁屏不出现。
         //
