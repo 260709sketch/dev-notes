@@ -147,13 +147,16 @@ struct AppleMusicPlayerView: View {
         // 薄壳只负责 `content.offset(y:)`，而 `content`（`playerCanvas`）是
         // **构造好的既有视图值**，拖拽期间不会被重新求值 —— 位移变化只重算
         // 薄壳自己的 body。这与系统原生播放器的手感一致。
+        // ⚠️ 这里必须写成 `content:` 具名参数，**不能**用尾随闭包：
+        //    `content` 是已求值的视图值（`Content`），不是 `() -> Content`
+        //    闭包。写成尾随闭包会让编译器尝试把闭包本身当作 `Content`，
+        //    报 `type '() -> some View' cannot conform to 'View'`。
         PlayerDismissDragContainer(
             driver: dismissDriver,
             onDismiss: onDismiss,
-            isEnabled: !showLyrics
-        ) {
-            playerCanvas
-        }
+            isEnabled: !showLyrics,
+            content: playerCanvas
+        )
     }
 
     /// 播放页内容本体（不含下滑关闭的跟手位移，那部分在薄壳里）。
