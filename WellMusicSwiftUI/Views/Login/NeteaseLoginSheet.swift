@@ -205,7 +205,7 @@ struct NeteaseLoginSheet: View {
     }
 
     private var sheetBackground: some View {
-        // sheet 底色跟主页面同一套条件色（kumone 写法），避免与系统 sheet 融合时出现色差
+        // sheet 底色跟主页面同一套条件色，避免与系统 sheet 融合时出现色差
         Group {
             if colorScheme == .dark {
                 Color.black.ignoresSafeArea()

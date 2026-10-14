@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 搜索页设计常量（对齐 kumone 版式）
+/// 搜索页设计常量
 enum WellSearchMetrics {
     static let contentInset: CGFloat = 16
     static let cardSize: CGFloat = 156
@@ -77,7 +77,7 @@ struct WellShelf<Content: View>: View {
     /// 可选副标题（发现页的编辑式说明），透传给分区标题。
     var subtitle: String?
     var action: (() -> Void)?
-    /// 提供时用 `LazyHStack` + 固定行高（kumone Shelf 同款：卡片懒创建，
+    /// 提供时用 `LazyHStack` + 固定行高（卡片懒创建，
     /// 竖向滚动时只实例化可视卡片）。nil 时退回普通 `HStack`。
     var rowHeight: CGFloat?
     /// false 时不渲染分区标题（发现页「每日推荐 / 私人漫游 / 心动模式」货架
@@ -104,7 +104,7 @@ struct WellShelf<Content: View>: View {
     }
 
     // ⚠️ Lazy 栈只有在**外层给了固定行高**时才能安全使用（交叉轴可测）；
-    // 这正是 kumone Shelf 传 rowHeight 的原因 —— 懒加载与不塌陷兼得。
+    // 这正是货架要传 rowHeight 的原因 —— 懒加载与不塌陷兼得。
     @ViewBuilder
     private var cards: some View {
         if let rowHeight {
@@ -128,7 +128,7 @@ struct WellShelf<Content: View>: View {
     }
 }
 
-// MARK: - 卡片上浮进场动画（kumone StaggeredAppearance 同款行为，代码原创）
+// MARK: - 卡片上浮进场动画
 
 /// 卡片首次滚入可视区时从下方 16pt 上浮 + 淡入；同一张卡只播一次
 /// （`AnimationCache` 按 itemID 去重，防止来回滚动反复动画）。

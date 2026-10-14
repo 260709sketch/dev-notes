@@ -44,7 +44,7 @@ enum WellArtworkURL {
 
 /// 两级（内存 + 磁盘）图片缓存，带请求合并。
 ///
-/// 参考 missuo/kumone 的 `ImageCache.swift`：解决 `AsyncImage` 在列表滚动、
+/// 自有两级图片缓存：解决 `AsyncImage` 在列表滚动、
 /// 视图重建时反复发起请求、闪烁占位图，以及 QQ 封面 403 时无缓存兜底的问题。
 ///
 /// - 内存：`NSCache`（线程安全，可直接跨 actor 读取）

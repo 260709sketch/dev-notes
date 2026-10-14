@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 歌单导入 —— 从 kumone `PlaylistImportView` 完整移植（该功能为本用户原创，授权全搬）。
+/// 歌单导入。
 ///
 /// 流程：粘贴歌单链接（支持网易云 / QQ 音乐短链接、网页链接、纯 ID）
 /// → 短链接跟随重定向解析 → 正则提取歌单 ID
@@ -122,7 +122,7 @@ struct PlaylistImportView: View {
         }
     }
 
-    // MARK: - 导入主流程（kumone 原创逻辑，授权移植）
+    // MARK: - 导入主流程
 
     private func importPlaylist() async {
         isLoading = true

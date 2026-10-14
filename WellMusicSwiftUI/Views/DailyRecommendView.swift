@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 每日推荐列表页 —— 对齐 kumone `DailySongsView` 的结构与观感，代码原创。
+/// 每日推荐列表页。
 ///
 /// 结构：顶部大封面 header（首曲封面 + 底部渐变 + 日期/标题/副标题 + 播放全部胶囊）
 /// → 歌曲列表（`WellSearchTrackRow`）。

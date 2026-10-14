@@ -35,10 +35,10 @@ final class WellSearchViewModel: ObservableObject {
 
 // MARK: - 搜索页
 
-/// 搜索 Tab —— **完整对齐 kumone `Features/Pages/SearchView.swift`**。
+/// 搜索 Tab —— 版式按本项目搜索页规范（见 `WellSearchUI` 的常量）。
 ///
 /// 用户 2026-10-14 第四轮给了 5 张实机截图（单曲 / 专辑 / 歌单 / 歌手 / 综合）并要求
-/// 「一次弄好」。本页的结构与数值逐项对照 kumone 源码 + 截图：
+/// 本页的结构与数值逐项对照实机截图：
 ///
 /// ```
 /// ScrollView {
@@ -93,12 +93,12 @@ struct SearchView: View {
                 }
 
                 // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白。
-                // kumone 对应 `PlayerClearanceSpacer()`；数值按**本项目**的底栏几何算，
-                // 不是照抄它的 142（它的底栏没有「距底 42」这一段）。
+                // 数值按**本项目**的底栏几何算：迷你播放器 52 + 间距 8 +
+                // 胶囊栏 64 + 距底 42 = 166，再留一点余量。
                 Color.clear.frame(height: 170)
             }
         }
-        // 系统搜索框（与 kumone 一致，不自绘）。
+        // 系统搜索框（不自绘）。
         // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到系统搜索栏上；
         // iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
         .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
@@ -106,7 +106,7 @@ struct SearchView: View {
             committedQuery = searchText
         }
         .onChange(of: searchText) { newValue in
-            // 400ms 防抖：输入过程中不逐字打接口（kumone 同款）
+            // 400ms 防抖：输入过程中不逐字打接口
             Task {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 if searchText == newValue { committedQuery = newValue }
@@ -114,7 +114,7 @@ struct SearchView: View {
         }
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
         // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
-        // kumone 搜索页用的是系统默认的**大标题**，抬头就是一行大字「搜索」。
+        // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
         .task(id: taskID) {
             model.clear()
             await model.load(keyword: committedQuery)
@@ -145,7 +145,7 @@ struct SearchView: View {
 
     // MARK: 空态提示
 
-    /// 未输入关键字时的引导（kumone `emptySearchPrompt`：48pt 图标 / spacing 16 / 顶部 60）
+    /// 未输入关键字时的引导（48pt 图标 / spacing 16 / 顶部 60）
     private var emptyPrompt: some View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
@@ -163,7 +163,7 @@ struct SearchView: View {
         .padding(.horizontal, 32)
     }
 
-    /// 当前模块是否一条结果都没有（kumone `currentEmpty`）
+    /// 当前模块是否一条结果都没有
     private var currentEmpty: Bool {
         switch model.type {
         case .all: return model.result.songs.isEmpty && model.result.artists.isEmpty

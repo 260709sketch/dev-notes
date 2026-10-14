@@ -32,7 +32,7 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
     private static let authCookie = "MUSIC_U"
 
     /// 网易云认这组「客户端标识」，缺了会在部分接口上被当成匿名浏览器请求。
-    /// 与 kumone 一致地带上，属于接口约定而非实现细节。
+    /// 需要一并带上，属于接口约定而非实现细节。
     private static let clientIdentity = ["os": "pc", "appver": "3.1.17"]
 
     @Published private(set) var account: NeteaseAccount?

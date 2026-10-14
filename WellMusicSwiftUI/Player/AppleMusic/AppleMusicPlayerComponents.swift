@@ -6,7 +6,7 @@ import CoreImage.CIFilterBuiltins
 // MARK: - 全局工具
 
 /// 秒数格式化为 m:ss
-func wellamTimeString(_ seconds: Double) -> String {
+func playerTimeText(_ seconds: Double) -> String {
     let total = max(0, Int(seconds))
     return String(format: "%d:%02d", total / 60, total % 60)
 }
@@ -1207,7 +1207,7 @@ struct PlayerSeekBar: View {
                 )
                 .overlay(alignment: .top) {
                     if showBubble {
-                        Text(wellamTimeString(time))
+                        Text(playerTimeText(time))
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 9)
@@ -1223,9 +1223,9 @@ struct PlayerSeekBar: View {
             // 时间行：左「当前时间」/ 右「-剩余时间」
             // （用户明确：播放器界面**不要**显示音质徽章，去掉中间那栏）
             HStack(spacing: 0) {
-                Text(wellamTimeString(time))
+                Text(playerTimeText(time))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text("-" + wellamTimeString(max(0, total - time)))
+                Text("-" + playerTimeText(max(0, total - time)))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .font(.system(size: 11, weight: .regular, design: .monospaced))

@@ -38,7 +38,7 @@ struct SettingsView: View {
                 Section("音频") {
                     // ★ 2026-10-14 用户：「设置播放音质点击之后要和三个点菜单弹窗一样」。
                     //   改成系统**原生下拉菜单**（Picker + .menu）：点一下直接弹出菜单，
-                    //   不再走底部玻璃卡片 sheet。与 kumone 设置页的「音质」Picker 一致。
+                    //   不再走底部玻璃卡片 sheet。
                     Picker("播放音质", selection: $appState.audioQuality) {
                         ForEach(WellAudioQuality.allCases) { quality in
                             Text(quality.displayName).tag(quality)

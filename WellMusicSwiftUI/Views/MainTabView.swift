@@ -270,10 +270,8 @@ struct WellToastView: View {
 /// 也就是**先把播放页关掉**、再把目标 push 进当前 Tab 的导航栈 —— 用户体验上就是
 /// 「点一下歌手名，播放器没了」。
 ///
-/// 现在照 kumone 的做法（`IOSMainWindow.nowPlayingPresentation`）改：
-/// 播放器**自带一个内部 `NavigationStack`**，点歌手 / 专辑直接在播放器里 push，
-/// 播放器不退出；播放器关闭时清空这条内部路径（kumone 的
-/// `.onDisappear { playerNavPath.removeAll() }`）。
+/// 现在改为：播放器**自带一个内部 `NavigationStack`**，点歌手 / 专辑直接在
+/// 播放器里 push，播放器不退出；播放器关闭时清空这条内部路径。
 struct NowPlayingRouterView: View {
     let onDismiss: () -> Void
     @State private var path = NavigationPath()

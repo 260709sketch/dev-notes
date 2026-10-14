@@ -3,7 +3,7 @@ import Foundation
 
 /// 断开音频输出设备（蓝牙耳机 / 有线耳机拔出）时自动暂停播放。
 ///
-/// 对齐 Kumone `PlayerService` 与 RN v90 的 `BluetoothAutoPause.m`：
+/// 蓝牙断开自动暂停：
 /// 监听 `AVAudioSession.routeChangeNotification`，**仅当** reason 为 `.oldDeviceUnavailable`
 /// （旧输出设备不可用，即蓝牙断开或耳机拔出）时触发；切换设备（如插入耳机）不触发。
 ///

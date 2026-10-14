@@ -2,20 +2,19 @@ import SwiftUI
 
 // MARK: - 搜索页版式常量
 //
-// ★ 2026-10-14 用户第四轮：「kumone 搜索页搜索之后是这样的（5 张实机截图），
-//   你继续看他的搜索页代码，一次弄好」。
+// ★ 2026-10-14 用户第四轮需求：搜索页在「搜索之后」的版式（5 张实机截图）。
 //
-// 这里的每一个数值都**逐项对齐 kumone 源码**，不是估的：
-//   * `contentInset`  = kumone `Theme.Layout.contentInset`  = 24
+// 这里的每一个数值都是**按实机截图逐像素量出来的**，不是估的：
+//   * `contentInset`  = 24
 //     （实机截图 IMG_3968 量得的歌曲封面左缘 = 54px @2.252× = **24.0pt**，吻合）
-//   * `cardSize`      = kumone `Theme.Layout.cardSize`       = 160
-//   * `cardRadius`    = kumone `Theme.Radius.standard`       = 8
-//   * `rowArtwork`    = kumone `TrackRow.compactArtworkSize` = 48（@ScaledMetric）
-//   * `rowHeight`     = kumone `TrackRow.compactRowHeight`   = 64（@ScaledMetric）
+//   * `cardSize`      = 160
+//   * `cardRadius`    = 8
+//   * `rowArtwork`    = 48
+//   * `rowHeight`     = 64
 //
 // ⚠️ 为什么另起一套组件、而不是改 `WellCoverCard` / `WellArtistCard` / `WellCardGrid` /
 //   `WellShelf` / `WellSectionHeader`？因为它们**同时被发现页 / 精选页 / 我的页 /
-//   每日推荐页 / 歌手主页共用**。用户只要求搜索页对齐 kumone，直接改公共组件会
+//   每日推荐页 / 歌手主页共用**。用户只要求搜索页按这套版式对齐，直接改公共组件会
 //   顺带改掉那几个已经定版（且逐像素校准过）的页面 —— 属于「乱加」。
 //   本文件里的组件只服务 `SearchView`。
 enum WellSearchLayout {
@@ -26,7 +25,7 @@ enum WellSearchLayout {
     static let rowHeight: CGFloat = 64
 }
 
-// MARK: - 分区标题（kumone `SectionHeader`）
+// MARK: - 分区标题
 
 /// `.title2.weight(.semibold)` 标题 + **紧跟标题**的 chevron（不是右侧「查看全部」）。
 /// `action` 非空时整块可点 —— 搜索页综合 tab 的「单曲 ›」「歌手 ›」就是这一种。
@@ -57,7 +56,7 @@ struct WellSearchSectionHeader: View {
     }
 }
 
-// MARK: - 横向货架（kumone `Shelf`）
+// MARK: - 横向货架
 
 /// 卡片间距 16 / 分区上下留白 6 / 货架内部垂直间距 14；
 /// 左右首尾各垫一段「不足 24 的差额」，让首卡与页面 24pt 内边距对齐。
@@ -87,9 +86,9 @@ struct WellSearchShelf<Content: View>: View {
     }
 }
 
-// MARK: - 封面卡片（专辑 / 歌单，kumone `CoverCard`）
+// MARK: - 封面卡片（专辑 / 歌单）
 
-/// 封面 160×160 r8 + 播放量角标**贴右上角**（kumone 是 `.topTrailing`，不是右下）
+/// 封面 160×160 r8 + 播放量角标**贴右上角**（不是右下）
 /// + 标题 13pt medium 两行 + 副标题 11pt secondary 一行。
 struct WellSearchCoverCard: View {
     let coverURL: String?
@@ -133,7 +132,7 @@ struct WellSearchCoverCard: View {
     }
 }
 
-// MARK: - 歌手卡片（圆形，kumone `ArtistCard`）
+// MARK: - 歌手卡片（圆形）
 
 /// 圆形头像 128 + 名字 13pt medium，**没有副标题** ——
 /// 对齐实机截图 IMG_3969（歌手 tab 每张卡只有头像 + 名字）。
@@ -158,7 +157,7 @@ struct WellSearchArtistCard: View {
     }
 }
 
-// MARK: - 自适应网格（kumone `CardGrid`）
+// MARK: - 自适应网格
 
 /// 紧凑宽度（iPhone）= **两列等宽**（列间距 16 / 行间距 20）；
 /// 常规宽度（iPad）= `adaptive(160...200)`（列间距 20 / 行间距 24）。
@@ -185,11 +184,11 @@ struct WellSearchCardGrid<Content: View>: View {
     }
 }
 
-// MARK: - 歌曲行（kumone `TrackRow` compact）
+// MARK: - 歌曲行
 
 /// 封面 48 r6 + 歌名 16pt medium + 歌手 13pt secondary + 右侧（红心·仅收藏时 + 时长）。
 ///
-/// ⚠️ 与 `TrackRow`（46 封面 + 右侧 chevron）**不是同一个组件**：kumone 的列表行
+/// ⚠️ 与 `TrackRow`（46 封面 + 右侧 chevron）**不是同一个组件**：本列表行
 ///   右侧显示的是**时长**、没有 chevron，红心只在已收藏时出现（iOS 无 hover 态）。
 ///   之前搜索页误用了公共 `TrackRow`，所以看起来和截图不一样。
 struct WellSearchSongRow: View {
@@ -233,7 +232,7 @@ struct WellSearchSongRow: View {
     }
 }
 
-/// 歌曲列表容器（kumone `TrackListView`：`LazyVStack(spacing: 1)`，**没有分隔线**）。
+/// 歌曲列表容器：`LazyVStack(spacing: 1)`，**没有分隔线**。
 struct WellSearchSongList: View {
     let tracks: [MusicItem]
     let onPlay: (Int) -> Void

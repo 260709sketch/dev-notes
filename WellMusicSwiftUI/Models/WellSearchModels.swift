@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 搜索平台 / 模块
 
-/// 搜索页可切换的平台（与 kumone 一致：网易云 / QQ音乐 / 酷狗）
+/// 搜索页可切换的平台（网易云 / QQ音乐 / 酷狗）
 enum WellSearchPlatform: String, CaseIterable, Identifiable {
     case netease = "网易云"
     case qq = "QQ音乐"

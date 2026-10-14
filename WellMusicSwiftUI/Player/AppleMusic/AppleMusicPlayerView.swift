@@ -40,7 +40,9 @@ struct AppleMusicPlayerView: View {
 
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
-    @Environment(\.colorScheme) private var colorScheme
+    /// ⚠️ 本页**不再**直接观察 `\.colorScheme`：只有背景层需要区分深浅色，
+    ///    它已经下沉到 `AppleMusicPlayerBackground` 自己的环境里。
+    ///    留在这一层会让「主题切换」把整个播放页（含 WebView 歌词层）重算一遍。
     /// ⚠️ **不要**在这里 `@ObservedObject AccountStore.shared`。
     ///
     /// 收藏状态只影响「心形图标」这一个叶子节点。若在播放页顶层观察它，
@@ -93,13 +95,12 @@ struct AppleMusicPlayerView: View {
         trackArtistFontSizeRaw > 0 ? CGFloat(trackArtistFontSizeRaw) : 13.5
     }
 
-    /// 整页下滑关闭时，页面跟随手指下移的距离。
+    /// 下滑关闭的驱动盒（引用类型，实例恒定）。
     ///
-    /// 只有**正在拖拽**时才作为 `.offset(y:)` 使用；其余时刻强制为 0，
-    /// 避免旧值残留导致播放器打开时偏移半屏。
-    @State private var dismissDragOffset: CGFloat = 0
-    /// 是否正在执行下滑关闭拖拽。
-    @State private var isDismissDragging = false
+    /// 各个下滑热区把手势翻译成位移写进它，薄壳消费。⚠️ 位移状态**不在本视图上** ——
+    /// 本视图只持有这个不参与 diff 的盒子，所以拖拽期间本页不会重算
+    /// （本页含 WebView 歌词层，每次重算都要重新下发 JS）。详见 `PlayerDismissDragDriver`。
+    @State private var dismissDriver = PlayerDismissDragDriver()
 
     /// 歌词行中线表。
     ///
@@ -136,6 +137,27 @@ struct AppleMusicPlayerView: View {
     }
 
     var body: some View {
+        // ★ 下滑关闭的跟手位移被关进一层**薄壳**（`PlayerDismissDragContainer`）。
+        //
+        // 原因：本页顶层含 `WKWebView`（WebGL 歌词层）。若把「拖动位移」写成
+        // 本视图的 `@State`，拖拽期间每一帧都会让**整个播放页的 body 重算一次**，
+        // 连带 `updateUIView` 也被每帧调用（重新下发 JS、重建触摸处理器）——
+        // 表现就是「下滑不跟手、掉帧、歌词页下滑关闭很难受」。
+        //
+        // 薄壳只负责 `content.offset(y:)`，而 `content`（`playerCanvas`）是
+        // **构造好的既有视图值**，拖拽期间不会被重新求值 —— 位移变化只重算
+        // 薄壳自己的 body。这与系统原生播放器的手感一致。
+        PlayerDismissDragContainer(
+            driver: dismissDriver,
+            onDismiss: onDismiss,
+            isEnabled: !showLyrics
+        ) {
+            playerCanvas
+        }
+    }
+
+    /// 播放页内容本体（不含下滑关闭的跟手位移，那部分在薄壳里）。
+    private var playerCanvas: some View {
         // 不用 GeometryReader，避免 fullScreenCover 动画过程中尺寸不正确导致播放器只展开一半
         let screenSize = UIScreen.main.bounds.size
         let isLandscape = screenSize.width > screenSize.height
@@ -194,9 +216,9 @@ struct AppleMusicPlayerView: View {
                         .zIndex(1)
                 }
             }
-            // 下滑关闭的跟手位移。只有正在拖拽时才生效，
-            // 否则强制 0 —— 免得残留值让播放器打开时偏移半屏。
-            .offset(y: isDismissDragging ? dismissDragOffset : 0)
+            // ⚠️ 这里**不再**写 `.offset(y: 跟手位移)`：位移已上移到薄壳
+            //    `PlayerDismissDragContainer`，避免它每帧让本页（含 WebView）重算。
+            //    详见 `body` 里的说明。
         }
         .ignoresSafeArea()
         // 歌词页面可见时禁用播放器下滑关闭手势，避免和歌词滚动手势冲突
@@ -206,10 +228,9 @@ struct AppleMusicPlayerView: View {
             hideBottomControls = false
         }
         .onAppear {
-            // 复位下滑关闭状态：`fullScreenCover` 的内容视图可能被复用，
-            // 残留的 dragOffset 会让播放器打开时就偏移半屏。
-            dismissDragOffset = 0
-            isDismissDragging = false
+            // 下滑关闭的位移状态改由薄壳 `PlayerDismissDragContainer` 自行复位
+            // （`fullScreenCover` 的内容视图可能被复用，残留位移会让播放器
+            //   打开时就偏移半屏）。
             if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) }
         }
         .onChange(of: track?.id) { _ in if settings.dynamicCoverEnabled { dynamicCover.updateTrack(track) } }
@@ -644,47 +665,32 @@ struct AppleMusicPlayerView: View {
 
     // MARK: - 背景
 
+    /// 背景层的参数装配。
+    ///
+    /// ⚠️ 真正的绘制在独立子视图 `AppleMusicPlayerBackground` 里，**不是**在这里直接铺开。
+    /// 原因：背景层内含 AMLL 的 `WKWebView`（WebGL 歌词层）。若把它直接内联在本视图的
+    /// `body` 中，那么本视图**任何**一次 `body` 重算（进度游标换行、设置变更、
+    /// 切歌词页…）都会重新构造 WebView 的 representable，触发一次 `updateUIView`
+    /// （重新下发 JS / 重建触摸处理器）。滑动歌词时游标频繁换行 → WebView 被反复
+    /// 重新配置，表现为「歌词界面上下滑动很卡」。
+    ///
+    /// 抽成独立子视图后，只要下面这几个参数没变，SwiftUI 就**跳过**该子视图的
+    /// `body` 重算，WebView 完全不受本视图重算的影响。
     @ViewBuilder
     private var playerBackground: some View {
-        let isDark = bgMode == .dark
-        // 压暗/提亮遮罩的强度，由「播放器调整」里的「背景暗度」控制。
-        // 默认 0.48 —— 白字在暗底上清晰，同时封面还留得住细节。
-        let dim = min(max(bgDim, 0), 1)
-        ZStack {
-            // 底层背景：暗色用黑色，浅色用白色
-            (isDark ? Color.black : Color.white)
-                .ignoresSafeArea()
-
-            // 背景层：AMLL 同款「四色流体渐变」（默认）或封面模糊。
-            //
-            // 流体渐变是原生实现（FluidGradientBackground.swift）：只在 ≈48×106 的
-            // 极低分辨率位图上逐帧取色/扭曲/旋转，再由 GPU 拉伸到全屏，
-            // CPU 每帧 < 2ms —— 不会再重演「打开播放器就卡死」。
-            if settings.appleMusicFluidBackground {
-                FluidGradientBackground(url: coverURL)
-                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
-                    .ignoresSafeArea()
-            } else {
-                CoverBlurBackground(url: coverURL, scheme: colorScheme)
-                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
-                    .ignoresSafeArea()
-            }
-
-            // AMLL 歌词只在**展开歌词页时**才创建。
-            //
-            // ⚠️ 关键：这里**不能**写成「常驻 + opacity 控制」。历史上常驻配合
-            // 官方 WebGL 完整页（478KB，带流动背景渲染器）意味着**打开播放器**
-            // 就要加载整页并初始化 WebGL + 跑 GPU 着色器，正是「打开播放器就卡死」
-            // 的直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复「点开
-            // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
-            if settings.appleMusicUseAMLL && showLyrics {
-                AMLLWebLyricsView(useAppleMusicSettings: true)
-                    .ignoresSafeArea()
-                    .padding(.top, ScreenAdapter.h(CGFloat(amllTopPx)))
-                    .padding(.bottom, ScreenAdapter.h(CGFloat(amllBottomPx)))
-                    .padding(.horizontal, ScreenAdapter.w(CGFloat(amllHorizPx)))
-            }
-        }
+        AppleMusicPlayerBackground(
+            isDark: bgMode == .dark,
+            // 压暗/提亮遮罩的强度，由「播放器调整」里的「背景暗度」控制。
+            // 默认 0.48 —— 白字在暗底上清晰，同时封面还留得住细节。
+            dim: CGFloat(min(max(bgDim, 0), 1)),
+            usesFluidBackground: settings.appleMusicFluidBackground,
+            usesAMLL: settings.appleMusicUseAMLL,
+            showsLyrics: showLyrics,
+            coverURL: coverURL,
+            amllTopPadding: ScreenAdapter.h(CGFloat(amllTopPx)),
+            amllBottomPadding: ScreenAdapter.h(CGFloat(amllBottomPx)),
+            amllHorizontalPadding: ScreenAdapter.w(CGFloat(amllHorizPx))
+        )
     }
 
     // MARK: - 封面页
@@ -831,11 +837,14 @@ struct AppleMusicPlayerView: View {
     ///
     /// ★ 从 110 放宽到 95：热区扩大后，用户的预期是「拖过一小段就关」，
     ///   原来的 110 配小热区正是「难触发」体感的来源之一。
-    private static let dismissDistance: CGFloat = 95
+    ///
+    /// ⚠️ `fileprivate`（而非 `private`）：跟手位移的判定在薄壳
+    ///   `PlayerDismissDragContainer` 里，它同文件但不同类型。
+    fileprivate static let dismissDistance: CGFloat = 95
     /// 松手时的**预测**位移阈值：快速轻扫的真实位移可能很小，用预测值补足手感。
     ///
     /// ★ 从 190 放宽到 130：轻扫（位移小、速度快）更容易触发关闭。
-    private static let dismissPrediction: CGFloat = 130
+    fileprivate static let dismissPrediction: CGFloat = 130
 
     /// 顶部的下滑关闭指示条。
     ///
@@ -844,10 +853,9 @@ struct AppleMusicPlayerView: View {
     /// （挂在 `coverPage` 上，封面任意位置都能下滑关闭）——两者是同一套
     /// 关闭逻辑，指示条只负责「看起来能拖」和「拖起来最灵敏」。
     ///
-    /// ⚠️ 这里补的是 Kumone `IOSNowPlayingPresentation` 的缺失一环 ——
-    /// 之前只移植了 `allowsNowPlayingDismiss` 这个环境键，但全项目没有任何地方
-    /// 读它；而播放页是用 `fullScreenCover` 呈现的，系统不提供整页下滑关闭。
-    /// 两者叠加的结果就是「进入播放器后向下滑动退不出来」。
+    /// ⚠️ 播放页是用 `fullScreenCover` 呈现的，系统不提供整页下滑关闭。
+    /// 之前只声明了 `allowsNowPlayingDismiss` 这个环境键，但全项目没有任何地方
+    /// 读它 —— 结果是「进入播放器后向下滑动退不出来」。
     private var dismissIndicator: some View {
         ZStack(alignment: .top) {
             Color.clear
@@ -875,31 +883,24 @@ struct AppleMusicPlayerView: View {
         DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
             .onChanged { value in
                 guard !showLyrics else { return }
-                isDismissDragging = true
-                // 只接受向下拖拽（正值）；向上拖不动页面。
-                // 用 max 夹取：手指拖回起点上方时页面跟随回位到 0，
-                // 而不是停在最后一次的正位移上。
-                dismissDragOffset = max(value.translation.height, 0)
+                // 只接受「向下」且**垂直分量大于水平分量**的拖拽：
+                // 向上拖不动页面，横向滑（比如封面上的左右扫歌）也不该把页面拽下来。
+                let translation = value.translation
+                let isDownward = translation.height > 0
+                    && abs(translation.height) > abs(translation.width)
+                // 位移交给薄壳。它内部用 `max(_, 0)` 夹取，所以手指拖回起点上方时
+                // 页面会跟随回位到 0，而不是停在最后一次的正位移上。
+                dismissDriver.onChanged(isDownward ? translation.height : 0)
             }
             .onEnded { value in
                 guard !showLyrics else { return }
-                let translation = value.translation.height
-                let predicted = value.predictedEndTranslation.height
-                if translation > Self.dismissDistance || predicted > Self.dismissPrediction {
-                    // 关闭时**保持** `isDismissDragging = true`：
-                    // 否则页面会先弹回原位再关闭，视觉上「弹一下」。
-                    onDismiss()
-                } else {
-                    // ★ 修复「松手瞬移 / 掉帧」：`isDismissDragging` 必须放进
-                    // `withAnimation` 块里一起改。之前的写法把它放在块外，
-                    // `.offset(y:)` 的表达式（`isDismissDragging ? dragOffset : 0`）
-                    // 在赋值那一帧就跳变成 0，弹簧动画作用在一个已经不参与
-                    // 渲染的值上 —— 视觉上就是「松手后页面瞬移回去」。
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        isDismissDragging = false
-                        dismissDragOffset = 0
-                    }
-                }
+                let translation = value.translation
+                let isDownward = translation.height > 0
+                    && abs(translation.height) > abs(translation.width)
+                dismissDriver.onEnded(
+                    isDownward ? translation.height : 0,
+                    isDownward ? value.predictedEndTranslation.height : 0
+                )
             }
     }
 
@@ -925,33 +926,33 @@ struct AppleMusicPlayerView: View {
     /// 始终返回同一类型的 `some Gesture`（不能返回 `Optional<Gesture>`），
     /// 是否启用交给 `.gesture(_:including:)` 决定。
     ///
-    /// ★ 这里驱动的是**外层容器**共用的 `isDismissDragging` / `dismissDragOffset`
-    ///   （与大封面下滑关闭走同一条视觉通路），而不是给歌词页单独加 `.offset`。
-    ///   原因：歌词页底层是 AMLL 的 `WKWebView`，对它所在的子树叠加位移 / 透明度
+    /// ★ 这里驱动的是**薄壳**里的跟手位移（与大封面下滑关闭走同一条视觉通路），
+    ///   而不是给歌词页单独加 `.offset`。
+    ///   原因：歌词页底层是 WebView 歌词层，对它所在的子树叠加位移 / 透明度
     ///   会强制 WebView 进离屏合成层，导致歌词与头部错位渗色。复用外层通路则完全
     ///   不动歌词页自身布局。
+    ///
+    /// ★ 最小位移从 8pt 收紧到 3pt（与系统原生播放器一致）：歌词页顶部这块
+    ///   热区在手指刚动时就该接管，8pt 会让「开始下滑」有一段无响应的空档，
+    ///   体感上就是「滑半天没反应」。
     private var headerDismissGesture: some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+        DragGesture(minimumDistance: 3, coordinateSpace: .global)
             .onChanged { value in
                 guard showLyrics else { return }
-                isDismissDragging = true
-                // 只接受向下拖拽；用 max 夹取，手指拖回起点上方时页面跟随回位。
-                dismissDragOffset = max(value.translation.height, 0)
+                let translation = value.translation
+                let isDownward = translation.height > 0
+                    && abs(translation.height) > abs(translation.width)
+                dismissDriver.onChanged(isDownward ? translation.height : 0)
             }
             .onEnded { value in
                 guard showLyrics else { return }
-                let translation = value.translation.height
-                let predicted = value.predictedEndTranslation.height
-                if translation > Self.dismissDistance || predicted > Self.dismissPrediction {
-                    // 与大封面一致：关闭时保持 `isDismissDragging = true`，避免弹回再关。
-                    onDismiss()
-                } else {
-                    // 同大封面：回弹必须带动画，否则 offset 表达式瞬移回 0。
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        isDismissDragging = false
-                        dismissDragOffset = 0
-                    }
-                }
+                let translation = value.translation
+                let isDownward = translation.height > 0
+                    && abs(translation.height) > abs(translation.width)
+                dismissDriver.onEnded(
+                    isDownward ? translation.height : 0,
+                    isDownward ? value.predictedEndTranslation.height : 0
+                )
             }
     }
 
@@ -1317,7 +1318,7 @@ struct AppleMusicPlayerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if isFocused && isDraggingLyrics {
                         Spacer(minLength: 8)
-                        Text(wellamTimeString(line.time))
+                        Text(playerTimeText(line.time))
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(secondaryColor.opacity(0.82))
                     }
@@ -1408,20 +1409,18 @@ struct AppleMusicPlayerView: View {
     private func lyricsDragGesture(proxy: ScrollViewProxy) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
-                isDraggingLyrics = true
+                // ⚠️ 本回调在拖动期间**每帧**触发。这里只允许做两件事：
+                //    ① 把「用户正在滑」这一个布尔量置位（已经是 true 就不再写，
+                //       重复写同值仍会产生一次视图失效）；
+                //    ② 重启「3 秒后恢复跟随播放」的计时器。
+                //
+                //    曾经这里每帧还做：`updateFocusedLyric(...)`（与
+                //    `onPreferenceChange` 里的调用重复）和用 `withAnimation`
+                //    开一次 0.25s 的控制栏显隐动画 —— 每帧一次事务 + 每帧一次
+                //    整页重算，连带底层的 WebView 歌词层被反复重新下发 JS。
+                //    这正是「歌词页上下滑动很卡」的直接来源，现已移除。
+                if !isDraggingLyrics { isDraggingLyrics = true }
                 resumeTask?.cancel()
-                updateFocusedLyric(from: lyricCentersBox.value)
-                // 下滑隐藏底部控制区域，上滑显示
-                if value.translation.height > 15 {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        hideBottomControls = true
-                    }
-                } else if value.translation.height < -15 {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        hideBottomControls = false
-                    }
-                }
-                // 和沉浸模式一致：拖动开始后 3 秒自动恢复跟随播放
                 resumeTask = Task { @MainActor in
                     try? await Task.sleep(for: .seconds(3))
                     guard !Task.isCancelled else { return }
@@ -1430,6 +1429,19 @@ struct AppleMusicPlayerView: View {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                             proxy.scrollTo(currentID, anchor: .center)
                         }
+                    }
+                }
+                // 底部控制区联动：下滑隐藏 / 上滑显示。
+                // ★ 只在**跨过阈值**（±15pt）且目标状态真的改变时才写一次；
+                //   原来的写法在死区外每帧都重申一遍 `withAnimation`。
+                let translation = value.translation.height
+                if translation > 15 {
+                    if !hideBottomControls {
+                        withAnimation(.easeInOut(duration: 0.25)) { hideBottomControls = true }
+                    }
+                } else if translation < -15 {
+                    if hideBottomControls {
+                        withAnimation(.easeInOut(duration: 0.25)) { hideBottomControls = false }
                     }
                 }
             }
@@ -1574,6 +1586,137 @@ private struct SleepTimerMenu: View {
         } label: {
             Label("睡眠定时", systemImage: timer.state.isActive ? "timer.circle.fill" : "timer")
         }
+    }
+}
+
+// MARK: - 播放页背景
+
+/// 播放页背景层：底色 + 流体渐变 / 封面模糊 + AMLL 歌词页。
+///
+/// 单独成一个视图是**性能要求**，不是风格偏好：它内含 `WKWebView`，
+/// 必须挡在播放页顶层 `body` 的重算路径之外（详见
+/// `AppleMusicPlayerView.playerBackground` 的说明）。只要下面这些参数不变，
+/// SwiftUI 就会跳过本视图的 `body` 重算，WebView 不会被反复重新配置。
+private struct AppleMusicPlayerBackground: View {
+    let isDark: Bool
+    let dim: CGFloat
+    let usesFluidBackground: Bool
+    let usesAMLL: Bool
+    let showsLyrics: Bool
+    let coverURL: URL?
+    let amllTopPadding: CGFloat
+    let amllBottomPadding: CGFloat
+    let amllHorizontalPadding: CGFloat
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            // 底层背景：暗色用黑色，浅色用白色
+            (isDark ? Color.black : Color.white)
+                .ignoresSafeArea()
+
+            // 背景层：AMLL 同款「四色流体渐变」（默认）或封面模糊。
+            //
+            // 流体渐变是原生实现（FluidGradientBackground.swift）：只在 ≈48×106 的
+            // 极低分辨率位图上逐帧取色/扭曲/旋转，再由 GPU 拉伸到全屏，
+            // CPU 每帧 < 2ms —— 不会再重演「打开播放器就卡死」。
+            if usesFluidBackground {
+                FluidGradientBackground(url: coverURL)
+                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
+                    .ignoresSafeArea()
+            } else {
+                CoverBlurBackground(url: coverURL, scheme: colorScheme)
+                    .overlay(isDark ? Color.black.opacity(dim) : Color.white.opacity(dim))
+                    .ignoresSafeArea()
+            }
+
+            // AMLL 歌词只在**展开歌词页时**才创建。
+            //
+            // ⚠️ 关键：这里**不能**写成「常驻 + opacity 控制」。历史上常驻配合
+            // 官方 WebGL 完整页（478KB，带流动背景渲染器）意味着**打开播放器**
+            // 就要加载整页并初始化 WebGL + 跑 GPU 着色器，正是「打开播放器就卡死」
+            // 的直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复「点开
+            // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
+            if usesAMLL && showsLyrics {
+                AMLLWebLyricsView(useAppleMusicSettings: true)
+                    .ignoresSafeArea()
+                    .padding(.top, amllTopPadding)
+                    .padding(.bottom, amllBottomPadding)
+                    .padding(.horizontal, amllHorizontalPadding)
+            }
+        }
+    }
+}
+
+// MARK: - 下滑关闭的跟手位移（薄壳）
+
+/// 下滑关闭的驱动盒。
+///
+/// ## 为什么是「引用盒」而不是 `environment`
+/// 拖拽位移是**每帧都要写**的高频状态。它有两个约束：
+/// ① 播放页顶层不能持有它 —— 顶层含 WebView 歌词层，每写一次都会让整页重算，
+///    连带 `updateUIView` 被反复调用（重新下发 JS），手感就是「不跟手、掉帧」；
+/// ② 也不能用 `.environment(...)` 往下传 —— `EnvironmentValues` 的值每次
+///    body 重算都会重新构造，环境值一变，读取它的播放页顶层照样会重算，
+///    等于绕了一圈回到问题 ①。
+///
+/// 所以用引用类型做「闭包盒子」：盒子的**实例恒定**（由 `@State` 持有），
+/// 薄壳把自己的 `Binding` 写进盒子；播放页顶层只是**读**盒子，不订阅它，
+/// 于是拖拽期间顶层完全不重算，位移变化只重算薄壳自己的 body。
+private final class PlayerDismissDragDriver {
+    fileprivate var onChanged: (CGFloat) -> Void = { _ in }
+    fileprivate var onEnded: (CGFloat, CGFloat) -> Void = { _, _ in }
+}
+
+/// 只持有「下滑关闭跟手位移」这一组状态的**薄壳**容器。
+///
+/// ## 关闭时为什么保持 `isDragging = true`
+/// 命中关闭阈值时**不动** `isDragging`，直接回调 `onDismiss()`：
+/// 否则页面会先弹回原位再关闭，视觉上「弹一下」。
+/// 未命中时，`isDragging` 与 `dragOffset` 必须放进**同一个**
+/// `withAnimation` 事务里改 —— 否则赋值那一帧 offset 表达式就已经跳变回 0，
+/// 弹簧动画作用在一个不再参与渲染的值上，表现为「松手瞬移」。
+private struct PlayerDismissDragContainer<Content: View>: View {
+    let driver: PlayerDismissDragDriver
+    let onDismiss: () -> Void
+    /// 是否允许下滑关闭（歌词页展开时由外部置 false）。
+    let isEnabled: Bool
+    let content: Content
+
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDragging = false
+
+    var body: some View {
+        content
+            .offset(y: (isEnabled && isDragging) ? dragOffset : 0)
+            .onAppear {
+                // `fullScreenCover` 的内容视图可能被复用，残留位移会让播放器
+                // 打开时就偏移半屏，所以每次出现都复位。
+                dragOffset = 0
+                isDragging = false
+
+                // 把写入口接到本薄壳的 `@State` 上。捕获的是两个 `Binding`
+                // （轻量、稳定，始终指向同一份 State 存储），而不是整个视图值。
+                let offset = $dragOffset
+                let dragging = $isDragging
+                driver.onChanged = { translation in
+                    dragging.wrappedValue = true
+                    // 只接受向下的位移；`max` 夹取让手指拖回起点上方时页面跟随回位。
+                    offset.wrappedValue = max(translation, 0)
+                }
+                driver.onEnded = { translation, predicted in
+                    if translation > AppleMusicPlayerView.dismissDistance
+                        || predicted > AppleMusicPlayerView.dismissPrediction {
+                        onDismiss()
+                    } else {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            dragging.wrappedValue = false
+                            offset.wrappedValue = 0
+                        }
+                    }
+                }
+            }
     }
 }
 

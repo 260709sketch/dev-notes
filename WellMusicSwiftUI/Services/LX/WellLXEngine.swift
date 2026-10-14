@@ -4,7 +4,7 @@ import os
 // MARK: - 音源信息模型
 
 /// 一条已导入的自定义音源（LX Music 音源脚本）。
-/// 与 kumone `LXSourceInfo` 对齐，平台/能力字段与 wellmusic lxMusicSourceAdapter 一致。
+/// 音源信息模型：平台 / 能力字段与 lx 音源脚本约定一致。
 struct WellLXSourceInfo: Codable, Identifiable, Hashable {
     var id: String
     var name: String
@@ -258,7 +258,7 @@ final class WellLXEngine {
         quality.lxQuality
     }
 
-    /// MusicItem → lx 音源脚本期望的 musicInfo 标准格式（参照 kumone `toOldMusicInfo`）。
+    /// MusicItem → lx 音源脚本期望的 musicInfo 标准格式。
     func lxMusicInfo(from item: MusicItem, quality: String = "128k") -> [String: Any] {
         let source = lxPlatform(for: item)
         let songmid = lxSongId(for: item)
@@ -326,7 +326,7 @@ final class WellLXEngine {
         }
     }
 
-    // MARK: 测试歌曲（与 kumone 一致）
+    // MARK: 测试歌曲
 
     private static func testItem(_ platform: String) -> MusicItem {
         switch platform {

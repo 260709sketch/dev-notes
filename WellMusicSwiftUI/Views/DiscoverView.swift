@@ -344,7 +344,7 @@ struct DiscoverView: View {
         }
     }
 
-    // MARK: - 排行榜（横滑方卡，对齐 kumone HomeView 货架）
+    // MARK: - 排行榜（横滑方卡）
 
     @ViewBuilder
     private var toplistsSection: some View {
@@ -385,7 +385,7 @@ struct DiscoverView: View {
     @ViewBuilder
     private var artistsSection: some View {
         if !artists.isEmpty {
-            // 登录网易云 → 关注歌手；未登录 → 热门歌手（kumone 同款逻辑）
+            // 登录网易云 → 关注歌手；未登录 → 热门歌手
             WellShelf(title: artistSectionTitle, rowHeight: 170) {
                 ForEach(Array(artists.enumerated()), id: \.element.id) { index, artist in
                     NavigationLink {
@@ -577,7 +577,7 @@ struct WellFeatureCard: View {
     }
 }
 
-// MARK: - 榜单卡（kumone 式：方图 + 底部渐变 + 左下角更新频率 + 图下榜单名）
+// MARK: - 榜单卡（方图 + 底部渐变 + 左下角更新频率 + 图下榜单名）
 
 struct WellToplistCard: View {
     let item: WellToplistSummary
@@ -626,7 +626,7 @@ private struct WellHorizontalClipModifier: ViewModifier {
     }
 }
 
-/// 轻微按压缩放（替代 kumone 的 GlassPressButtonStyle）。
+/// 轻微按压缩放。
 struct WellPressButtonStyle: ButtonStyle {
     var scale: CGFloat = 0.95
     func makeBody(configuration: Configuration) -> some View {

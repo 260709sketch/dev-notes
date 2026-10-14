@@ -125,13 +125,13 @@ enum AMLLBackgroundQuality: String, Codable, CaseIterable, Identifiable {
 /// Apple Music 播放页的整体明暗。
 ///
 /// 播放器里只有一个判据 `settings.appleMusicBackgroundMode == .dark`：
-///   * `.dark`  → 底层纯黑 + 封面压暗，白字清晰（默认，与 Kumone 一致）
+///   * `.dark`  → 底层纯黑 + 封面压暗，白字清晰（默认）
 ///   * `.light` → 底层纯白 + 封面提亮
 ///
 /// 曾经这里还有 `gradient` / `coverBlur` / `dynamicCover` 三个取值，但全项目
 /// **从未被引用过**（只在 `== .dark` 这一处判断里被当作「非暗色」），
 /// 结果是默认值 `.gradient` 让整个播放页变成白底白字、完全看不清。
-/// 已按 Kumone 收敛为两档。
+/// 已收敛为两档。
 enum AppleMusicBackgroundMode: String, Codable, CaseIterable, Identifiable {
     case dark
     case light
@@ -222,7 +222,7 @@ enum WellPlaylistCoverStyle: String, CaseIterable, Identifiable {
 }
 
 // MARK: - NowPlayingMode
-/// 「正在播放」页的形态。回迁自 Kumone / wellam 的 NowPlayingMode。
+/// 「正在播放」页的形态。
 ///
 /// 说明：`.classic` 已按上游注释停用，`.appleMusic` 即本文件所在的 Apple Music 播放器。
 enum NowPlayingMode: String, Codable, CaseIterable, Identifiable {
@@ -337,7 +337,7 @@ final class SettingsManager: ObservableObject {
     /// ⚠️ key 从 `…amllLyricTop` 改成了 `…amllLyricTopPx`：旧 key 里存的是
     /// 0.38 这种「比例」值，而播放器一直把它当**点**用（`ScreenAdapter.h(0.38)`
     /// ≈ 0），所以旧值本身是坏的。改 key 让新默认值干净生效，不必做迁移。
-    /// 取值范围与默认值对齐 Kumone（50…400，默认 140）。
+    /// 取值范围 50…400，默认 140。
     @AppStorage("wellmusic.appleMusic.amllLyricTopPx") var appleMusicAmllLyricTop: Int = 140
     /// AMLL 歌词底部位置（点，100…500，默认 305）
     @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") var appleMusicAmllLyricBottom: Int = 305
@@ -353,7 +353,7 @@ final class SettingsManager: ObservableObject {
     /// 是否隐藏大封面状态顶部的小横条指示器（下滑关闭手势仍然可用）。
     @AppStorage("wellmusic.appleMusic.hideTopIndicator") var appleMusicHideTopIndicator: Bool = false
 
-    // MARK: - Apple Music 播放器（回迁自 Kumone / wellam）
+    // MARK: - Apple Music 播放器
 
     /// 当前「正在播放」页形态
     @AppStorage("wellmusic.player.nowPlayingMode") var nowPlayingMode: NowPlayingMode = .appleMusic
@@ -377,7 +377,7 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.player.progressBarStyle") var progressBarStyle: Int = 0
 
     /// 背景模式
-    /// 播放页整体明暗。默认 **暗色** —— 与 Kumone 一致，白字在暗底上才看得清。
+    /// 播放页整体明暗。默认 **暗色** —— 白字在暗底上才看得清。
     /// （旧默认值是已废弃的 `.gradient`，存进 UserDefaults 后反序列化失败会回落到
     /// 这里的默认值，即自动迁到 `.dark`，无需额外迁移代码。）
     @AppStorage("wellmusic.appleMusic.backgroundMode") var appleMusicBackgroundMode: AppleMusicBackgroundMode = .dark

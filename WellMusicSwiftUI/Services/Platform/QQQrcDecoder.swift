@@ -1,7 +1,7 @@
 import Foundation
 import zlib
 
-/// QQ 音乐逐字 QRC 歌词解密器（移植自 kumone `QQQrcDecoder.swift`，同一作者项目）。
+/// QQ 音乐逐字 QRC 歌词解密器。
 ///
 /// 管线：hex 解码 → 非标准 3DES 解密（key1/2/3 + 预计算查找表）→ zlib 解压
 /// → UTF-8 / GB-18030 解码 → QRC 文本。

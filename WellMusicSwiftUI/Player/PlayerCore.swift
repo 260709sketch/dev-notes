@@ -40,7 +40,7 @@ import SwiftUI
 /// * 根因侧：mpv 加 `audio-exclusive=yes`（见 `MPVEngine.start()`），它会置位
 ///   `AO_INIT_EXCLUSIVE`，mpv 自己就以 `options: 0` 设置会话；
 /// * 应用侧：本类型的判据从「类别」扩展为「**类别 + 混音选项**」，并统一用
-///   kumone / Beans 一致的 `.playback + .default + .longFormAudio + options: []`
+///   `.playback + .default + .longFormAudio + options: []`
 ///   重写会话 —— 即使 mpv 之后因格式变化重建 AO 又改跑会话，巡检也能在 5s 内拉回。
 enum AudioSessionManager {
     /// 目标会话参数。
@@ -48,8 +48,7 @@ enum AudioSessionManager {
     /// * `mode: .default` —— 纯音乐播放（mpv 会把它改成 `.moviePlayback`，
     ///   那是给视频用的；我们重写时按音乐类 App 的正确取值拉回）；
     /// * `policy: .longFormAudio` —— 音乐 / 有声书这类「长时间播放」的路由策略，
-    ///   与 kumone、Beans 完全一致（见 `.wip/km/.../PlayerService.swift`
-    ///   与 `.wip/beans_inner/Beans/PlayerManager.swift` 的
+    ///   与音乐类 App 的既定行为一致（见
     ///   `applyAudioMixPreference`）；
     /// * `options: []` —— **绝不可带 `.mixWithOthers`**，见上文坑二。
     static let targetMode: AVAudioSession.Mode = .default

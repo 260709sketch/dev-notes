@@ -96,7 +96,7 @@ final class MPVEngine: @unchecked Sendable {
         // `audio-exclusive=yes` 是 mpv 为这件事准备的正规开关（docs 明确「目前仅
         // coreaudio / audiounit 实现」），它让 `AO_INIT_EXCLUSIVE` 置位 →
         // mpv 自己就以 `options: 0` 设置会话，不再引入混音。
-        // 这与 kumone / Beans 的 `options: []` 完全一致（音乐类 App 的既定行为）。
+        // `options: []`（音乐类 App 的既定行为）。
         mpv_set_option_string(h, "audio-exclusive", "yes")
 
         // ⚠️ 默认 User-Agent：mpv 自报 "libmpv 0.x"，网易云 CDN 会识别并掐断连接

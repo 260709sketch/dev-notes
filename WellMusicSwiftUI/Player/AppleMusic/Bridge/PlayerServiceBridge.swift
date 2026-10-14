@@ -8,7 +8,7 @@ import AVFoundation
 ///
 /// ⚠️ **默认不启动**（见 `PlayerService.init` 的说明）。
 ///
-/// 这个类型来自 Kumone 的移植，它用一个 20Hz（50ms）的 `Timer` + `Task { @MainActor }`
+/// 它用一个 20Hz（50ms）的 `Timer` + `Task { @MainActor }`
 /// 双层派发，把 `PlayerCore.displayTime` 转发成 `@Published progress`。
 /// 但本项目**已经有** `PlayerCore.currentTime`（同样是 20Hz，由
 /// `addPeriodicTimeObserver` 驱动，且是直接赋值、少一层派发）——两者是**同一份数据**。
@@ -98,7 +98,7 @@ final class LyricsCursor: ObservableObject {
 ///   ① 「当前歌曲结束时停止」是用 `duration - currentTime` **猜一个倒计时** ——
 ///      duration 还没读到时 remaining = 0，点一下就会立刻暂停；换歌/暂停也会算错。
 ///   ② 用 `Timer` 计时，且没有任何防竞态手段。
-///   现改成 kumone 那套真实状态机（`Core/Player/SleepTimer.swift`）：
+///   现改成真实状态机（`Core/Player/SleepTimer.swift`）：
 ///   * `.countdown(deadline:)` 用 `Task.sleep` 计时（可取消 + generation 防竞态），
 ///     状态里带 deadline，UI 可以据此显示「剩余 xx」；
 ///   * `.endOfCurrentTrack` **不再自己计时**，只置状态；真正的触发由播放内核在
@@ -305,7 +305,7 @@ final class PlayerService: ObservableObject {
         // ⚠️ 用 PlayerCore.restoredVolume()（含旧默认 0.7 → 1.0 的迁移）：
         // MPV 内核下 volume 是真软件音量，旧默认值会凭空把响度拉低 30%
         self.volume = PlayerCore.restoredVolume()
-        // ⚠️ 不启动 `clock`：它是 Kumone 带来的第二个 20Hz 时钟，与
+        // ⚠️ 不启动 `clock`：它是第二个 20Hz 时钟，与
         // `PlayerCore.currentTime` 数据完全重复，且活代码里已无人观察。
         // 详见 `PlayerClock` 的说明。这里保留调用以标注意图。
         self.clock.stop()
@@ -431,7 +431,7 @@ final class PlayerService: ObservableObject {
         // 更新歌词游标
         //
         // ⚠️ 时间源必须是 `PlayerCore.displayTime`，**不能**用 `clock.progress`。
-        // `PlayerClock` 是 Kumone 带进来的第二个 20Hz 时钟，已停摆（见上文
+        // `PlayerClock` 是第二个 20Hz 时钟，已停摆（见上文
         // `self.clock.stop()`），它的 `progress` 恒为 0，会让歌词高亮永远停在第一行。
         // `displayTime` 拖动时给 `scrubTime`、其余给真实播放时间，正是歌词需要的行为。
         let offset = AppState.shared.lyricOffset

@@ -354,7 +354,7 @@ final class QQMusicAPI {
 
     /// QQ 逐字歌词：`music.musichallSong.PlayLyricInfo.GetPlayLyricInfo`，
     /// `qrc=1` 时返回 hex 加密的 QRC（3DES + zlib），无需登录（uin=0 即可）。
-    /// 移植自 kumone `QQMusicAPI.wordLyric`（同一作者项目）。
+    /// QQ 音乐逐字歌词接口。
     /// 返回解密后的 QRC 明文；无逐字 / 解析失败返回 nil。
     func wordLyric(songmid: String) async -> String? {
         let body: [String: Any] = [

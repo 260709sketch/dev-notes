@@ -368,7 +368,7 @@ struct WellArtistHomeView: View {
                 return (result.albums, result.platformAlbumCount)
             }
         }
-        guard let sp else { return ([], nil) }
+        guard let sp = searchPlatform else { return ([], nil) }
         let found = await SearchService.shared
             .search(keyword: artistName, platform: sp, type: .albums, limit: 50).albums
         return (found, nil)
