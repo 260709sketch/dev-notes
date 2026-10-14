@@ -8,16 +8,10 @@ struct ProfileView: View {
     @State private var showingSettings = false
     /// 点头像 → 底部弹出账号设置（未登录 = 登录入口；已登录 = 账号详情/退出登录）
     @State private var showingAccount = false
-    /// 大标题被导航栏完全盖住 → 把「我的」收进导航栏（Apple Music 折叠行为）
-    @State private var titleCollapsed = false
-    /// 大标题行静止时的 global minY（首帧量到；折叠阈值以此为基准，与机型安全区高度无关）
-    @State private var titleRestingMinY: CGFloat? = nil
 
     var body: some View {
         NavigationStack {
             List {
-                largeTitleSection
-
                 Section {
                     NavigationLink { MyPlaylistsView() } label: {
                         Label("我的歌单", systemImage: "music.note.list")
@@ -52,33 +46,12 @@ struct ProfileView: View {
                     }
                 }
             }
-            // 大标题折叠时导航栏才显示「我的」；静止时留空（大标题由 largeTitleSection 自绘）
-            .navigationTitle(titleCollapsed ? "我的" : "")
-            // ★ 2026-10-14 用户：头像要像 Apple Music 那样钉在**导航栏右上角**
-            //   （参考截图 IMG_3962），不是和大标题「我的」挤在同一行（IMG_3961 红圈标出的错误位置）。
-            //   根因：大标题（.large）模式下 `.topBarTrailing` 的 toolbar item 会被系统
-            //   渲染进**大标题那一行**；只有 `.inline` 模式才固定在导航栏条里。
-            //   代价：系统大标题不能用了 → 由 `largeTitleSection` 在列表首行自绘
-            //   （34pt bold，随内容滚动），滚过后由 titleCollapsed 收进导航栏。
-            .navigationBarTitleDisplayMode(.inline)
-            // ★ 2026-10-14 用户：登录卡片移除，登录入口放到「我的」大标题右侧。
-            //   未登录显示与 dock 栏「我的」同款人形图标，登录后显示网易云头像。
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    accountEntryButton
-                }
-            }
-            // 量大标题行的滚动位置：完全滚进导航栏下方 → 折叠出导航栏标题
-            .onPreferenceChange(ProfileTitleOffsetKey.self) { minY in
-                guard minY > 0 else { return }
-                if titleRestingMinY == nil { titleRestingMinY = minY }
-                guard let rest = titleRestingMinY else { return }
-                // 阈值 ≈ 导航栏 44 + 标题行高 41 ≈ 46：标题被完全盖住即折叠
-                let shouldCollapse = (rest - minY) > 46
-                if shouldCollapse != titleCollapsed {
-                    withAnimation(.easeInOut(duration: 0.16)) { titleCollapsed = shouldCollapse }
-                }
-            }
+            // ★ 2026-10-14 用户：标题要和其他页面一致（都在导航栏上）。
+            //   原先为了把头像钉在导航栏右上角，只能用 `.inline` + 自绘 34pt 大标题
+            //   （`.large` 模式下 `.topBarTrailing` 的 toolbar item 会被系统渲染进大标题那一行）；
+            //   本轮头像入口已按用户要求移除，该限制随之消失 → 回归系统大标题。
+            .navigationTitle("我的")
+            .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
@@ -96,31 +69,11 @@ struct ProfileView: View {
 
     // MARK: 大标题（Apple Music 版式）
 
-    /// 「我的」大标题：34pt bold、左缘与下方卡片对齐、随内容滚动。
-    /// 行内挂 GeometryReader 上报 global minY（`ProfileTitleOffsetKey`），
-    /// 由 body 的 onPreferenceChange 判定折叠时机。
-    private var largeTitleSection: some View {
-        Section {
-            Text("我的")
-                .font(.system(size: 34, weight: .bold))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // insetGrouped 里行的布局框 = 卡片框，leading 0 = 贴卡片左缘
-                // （= 距屏幕 16pt，与系统大标题、卡片左缘三者对齐）
-                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 4, trailing: 0))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: ProfileTitleOffsetKey.self,
-                            value: geo.frame(in: .global).minY
-                        )
-                    }
-                )
-        }
-    }
+    // MARK: 登录入口（原「我的」大标题右侧头像）
 
-    // MARK: 登录入口（大标题右侧图标）
+    // ⚠️ 2026-10-14 用户：「我的」右上角的头像 / 登录入口**暂时移除**
+    //    （原挂载点是 body 上的 `.toolbar { ToolbarItem(placement: .topBarTrailing) { accountEntryButton } }`）。
+    //    下面的实现**保留但暂不挂载**：恢复时把那段 toolbar 加回 body 即可。
 
     /// 未登录 = 人形图标（与 dock 栏「我的」同款 `person.crop.circle`）；
     /// 登录后 = 网易云头像。
@@ -149,17 +102,6 @@ struct ProfileView: View {
             // 进页面顺手校验一次票据：过期自动回到未登录态
             if session.isLoggedIn { await session.refreshAccount() }
         }
-    }
-}
-
-/// 「我的」页大标题行的滚动位置（global minY）：
-/// 用来判定大标题是否已被导航栏完全盖住 —— 盖住就把「我的」收进导航栏
-/// （Apple Music 的大标题折叠行为，见 `ProfileView.titleCollapsed`）。
-private struct ProfileTitleOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = .zero
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
@@ -416,24 +358,50 @@ struct NeteasePlayRecordView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(items) { record in
-                    HStack(spacing: 12) {
-                        TrackRow(item: record.song)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                player.play(queue: items.map(\.song),
-                                            startIndex: items.firstIndex { $0.id == record.id } ?? 0)
+                // ★ 2026-10-14 用户：改成网易云「听歌排行」那种版式 ——
+                //   序号（前 3 名主题色）+ 歌曲封面 + 歌名/歌手 + 右侧播放次数，
+                //   并去掉原来 TrackRow 自带的 chevron 箭头。
+                List {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, record in
+                        Button {
+                            player.play(queue: items.map(\.song), startIndex: index)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(index < 3 ? AppTheme.accent : Color.secondary)
+                                    .frame(width: 26)
+
+                                ArtworkView(url: record.song.albumCoverURL,
+                                            size: 46,
+                                            cornerRadius: 6)
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(record.song.title)
+                                        .font(.system(size: 15.5, weight: .medium))
+                                        .lineLimit(1)
+                                    Text(record.song.artist ?? "未知艺术家")
+                                        .font(.system(size: 12.5))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 8)
+
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("\(record.playCount)")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .monospacedDigit()
+                                    Text("次")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .foregroundStyle(AppTheme.accent)
                             }
-                        Spacer(minLength: 8)
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(record.playCount)")
-                                .font(.subheadline.weight(.semibold))
-                                .monospacedDigit()
-                            Text("次")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            .contentShape(Rectangle())
                         }
-                        .foregroundStyle(AppTheme.accent)
+                        .buttonStyle(.plain)
                     }
                 }
                 .listStyle(.plain)
@@ -508,7 +476,11 @@ struct RecentPlaysView: View {
                                     creatorName: nil, tracks: displayTracks))
             }
         }
-        .navigationTitle(isLoading || displayTracks.isEmpty ? "最近播放" : "")
+        // ★ 2026-10-14 用户：进入本页导航栏会闪一下「最近播放」。
+        //   根因：原先用三元标题（加载中/无数据 → "最近播放"，加载完 → ""），
+        //   加载完成时标题由「最近播放」翻成空串，视觉上就是一瞬忽闪。
+        //   → 标题恒为空串，页面标题完全交给子视图的大 header 呈现，不再变化。
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }

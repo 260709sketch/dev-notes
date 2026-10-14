@@ -4,6 +4,13 @@ options:
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
+  # ★ 2026-10-14 用户：搜索框右侧的「取消」按钮显示英文 "Cancel"，要改成中文。
+  #   根因：工程原先**完全没有本地化声明**（无 *.lproj、无 developmentRegion），
+  #   系统控件（UISearchBar 的取消按钮、系统弹窗按钮等）只能回退到英文。
+  #   修法：声明开发语言为 zh-Hans，并在 Info.plist 里列出受支持的语言
+  #   （CFBundleLocalizations）——有了它，UIKit 就会按中文渲染自带文案，
+  #   不需要真的建 zh-Hans.lproj 资源目录。
+  developmentLanguage: zh-Hans
 # libmpv 播放内核（MPVKit = libmpv + FFmpeg 预编译 xcframework，LGPL）
 # 2026-10-13 迁移：无白边底版 + 仅迁移「播放器 / MPV 内核 / LX 音源系统」
 packages:
@@ -23,6 +30,11 @@ targets:
       path: WellMusicSwiftUI/Supporting/Info.plist
       properties:
         CFBundleDisplayName: WellMusic
+        # ★ 2026-10-14：让系统自带控件文案走中文（搜索框「取消」等）
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
+          - en
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:

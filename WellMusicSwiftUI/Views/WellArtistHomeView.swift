@@ -60,10 +60,9 @@ struct WellArtistHomeView: View {
         }
         .navigationTitle("歌手主页")
         .navigationBarTitleDisplayMode(.inline)
-        // 页内搜索（挂在导航栏下方，常驻显示，过滤热门歌曲）
-        .searchable(text: $searchText,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "搜索歌手歌曲")
+        // ★ 2026-10-14 用户：移除导航栏上的搜索框。
+        //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
+        //   —— 导航栏下方常驻一条「搜索歌手歌曲」，用户要求去掉。
         .task {
             guard hotSongs.isEmpty && albums.isEmpty else { return }
             await load()

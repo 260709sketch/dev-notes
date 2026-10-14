@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
 ///
@@ -21,6 +24,12 @@ struct MainTabView: View {
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
 
+    /// 手指横向拖动页面产生的位移（松手吸附回 0）。见 `pageSwipeGesture`。
+    @State private var pageDragOffset: CGFloat = 0
+
+    /// 键盘遮挡高度（屏幕底 → 键盘上沿）。用于让迷你播放器跟随键盘上移，而 dock 栏不动。
+    @State private var keyboardHeight: CGFloat = 0
+
     /// 各 Tab 独立的导航路径（类型擦除；push 一律用 destination-based NavigationLink）。
     ///
     /// ⚠️ 导航容器（`NavigationStack`）必须由**这里**统一提供，**不要**写进各页面内部：
@@ -42,6 +51,15 @@ struct MainTabView: View {
                 if hasActiveTrack != value { hasActiveTrack = value }
             }
             .onAppear { hasActiveTrack = PlayerCore.shared.hasActiveTrack }
+            // ★ 2026-10-14 用户：点击搜索框时——dock 栏**不上移**（被键盘盖住即可），
+            //   只有迷你播放器跟随键盘上移。这里只记录键盘遮挡高度，布局在
+            //   `miniPlayerBottomPadding` 里应用。
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                updateKeyboardHeight(from: note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                if keyboardHeight != 0 { keyboardHeight = 0 }
+            }
     }
 
     @ViewBuilder
@@ -92,32 +110,53 @@ struct MainTabView: View {
         }
     }
 
-    /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏
+    /// 自定义底部栏：页面**横向分页**（可拖动切页）+ 底部 MiniPlayer + 胶囊栏
     ///
-    /// 4 个页面用 ZStack + opacity 常驻（避免切换时销毁重建状态），但**必须**给每个
-    /// 页面稳定 identity —— 否则切换 tab 时 SwiftUI 会把整个 ZStack 重新求值，底栏的
-    /// 液态玻璃层跟着重建，视觉上就是“抖一下”。这里用 `zIndex` + `id` 双固定。
+    /// ★ 2026-10-14 用户第三轮两项要求：
+    ///   ① 「dock 栏点击切换改成拖动那种，现在的点击切换会界面抖一下」（用户明确
+    ///      「这里不是底部栏问题」）—— 原先四个页面用 `opacity` 0/1 切换，新页面从
+    ///      全透明变不透明的那一帧，内部 `NavigationStack` 的大标题/滚动位置会重新
+    ///      测量，看起来就是抖一下。改成**横向平移**后，四页始终不透明、只做位移，
+    ///      抖动自然消失；同时容器整体跟随手指，松手吸附换页。
+    ///   ② 四个页面仍**常驻**（横向排布，不销毁重建状态）—— 与原设计保持一致。
+    ///
+    /// ⚠️ 手势用 `.gesture`（不是 `.highPriorityGesture`/`.simultaneousGesture`）：
+    ///   页面内部的横向 ScrollView（发现页/精选页的横滑货架）会优先吃掉自己的拖动，
+    ///   两者互不打架；只有在非横滑区域拖动才会走到切页手势。
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
-            ZStack {
-                page(.profile) { ProfileView() }
-                page(.radio) { DiscoverView() }
-                page(.square) { PlaylistSquareView() }
-                page(.search) { SearchView() }
-            }
-
-            // 底栏整体（迷你播放器 + Tab 胶囊）用固定 id，避免随 selectedTab 重建
-            VStack(spacing: 8) {
-                if hasActiveTrack {
-                    MiniPlayerView()
-                        .onTapGesture { showingNowPlaying = true }
-                        .padding(.horizontal, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+            // ── 页面分页容器 ──
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    ForEach(Self.tabOrder, id: \.self) { tab in
+                        NavigationStack(path: path(for: tab)) {
+                            pageContent(for: tab)
+                        }
+                        .frame(width: geo.size.width)
+                    }
                 }
-
-                // iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏
-                WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
+                .frame(width: geo.size.width * CGFloat(Self.tabOrder.count), alignment: .leading)
+                .offset(x: -CGFloat(selectedPageIndex) * geo.size.width + pageDragOffset)
             }
+            .clipped()
+            .gesture(pageSwipeGesture)
+
+            // ── 迷你播放器：独立一层 ──
+            //   ★ 用户要求「dock 栏取消跟随键盘上来、迷你播放器保持跟随，且迷你播放器的
+            //     跟随位置改到 dock 栏跟随上来的位置」→ 所以两层解耦：dock 栏位置恒定，
+            //     迷你播放器单独吃键盘高度（见 `miniPlayerBottomPadding`）。
+            if hasActiveTrack {
+                MiniPlayerView()
+                    .onTapGesture { showingNowPlaying = true }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, miniPlayerBottomPadding)
+                    .ignoresSafeArea(edges: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // ── dock 栏：位置恒定，不随键盘上移 ──
+            // （iOS 16-25 无系统液态玻璃，统一用自绘毛玻璃胶囊栏）
+            WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
             // 位置（2026-10-14 用户标定）：以**屏幕底**为基准、距底 **42pt**
             //（在 16pt 基础上按用户要求整体**上移 26px**），再叠加设置页
             //「底部栏位置」的微调值。
@@ -139,15 +178,78 @@ struct MainTabView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: hasActiveTrack)
     }
 
+    /// 各 Tab 的页面内容。
+    /// 导航容器由 pager 统一提供（见 `customTabInterface`），页面自身不带 NavigationStack。
     @ViewBuilder
-    private func page<Content: View>(_ tab: WellTab, @ViewBuilder _ content: () -> Content) -> some View {
-        // 导航容器在切换层之外稳定存在，页面只作为其内容；
-        // 切 tab 只改 opacity，不触碰导航栏结构（大标题不跳）。
-        NavigationStack(path: path(for: tab)) {
-            content()
+    private func pageContent(for tab: WellTab) -> some View {
+        switch tab {
+        case .radio: DiscoverView()
+        case .square: PlaylistSquareView()
+        case .search: SearchView()
+        case .profile: ProfileView()
         }
-        .opacity(selectedTab == tab ? 1 : 0)
-        .allowsHitTesting(selectedTab == tab)
+    }
+
+    /// 页序（与底部栏 `glassTabItems` 一致）：发现 → 精选 → 搜索 → 我的。
+    static let tabOrder: [WellTab] = [.radio, .square, .search, .profile]
+
+    private var selectedPageIndex: Int {
+        Self.tabOrder.firstIndex(of: selectedTab) ?? 0
+    }
+
+    /// dock 栏距屏幕底的基准距离（再叠加设置页「底部栏位置」微调；正 = 更靠下）。
+    private var dockBasePadding: CGFloat { 42 - CGFloat(tabBarBottomOffset) }
+
+    /// 迷你播放器的底部内边距。
+    ///
+    /// ★ 用户要求：键盘弹出时 dock 栏**不动**，迷你播放器**跟随**，并停在
+    ///   「dock 栏若跟随键盘时应在的位置」= 紧贴键盘上沿。
+    ///   取两者较大值即可：
+    ///   * 键盘收起 → `dockBasePadding + 72`（72 = dock 内容高 64 + 与迷你播放器的 8pt 间距），
+    ///     即停在 dock 栏正上方，与改造前的相对位置完全一致；
+    ///   * 键盘弹出 → 键盘高度，即贴到键盘上沿。
+    private var miniPlayerBottomPadding: CGFloat {
+        max(dockBasePadding + 72, keyboardHeight)
+    }
+
+    /// 横向拖动切页（为什么用 `.gesture` 而不是 highPriority/simultaneous 见 `customTabInterface`）。
+    private var pageSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onChanged { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                // 只认横向意图；竖向留给页面自身的滚动
+                guard abs(dx) > abs(dy) * 1.2 else { return }
+                let atLeftEnd = selectedPageIndex == 0 && dx > 0
+                let atRightEnd = selectedPageIndex == Self.tabOrder.count - 1 && dx < 0
+                // 首尾做阻尼，给出「已经到头」的手感
+                pageDragOffset = (atLeftEnd || atRightEnd) ? dx * 0.28 : dx
+            }
+            .onEnded { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                var target = selectedPageIndex
+                if abs(dx) > abs(dy) * 1.2, abs(dx) > 56 {
+                    target = dx < 0
+                        ? min(selectedPageIndex + 1, Self.tabOrder.count - 1)
+                        : max(selectedPageIndex - 1, 0)
+                }
+                // 松手吸附：位移与目标页一起动画
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    pageDragOffset = 0
+                    if target != selectedPageIndex { selectedTab = Self.tabOrder[target] }
+                }
+            }
+    }
+
+    /// 记录键盘遮挡高度（屏幕底 → 键盘上沿）。
+    /// ⚠️ 只在真的变了时才写 `@State`（避免无谓刷新）。
+    private func updateKeyboardHeight(from note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let screenHeight = UIScreen.main.bounds.height
+        // 键盘完全离屏（隐藏动画过程中）时 minY 已等于屏幕高 → 视为 0
+        let overlap = frame.minY >= screenHeight ? 0 : max(0, screenHeight - frame.minY)
+        if abs(overlap - keyboardHeight) > 0.5 { keyboardHeight = overlap }
     }
 
     /// 每个 Tab 独立的导航路径。
@@ -260,8 +362,8 @@ struct MiniPlayerView: View {
     private let capsuleHeight: CGFloat = 52
     /// 封面边长（实机量得 96px @3x = 32pt）
     private let artworkSize: CGFloat = 32
-    /// 控制图标字号（18px，三个钮统一 —— 用户要求「大小一致」）
-    private let controlIconSize: CGFloat = 18
+    /// 控制图标字号（用户 2026-10-14：三钮统一 17pt）
+    private let controlIconSize: CGFloat = 17
     /// 单个控制钮命中框边长（三钮等大）
     private let controlHitSize: CGFloat = 34
 
@@ -272,10 +374,10 @@ struct MiniPlayerView: View {
                 ArtworkView(url: track?.albumCoverURL, size: artworkSize, cornerRadius: 7)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(track?.title ?? "未在播放")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: 14.5, weight: .medium))
                         .lineLimit(1)
                     Text(track?.artist ?? "未知艺术家")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

@@ -161,8 +161,8 @@ struct DiscoverView: View {
                     title: "私人漫游",
                     subtitle: "从喜欢的歌开始漫游",
                     icon: "wave.3.right.circle.fill",
-                    gradient: [Color(red: 0.40, green: 0.50, blue: 0.80),
-                               Color(red: 0.60, green: 0.49, blue: 0.84)])
+                    gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                               Color(red: 0.41, green: 0.28, blue: 0.65)])
             }
             .buttonStyle(.plain)
             .modifier(WellCardEntrance(index: 1, itemID: "daily-fm"))
@@ -174,8 +174,8 @@ struct DiscoverView: View {
                     title: "心动模式",
                     subtitle: "你的红心歌曲和相似推荐",
                     icon: "heart.circle.fill",
-                    gradient: [Color(red: 0.90, green: 0.47, blue: 0.55),
-                               Color(red: 0.97, green: 0.67, blue: 0.55)])
+                    gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                               Color(red: 0.98, green: 0.43, blue: 0.35)])
             }
             .buttonStyle(.plain)
             .modifier(WellCardEntrance(index: 2, itemID: "daily-heartbeat"))
@@ -212,8 +212,8 @@ struct DiscoverView: View {
                         title: "私人漫游",
                         subtitle: "从喜欢的歌开始漫游",
                         icon: "wave.3.right.circle.fill",
-                        gradient: [Color(red: 0.40, green: 0.50, blue: 0.80),
-                                   Color(red: 0.60, green: 0.49, blue: 0.84)])
+                        gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                   Color(red: 0.41, green: 0.28, blue: 0.65)])
                 }
                 .buttonStyle(.plain)
 
@@ -224,8 +224,8 @@ struct DiscoverView: View {
                         title: "心动模式",
                         subtitle: "你的红心歌曲和相似推荐",
                         icon: "heart.circle.fill",
-                        gradient: [Color(red: 0.90, green: 0.47, blue: 0.55),
-                                   Color(red: 0.97, green: 0.67, blue: 0.55)])
+                        gradient: [Color(red: 0.84, green: 0.16, blue: 0.38),
+                                   Color(red: 0.98, green: 0.43, blue: 0.35)])
                 }
                 .buttonStyle(.plain)
 
