@@ -634,13 +634,28 @@ final class PlayerCore: NSObject, ObservableObject {
         }
         // ★ 预加载下一首：播放到 5 秒时，后台把下一首的播放地址解析好并缓存，
         //   用户点「下一首」时可以直接用缓存地址起播，消除解析等待（响应更跟手）。
-        if hasActiveTrack, !isLoading, !isScrubbing,
-           currentTime >= 5, preloadedTrackKey != nextTrack?.keyOf {
+        //
+        // ⚠️★ 闸门必须落在「**当前曲目**」而不是「下一首是否已经预加载」
+        //   （2026-10-14 用户报「音源状态 → 最近请求一直在自动跳」）：
+        //   随机播放模式下 `nextTrack` 每次求值都会 `randomElement()` 重新挑一首，
+        //   于是 `preloadedTrackKey != nextTrack?.keyOf` 几乎**每个 tick 都成立** ——
+        //   `preloadNext()` 被 20Hz 反复触发：每秒约 20 次地址解析
+        //   （`WellLXSourceStore` 是 @MainActor，解析全程在主线程排队 → 播放就掉帧严重），
+        //   且每次都往请求日志顶部插一条（列表因此「一直在自动跳」）。
+        //   改成「每首当前曲目最多尝试一次」：任何播放模式下都恒定只发一次；
+        //   顺带去掉随机模式下「预加载的那首其实不是真正下一首」的无效功。
+        if hasActiveTrack, !isLoading, !isScrubbing, currentTime >= 5,
+           let playingKey = currentItem?.keyOf, preloadAttemptedTrackKey != playingKey {
+            preloadAttemptedTrackKey = playingKey
             preloadNext()
         }
     }
 
     // MARK: 预加载下一首
+
+    /// 已经为哪一首**当前曲目**发起过预加载尝试（值 = `MusicItem.keyOf`）。
+    /// ⚠️ 闸门用「当前曲目」而非「下一首是否已预加载」—— 原因见 tick() 里的说明。
+    private var preloadAttemptedTrackKey: String?
 
     /// 已预加载的曲目 key（避免对同一首重复解析）
     private var preloadedTrackKey: String?
