@@ -77,7 +77,7 @@ struct WellPlayerDiagnosticsView: View {
                 diagRow("模式 mode", session.mode.rawValue)
                 diagRow("选项 options", "\(session.categoryOptions.rawValue)")
                 diagRow("其它音频在播", session.isOtherAudioPlaying ? "是" : "否")
-                diagRow("输出延迟", String(format: "%.0f ms", player.outputLatency * 1000))
+                diagRow("输出延迟", String(format: "%.0f ms", PlayerService.shared.outputLatency * 1000))
             }
 
             Section("控制中心 / NowPlaying") {
