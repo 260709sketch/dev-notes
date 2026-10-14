@@ -20,7 +20,6 @@ struct WellPlaylistDetailView: View {
     var dailyMode: Bool = false
 
     @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
 
     /// 歌单内排序方式
     enum SortMode: String, CaseIterable, Identifiable {
@@ -38,10 +37,6 @@ struct WellPlaylistDetailView: View {
     /// 歌单简介（Apple Music 样式：两行截断 + 「更多」展开）
     @State private var playlistDescription: String?
     @State private var showFullDescription = false
-    /// 封面提取的主色调（模糊背景压层色）。
-    /// 用户 2026-10-14：「模糊颜色取决于封面提取的颜色」—— 压层不用系统
-    /// 白/黑（会把糊化色洗白/撞灰），改用封面自身的主色，色调跟封面走。
-    @State private var coverTint: UIColor?
 
     /// 每日推荐模式下的 header 封面（首曲封面）
     private var headerCoverURL: String? {
@@ -104,17 +99,19 @@ struct WellPlaylistDetailView: View {
     }
 
     var body: some View {
-        // ⚠️ iOS 26 Apple Music 专辑/歌单页样式（用户指定一比一）：
-        // 封面主色模糊渐变铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
+        // ⚠️ iOS 26 Apple Music 专辑/歌单页样式（用户指定一比一，实机对照截图定稿）：
+        // 糊化封面铺满整页 + 全宽大封面 → 居中标题块 → shuffle/播放/收藏 三钮
         // → 搜索行 → 无分隔线歌曲列表。
         ZStack(alignment: .top) {
-            // ★ 封面高斯模糊背景（Apple Music 专辑/歌单页同款）：
-            //   同一张封面铺满**全屏** + 大半径高斯模糊，从**大封面下缘**起一直
-            //   **保留到页面底部** —— 标题块 / 控制行 / 简介 / 搜索 / 歌曲列表
-            //   所有信息都浮在这层糊化封面之上（用户 2026-10-14 明确要求：
-            //   「应用在歌单页面大封面下面、延申到页面底部、要在歌曲所有信息下面」；
-            //   截图（Taylor Swift《Lover》专辑页）里糊化色块极清晰，只压了
-            //   **极轻**一层**封面提取主色**（≈0.30）提对比，不再淡成纯背景。
+            // ★ 封面高斯模糊背景（Apple Music 专辑/歌单页 1:1，2026-10-14 实机对照定稿）：
+            //   同一张封面铺满**全屏** + 高斯模糊，从大封面下缘起一直保留到页面
+            //   底部 —— 标题块 / 控制行 / 简介 / 搜索 / 歌曲列表所有信息都浮在
+            //   这层糊化封面之上。**背景就是糊化封面本身、不压任何色层** ——
+            //   参考实拍：模糊的颜色完全由封面自身决定（蓝封面出蓝底、粉封面出
+            //   粉底），且始终鲜明；此前加过的系统白罩（0.55→0.30）与
+            //   「封面提取主色压层」实机都被洗成灰调（用户对比截图否掉）。
+            //   收尾的饱和度增强（1.25）用于抵消高斯模糊的「去色」效应 ——
+            //   保持「颜色取决于封面」的同时让色块和实拍一样鲜明。
             //   ⚠️ 旧版图层只有 1.9 倍屏宽高，会在底栏上方戛然截止，
             //   截图表现为「dock 周围一块模糊断带」。
             //   模糊层垫在最底（ZStack 第一层），固定不随滚动（滚动跟随需要
@@ -123,13 +120,8 @@ struct WellPlaylistDetailView: View {
                 WellRemoteImage(url: headerCoverURL, displaySize: 720)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
-                    .blur(radius: 80)
-                    .overlay(
-                        LinearGradient(
-                            stops: backdropStops(width: geo.size.width, height: geo.size.height),
-                            startPoint: .top,
-                            endPoint: .bottom)
-                    )
+                    .blur(radius: 55)
+                    .saturation(1.25)
             }
             .ignoresSafeArea()
             .allowsHitTesting(false)
@@ -160,55 +152,6 @@ struct WellPlaylistDetailView: View {
             guard tracks.isEmpty else { return }
             await load()
         }
-    }
-
-    /// 模糊背景压层色 = **封面提取的主色**（用户 2026-10-14：「模糊颜色取决于
-    /// 封面提取的颜色」）。色调跟封面走，不用系统白/黑 —— 后者会把糊化封面
-    /// 的色块洗白（浅色模式）或撞灰（深色模式）。
-    ///
-    /// 可读性兜底：提取色明度极端时往系统底色方向掺一半 ——
-    /// * 深色封面 + 浅色模式：深色正文会被吞 → 提亮一半；
-    /// * 亮色封面 + 深色模式：白色正文会浮 → 压暗一半。
-    /// 普通封面原样使用，保住封面色调（如《Lover》的粉蓝 pastel）。
-    private var backdropTintUIColor: UIColor {
-        let system: UIColor = colorScheme == .dark ? .black : .white
-        guard let extracted = coverTint else { return system }
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        // ⚠️ UIColor 的解构 API 参数标签是必需的（getRed(_:green:blue:alpha:)），
-        //    少写标签会报「missing argument labels 'green:blue:alpha:' in call」。
-        guard extracted.getRed(&r, green: &g, blue: &b, alpha: &a), a > 0.01 else { return system }
-        // Rec. 709 相对明度近似
-        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-        if colorScheme == .light, luminance < 0.22 {
-            return UIColor(red: (r + 1) / 2, green: (g + 1) / 2, blue: (b + 1) / 2, alpha: 1)
-        }
-        if colorScheme == .dark, luminance > 0.78 {
-            return UIColor(red: r / 2, green: g / 2, blue: b / 2, alpha: 1)
-        }
-        return extracted
-    }
-
-    /// 背景渐隐断点：大封面是全宽**方图**，下缘在 y = 屏宽处（占屏高 width/height）。
-    ///
-    /// * `clear` 保持到封面下缘 —— 封面上方区域被封面本身盖住（滚动时才露出），
-    ///   下缘处模糊 artwork 与封面同源同位置，只有清晰度突变，颜色连续；
-    /// * 之后只压**极轻**的一层**封面提取主色**（≈0.30，底部 0.38）—— 糊化封面
-    ///   的色块从大封面下缘起**清晰地**一直保留到页面底部，垫在歌曲所有信息下面
-    ///   （用户 2026-10-14 发 Apple Music《Lover》专辑页截图要求 1:1，
-    ///   并强调「模糊颜色取决于封面提取的颜色」）；
-    /// * 不再收到底色：早期版本在屏高 80% 前淡成纯背景，歌曲区看不到模糊；
-    ///   0.55 的系统白罩也过浓（把糊化色洗白），已按截图调淡；
-    /// * 底部略微加重是给 dock / 底部留白一个稳的落点，避免糊化色在最底端
-    ///   和系统 tab bar 的材质打架。
-    private func backdropStops(width: CGFloat, height: CGFloat) -> [Gradient.Stop] {
-        let edge = height > 0 ? min(max(width / height, 0.25), 0.6) : 0.45
-        let tint = Color(uiColor: backdropTintUIColor)
-        return [
-            .init(color: .clear, location: 0),
-            .init(color: .clear, location: edge),
-            .init(color: tint.opacity(0.30), location: edge + 0.08),
-            .init(color: tint.opacity(0.38), location: 1.0),
-        ]
     }
 
     // MARK: - 全宽大封面
@@ -451,29 +394,10 @@ struct WellPlaylistDetailView: View {
         failed = fetched.isEmpty
         isLoading = false
 
-        // 模糊背景压层色：从封面提取主色调（见 coverTint 注释）。
-        // 放在这里而不是 .task 里：每日推荐模式的封面是首曲封面，要等 tracks 到手。
-        if coverTint == nil {
-            await extractCoverTint()
-        }
-
         // 歌单简介（网易云歌单；每日推荐无）
         if case .playlist(let pid, let plat, _) = source, plat == .netease, !dailyMode {
             playlistDescription = await NeteaseMusicAPI.shared.playlistDescription(id: pid)
         }
-    }
-
-    /// 取封面主色（`dominantColor()`，32×32 平均色）作为模糊背景压层。
-    ///
-    /// 走 `WellImageCache` 的 **64pt 小图请求**（≈192px 档，和货架缩图共用缓存），
-    /// 不为取色单独拉一张大图；失败（无封面 / 图床 403）时留空，
-    /// 由 `backdropTintUIColor` 回落系统底色。
-    private func extractCoverTint() async {
-        guard let raw = headerCoverURL, !raw.isEmpty else { return }
-        // `WellArtworkURL.resolved` 返回 `URL?`（地址非法时为 nil），必须先解包
-        guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
-        guard let image = await WellImageCache.shared.image(for: url) else { return }
-        coverTint = image.dominantColor()
     }
 }
 
