@@ -13,6 +13,9 @@ struct MainTabView: View {
     @State private var showingNowPlaying = false
 
     /// 底部栏位置微调（设置页「界面 → 底部栏位置」；正 = 更靠下、负 = 更靠上）。
+    ///
+    /// ⚠️ 应用时是 `42 - value`（不是 `+`）：见 `customTabInterface` 里的符号说明 ——
+    /// 贴底容器里底部 padding 越大内容越靠上，所以要「靠下」就得**减** padding。
     @AppStorage("wellmusic.tabbar.bottomOffset") private var tabBarBottomOffset: Double = 0
 
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
@@ -122,9 +125,19 @@ struct MainTabView: View {
             }
             // 位置（2026-10-14 用户标定）：以**屏幕底**为基准、距底 **42pt**
             //（在 16pt 基础上按用户要求整体**上移 26px**），再叠加设置页
-            //「底部栏位置」的微调值（正 = 更靠下、负 = 更靠上）。
+            //「底部栏位置」的微调值。
+            //
+            // ⚠️★ 2026-10-14 16:50 用户报「靠上和靠下反了」—— 根因是这里的**符号**：
+            //   `.padding(.bottom, X)` 在贴底的容器里，X 越大内容越**往上**顶
+            //   （当初 16 → 42 就是「上移 26px」，数值变大 = 上移，已是旁证）。
+            //   而设置页标签按「正 = 靠下」写，于是滑块方向与文字相反。
+            //   修法：减号。正 = 靠下（padding 变小）/ 负 = 靠上（padding 变大），
+            //   与 `SettingsManager.tabBarBottomOffset` 的文档语义（正 = 更靠下）对齐。
+            //
+            // ⚠️ 行程限制：基准本身已距屏幕底 42pt，所以**向下的有效行程只有约 42pt**
+            //   （再往下会被屏幕底边裁掉）。向上则不受限（滑杆 -100 时距底 ≈142pt）。
             // （ignoresSafeArea 让基准不再受底部安全区影响；两种语义下都稳定成立。）
-            .padding(.bottom, 42 + CGFloat(tabBarBottomOffset))
+            .padding(.bottom, 42 - CGFloat(tabBarBottomOffset))
             .ignoresSafeArea(edges: .bottom)
             .id("well.bottomDock")
         }

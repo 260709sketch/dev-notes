@@ -92,7 +92,11 @@ struct SettingsView: View {
                             Text(tabBarOffsetText)
                                 .foregroundStyle(.secondary)
                         }
-                        Slider(value: $settings.tabBarBottomOffset, in: -30...30, step: 2)
+                        // 行程 ±100pt（2026-10-14 16:50 用户要求，原 ±30 不够用）。
+                        // ⚠️ 往下受基准限制：底部栏基准位置本身距屏幕底 42pt，
+                        //    所以「靠下」的有效行程约 42pt（再往下会被屏幕底边裁掉）；
+                        //    「靠上」100pt 完全有效（届时距底 ≈142pt）。
+                        Slider(value: $settings.tabBarBottomOffset, in: -100...100, step: 2)
                     }
                 }
 
