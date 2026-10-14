@@ -12,6 +12,9 @@ struct MainTabView: View {
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
+    /// 底部栏位置微调（设置页「界面 → 底部栏位置」；正 = 更靠下、负 = 更靠上）。
+    @AppStorage("wellmusic.tabbar.bottomOffset") private var tabBarBottomOffset: Double = 0
+
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
 
@@ -118,9 +121,10 @@ struct MainTabView: View {
                 WellTabBar(items: Self.glassTabItems, selection: $selectedTab) { _ in }
             }
             // 位置按参考实拍标定（2026-10-14 用户：原位置太靠上）：
-            // 以**屏幕底**为基准、距底 16pt —— 与 Apple Music 的底栏落点一致。
+            // 以**屏幕底**为基准、距底 16pt（与 Apple Music 的底栏落点一致），
+            // 再叠加设置页的「底部栏位置」微调值（正 = 更靠下）。
             // （ignoresSafeArea 让基准不再受底部安全区影响；两种语义下都稳定成立。）
-            .padding(.bottom, 16)
+            .padding(.bottom, 16 + CGFloat(tabBarBottomOffset))
             .ignoresSafeArea(edges: .bottom)
             .id("well.bottomDock")
         }

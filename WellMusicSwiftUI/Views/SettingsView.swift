@@ -12,6 +12,13 @@ struct SettingsView: View {
 
     @State private var showingQualitySheet = false
 
+    /// 底部栏位置微调的文案（正 = 更靠下）。
+    private var tabBarOffsetText: String {
+        let value = settings.tabBarBottomOffset
+        if abs(value) < 0.5 { return "默认" }
+        return value > 0 ? "靠下 \(Int(value))pt" : "靠上 \(Int(-value))pt"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -68,6 +75,17 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
+
+                    // 底部栏（dock + 迷你播放器）纵向位置自由微调（2026-10-14 用户要求）
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("底部栏位置")
+                            Spacer()
+                            Text(tabBarOffsetText)
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.tabBarBottomOffset, in: -20...24, step: 2)
+                    }
                 }
 
                 Section("关于") {

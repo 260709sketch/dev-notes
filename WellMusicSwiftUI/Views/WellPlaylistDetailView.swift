@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 歌单 / 专辑 / 歌手详情页 —— 页面结构按 Apple Music 专辑页样式，代码按本项目重写。
 ///
@@ -121,15 +122,23 @@ struct WellPlaylistDetailView: View {
             // 内容顶到屏幕最上沿（参考实拍：无系统导航栏、封面从状态栏下就铺满）。
             .ignoresSafeArea(edges: .top)
             // ★ 深色封面自动识别：封面偏暗时整页文字转白（用户 2026-10-14 要求）。
-            //   只强制 content 的配色方案；悬浮返回按钮在 ScrollView 之外、不受影响。
+            //   只强制 content 的配色方案；悬浮返回按钮在 overlay 层、不受影响。
             .environment(\.colorScheme, coverIsDark == true ? .dark : systemScheme)
-
-            // 悬浮返回按钮（白色圆形磨砂玻璃，与 dock 同材质；
-            // 后续接入 iOS 26 液态玻璃后交给系统自动渲染 —— 用户 2026-10-14 约定）。
-            backFloatingButton
+            // 悬浮返回按钮（2026-10-14）：
+            // * 挂 ScrollView 的 overlay —— ScrollView 已 ignoresSafeArea(.top)，
+            //   坐标空间以**屏幕顶**为原点，用窗口安全区常量精确定位；
+            // * 位置对齐**原系统导航栏返回键**（用户要求）：垂直中心 = 安全区 + 22
+            //   （原导航栏 44pt 高的中点），水平左缘 12pt；
+            // * 白色圆形磨砂玻璃（与 dock 同材质），后续接 iOS 26 液态玻璃。
+            .overlay(alignment: .topLeading) {
+                backFloatingButton
+            }
         }
         // 去掉系统导航栏（用户 2026-10-14：参考实拍顶部没有导航栏）。
         .toolbar(.hidden, for: .navigationBar)
+        // ⚠️ 隐藏导航栏会连带禁用 NavigationStack 的「左滑返回」手势，
+        //    这里挂零尺寸桥把手势恢复（见 SwipeBackEnabler，用户 2026-10-14 反馈）。
+        .background(SwipeBackEnabler().frame(width: 0, height: 0))
         .navigationTitle(source.title)
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
@@ -200,28 +209,28 @@ struct WellPlaylistDetailView: View {
             )
     }
 
-    /// 悬浮返回按钮：白色圆形磨砂玻璃（与 dock 同材质），左上角浮在封面上。
+    /// 悬浮返回按钮：白色圆形磨砂玻璃（与 dock 同材质），位置**对齐原系统导航栏
+    /// 返回键**（用户 2026-10-14 实机纠错：之前用了 GeometryReader 的
+    /// safeAreaInsets 导致双重计入、按钮偏低约 50pt）。
     ///
-    /// 承接原系统导航栏的返回职责（页面已隐藏 toolbar）。用 GeometryReader 读
-    /// 自身位置的 safeAreaInsets —— 无论父层是否忽略安全区，按钮都落在状态栏下方；
-    /// 后续接入 iOS 26 液态玻璃后由系统自动渲染（用户 2026-10-14 约定）。
+    /// 定位基准：overlay 挂在不忽略安全区的 ScrollView 上，但它已
+    /// `ignoresSafeArea(.top)` —— 坐标原点 = 屏幕顶；因此用窗口安全区常量即可
+    /// 精确算出「原导航栏 44pt 高、按钮垂直居中」的位置：安全区 + 2。
+    /// 后续接入 iOS 26 液态玻璃后交给系统自动渲染。
     private var backFloatingButton: some View {
-        GeometryReader { g in
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.backward")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 40, height: 40)
-                    // 与 dock 栏同材质（WellTabBar 用 .regularMaterial）
-                    .background(.regularMaterial, in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.leading, 14)
-            .padding(.top, g.safeAreaInsets.top + 6)
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "chevron.backward")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 40, height: 40)
+                .background(.regularMaterial, in: Circle())
+                .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .padding(.leading, 12)
+        .padding(.top, AppleMusicPlayerView.safeAreaTopInset + 2)
     }
 
     // MARK: - 居中标题块（Apple Music 同款：名 / 歌手 / 数量）
@@ -494,7 +503,12 @@ struct WellPlaylistDetailView: View {
         return UIColor(hue: h, saturation: min(s * factor, 1), brightness: b, alpha: 1)
     }
 
-    /// 明度自适应：亮色往白掺 35%、暗色往黑掺 45%、中间调原样（见 extractCoverBackdrop）。
+    /// 明度自适应（2026-10-14 第二轮实拍标定）：
+    /// * 平均明度 > 0.62 → 亮封面：往白掺 35%（对齐《Lover》浅粉底 (231,218,228)）；
+    /// * 其余一律**压暗到 42%**（对齐参考实拍：绿封面 0.375→0.15 = ×0.40、
+    ///   Whole Lotta Red 黑白封面 0.53→0.22 深炭灰、深色人像 0.28→0.12 近黑）。
+    ///   ⚠️ 早期「0.40~0.62 原样」的中间区间会把黑白封面渲染成灰底 —— 深色
+    ///   封面渐隐进灰底非常难看（用户 2026-10-14 截图反馈），故取消该区间。
     private static func lightnessAdjusted(_ color: UIColor) -> UIColor {
         let lum = luminance(of: color)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -503,11 +517,8 @@ struct WellPlaylistDetailView: View {
             let t: CGFloat = 0.35
             return UIColor(red: r + (1 - r) * t, green: g + (1 - g) * t, blue: b + (1 - b) * t, alpha: 1)
         }
-        if lum < 0.40 {
-            let t: CGFloat = 0.45
-            return UIColor(red: r * (1 - t), green: g * (1 - t), blue: b * (1 - t), alpha: 1)
-        }
-        return color
+        let scale: CGFloat = 0.42
+        return UIColor(red: r * scale, green: g * scale, blue: b * scale, alpha: 1)
     }
 
     /// Rec.709 相对明度（取不到分量时按亮色处理）。
@@ -558,5 +569,50 @@ struct WellDetailSongRow: View {
         WellPlaylistDetailView(
             source: .playlist(id: "1", platform: .netease, name: "示例歌单"),
             coverURL: nil, creatorName: "创建者", playCount: 12345)
+    }
+}
+
+// MARK: - 左滑返回恢复
+
+/// 恢复「左滑返回」手势（用户 2026-10-14 反馈：去掉导航栏后不能左滑退出了）。
+///
+/// 根因：`.toolbar(.hidden, for: .navigationBar)` 隐藏导航栏的同时，
+/// 系统会把 `interactivePopGestureRecognizer` 一并禁用 —— 这是 UIKit
+/// 的既有行为（导航栏没了，返回手势也不再放行）。
+///
+/// 做法：挂一个零尺寸的 representable 进视图层级，向上找到所在
+/// `UINavigationController`，把手势重新打开；delegate 用本类实例且只在
+/// 栈深 > 1 时放行（直接置 delegate = nil 会在根页面误触发、卡死导航栈）。
+struct SwipeBackEnabler: UIViewControllerRepresentable {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var navigationController: UINavigationController?
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = UIViewController()
+        controller.view.isUserInteractionEnabled = false
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        DispatchQueue.main.async {
+            // 手动沿 parent 链向上找 UINavigationController（SwiftUI 的
+            // representable 直接取 navigationController 不一定命中）。
+            var node: UIViewController? = uiViewController
+            while let current = node, !(current is UINavigationController) {
+                node = current.parent
+            }
+            guard let nav = node as? UINavigationController,
+                  let gesture = nav.interactivePopGestureRecognizer else { return }
+            context.coordinator.navigationController = nav
+            gesture.delegate = context.coordinator
+            gesture.isEnabled = true
+        }
     }
 }
