@@ -6,11 +6,18 @@ struct ProfileView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var session = NeteaseSession.shared
     @State private var showingSettings = false
-    @State private var showingLogin = false
+    /// 点头像 → 底部弹出账号设置（未登录 = 登录入口；已登录 = 账号详情/退出登录）
+    @State private var showingAccount = false
+    /// 大标题被导航栏完全盖住 → 把「我的」收进导航栏（Apple Music 折叠行为）
+    @State private var titleCollapsed = false
+    /// 大标题行静止时的 global minY（首帧量到；折叠阈值以此为基准，与机型安全区高度无关）
+    @State private var titleRestingMinY: CGFloat? = nil
 
     var body: some View {
         NavigationStack {
             List {
+                largeTitleSection
+
                 Section {
                     NavigationLink { MyPlaylistsView() } label: {
                         Label("我的歌单", systemImage: "music.note.list")
@@ -45,7 +52,15 @@ struct ProfileView: View {
                     }
                 }
             }
-            .navigationTitle("我的")
+            // 大标题折叠时导航栏才显示「我的」；静止时留空（大标题由 largeTitleSection 自绘）
+            .navigationTitle(titleCollapsed ? "我的" : "")
+            // ★ 2026-10-14 用户：头像要像 Apple Music 那样钉在**导航栏右上角**
+            //   （参考截图 IMG_3962），不是和大标题「我的」挤在同一行（IMG_3961 红圈标出的错误位置）。
+            //   根因：大标题（.large）模式下 `.topBarTrailing` 的 toolbar item 会被系统
+            //   渲染进**大标题那一行**；只有 `.inline` 模式才固定在导航栏条里。
+            //   代价：系统大标题不能用了 → 由 `largeTitleSection` 在列表首行自绘
+            //   （34pt bold，随内容滚动），滚过后由 titleCollapsed 收进导航栏。
+            .navigationBarTitleDisplayMode(.inline)
             // ★ 2026-10-14 用户：登录卡片移除，登录入口放到「我的」大标题右侧。
             //   未登录显示与 dock 栏「我的」同款人形图标，登录后显示网易云头像。
             .toolbar {
@@ -53,12 +68,55 @@ struct ProfileView: View {
                     accountEntryButton
                 }
             }
+            // 量大标题行的滚动位置：完全滚进导航栏下方 → 折叠出导航栏标题
+            .onPreferenceChange(ProfileTitleOffsetKey.self) { minY in
+                guard minY > 0 else { return }
+                if titleRestingMinY == nil { titleRestingMinY = minY }
+                guard let rest = titleRestingMinY else { return }
+                // 阈值 ≈ 导航栏 44 + 标题行高 41 ≈ 46：标题被完全盖住即折叠
+                let shouldCollapse = (rest - minY) > 46
+                if shouldCollapse != titleCollapsed {
+                    withAnimation(.easeInOut(duration: 0.16)) { titleCollapsed = shouldCollapse }
+                }
+            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
-            .sheet(isPresented: $showingLogin) {
-                NeteaseLoginSheet()
+            // ★ 2026-10-14 用户：点头像要从底部弹出账号设置
+            //   （原先已登录时是空实现，点了没反应）。
+            //   NeteaseAccountSettingsView 未登录态自带「登录网易云音乐」入口
+            //   （内部再弹 NeteaseLoginSheet），所以未登录点头像也能从这里登录。
+            .sheet(isPresented: $showingAccount) {
+                NavigationStack {
+                    NeteaseAccountSettingsView()
+                }
             }
+        }
+    }
+
+    // MARK: 大标题（Apple Music 版式）
+
+    /// 「我的」大标题：34pt bold、左缘与下方卡片对齐、随内容滚动。
+    /// 行内挂 GeometryReader 上报 global minY（`ProfileTitleOffsetKey`），
+    /// 由 body 的 onPreferenceChange 判定折叠时机。
+    private var largeTitleSection: some View {
+        Section {
+            Text("我的")
+                .font(.system(size: 34, weight: .bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // insetGrouped 里行的布局框 = 卡片框，leading 0 = 贴卡片左缘
+                // （= 距屏幕 16pt，与系统大标题、卡片左缘三者对齐）
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 4, trailing: 0))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: ProfileTitleOffsetKey.self,
+                            value: geo.frame(in: .global).minY
+                        )
+                    }
+                )
         }
     }
 
@@ -69,11 +127,9 @@ struct ProfileView: View {
     @ViewBuilder
     private var accountEntryButton: some View {
         Button {
-            if session.isLoggedIn {
-                // 已登录：点击进入账号详情（当前仅轻提示，后续再加功能，用户要求先别动）
-            } else {
-                showingLogin = true
-            }
+            // ★ 2026-10-14 用户：点头像一律从底部弹出账号设置
+            //   （未登录 = 登录入口；已登录 = 账号详情/退出登录）
+            showingAccount = true
         } label: {
             if let account = session.account, session.isLoggedIn, let urlString = account.avatarURL, let url = URL(string: urlString), !urlString.isEmpty {
                 WellAsyncImage(url: url) {
@@ -93,6 +149,17 @@ struct ProfileView: View {
             // 进页面顺手校验一次票据：过期自动回到未登录态
             if session.isLoggedIn { await session.refreshAccount() }
         }
+    }
+}
+
+/// 「我的」页大标题行的滚动位置（global minY）：
+/// 用来判定大标题是否已被导航栏完全盖住 —— 盖住就把「我的」收进导航栏
+/// （Apple Music 的大标题折叠行为，见 `ProfileView.titleCollapsed`）。
+private struct ProfileTitleOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = .zero
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
