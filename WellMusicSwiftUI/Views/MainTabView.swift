@@ -28,7 +28,6 @@ struct MainTabView: View {
     /// 一起重新测量，大标题与整页都会跳一下（11:10 版踩过并修复的结构，勿回退）。
     @State private var radioPath = NavigationPath()
     @State private var squarePath = NavigationPath()
-    @State private var favoritesPath = NavigationPath()
     @State private var searchPath = NavigationPath()
     @State private var profilePath = NavigationPath()
 
@@ -82,9 +81,6 @@ struct MainTabView: View {
             Tab("精选", systemImage: "sparkles.rectangle.stack.fill", value: WellTab.square) {
                 NavigationStack(path: $squarePath) { PlaylistSquareView() }
             }
-            Tab("音乐库", systemImage: "square.grid.2x2.fill", value: WellTab.favorites) {
-                NavigationStack(path: $favoritesPath) { FavoritesView() }
-            }
             Tab(value: WellTab.search, role: .search) {
                 NavigationStack(path: $searchPath) { SearchView() }
             } label: {
@@ -104,7 +100,6 @@ struct MainTabView: View {
     private var customTabInterface: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                page(.favorites) { FavoritesView() }
                 page(.profile) { ProfileView() }
                 page(.radio) { DiscoverView() }
                 page(.square) { PlaylistSquareView() }
@@ -160,7 +155,6 @@ struct MainTabView: View {
         switch tab {
         case .radio: return $radioPath
         case .square: return $squarePath
-        case .favorites: return $favoritesPath
         case .search: return $searchPath
         case .profile: return $profilePath
         }
@@ -171,7 +165,6 @@ extension MainTabView {
     static let glassTabItems: [WellTabBar.Item] = [
         .init(tab: .radio, title: "发现", icon: "house"),
         .init(tab: .square, title: "精选", icon: "sparkles.rectangle.stack"),
-        .init(tab: .favorites, title: "音乐库", icon: "square.grid.2x2"),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]

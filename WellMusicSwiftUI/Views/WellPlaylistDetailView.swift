@@ -533,7 +533,9 @@ struct WellPlaylistDetailView: View {
 ///
 /// iOS 18 起有专门的 `toolbarBackgroundVisibility`，iOS 16–17 用 `toolbarBackground`，
 /// 两者同名取值语义一致，故按可用版本二选一。
-private struct NativeNavigationBarBackground: ViewModifier {
+///
+/// 供本页与 `WellMyPlaylistDetailView` 共用，故为 internal。
+struct NativeNavigationBarBackground: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.toolbarBackgroundVisibility(.automatic, for: .navigationBar)

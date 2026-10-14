@@ -21,8 +21,12 @@ struct ProfileView: View {
                     NavigationLink { MyPlaylistsView() } label: {
                         Label("我的歌单", systemImage: "music.note.list")
                     }
-                    NavigationLink { Text("收藏专辑（开发中）").frame(maxWidth: .infinity, alignment: .leading) } label: {
+                    NavigationLink { NeteaseFavoriteAlbumsView() } label: {
                         Label("收藏专辑", systemImage: "square.stack")
+                    }
+                    // 本地收藏列表（原先在已删除的「音乐库」页里）
+                    NavigationLink { LocalFavoriteSongsView() } label: {
+                        Label("收藏歌曲", systemImage: "music.note")
                     }
                 }
 
@@ -55,49 +59,72 @@ struct ProfileView: View {
     }
 }
 
-/// 自建歌单列表
+/// 我的歌单：分两组 —— 本地自建 + 网易云账号歌单。
+///
+/// 点进去一律走 `WellMyPlaylistDetailView`（用户 2026-10-14 截图 IMG_3957 版式）。
+/// 本地自建歌单没有平台属性，所以详情页里不显示「网易云音乐」平台行；
+/// 账号歌单则有 —— 这正是截图里的样子。
 struct MyPlaylistsView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var session = NeteaseSession.shared
     @State private var showingCreate = false
+
+    /// 网易云账号歌单（未登录时保持为空，不请求）
+    @State private var neteasePlaylists: [NeteaseMusicAPI.UserPlaylistItem] = []
+    @State private var isLoadingNetease = false
+    @State private var neteaseFailed = false
 
     var body: some View {
         List {
-            if appState.playlists.isEmpty {
-                if #available(iOS 17.0, *) {
-                    ContentUnavailableView("暂无歌单", systemImage: "music.note.list",
-                                           description: Text("点击右上角新建歌单"))
+            Section("本地自建") {
+                if appState.playlists.isEmpty {
+                    Text("还没有自建歌单")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "music.note.list")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("暂无歌单").font(.headline)
-                        Text("点击右上角新建歌单").font(.caption).foregroundStyle(.secondary)
+                    ForEach(appState.playlists) { pl in
+                        NavigationLink {
+                            WellMyPlaylistDetailView(source: .local(pl))
+                        } label: {
+                            row(name: pl.name, coverURL: pl.coverURL,
+                                subtitle: "\(pl.tracks.count) 首")
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
+                    .onDelete { offsets in
+                        appState.playlists.remove(atOffsets: offsets)
+                    }
                 }
-            } else {
-                ForEach(appState.playlists) { pl in
-                    NavigationLink {
-                        PlaylistDetailView(playlist: pl)
-                    } label: {
-                        HStack(spacing: 12) {
-                            ArtworkView(url: pl.coverURL, size: 48)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(pl.name).font(.body).lineLimit(1)
-                                Text("\(pl.tracks.count) 首")
-                                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            if session.isLoggedIn {
+                Section("网易云歌单") {
+                    if isLoadingNetease && neteasePlaylists.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("加载中…").font(.footnote).foregroundStyle(.secondary)
+                        }
+                    } else if neteasePlaylists.isEmpty {
+                        Text(neteaseFailed ? "暂时拿不到账号歌单" : "账号里还没有歌单")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(neteasePlaylists) { pl in
+                            NavigationLink {
+                                WellMyPlaylistDetailView(
+                                    source: .netease(id: pl.id, name: pl.name,
+                                                     coverURL: pl.coverURL,
+                                                     creatorName: "网易云音乐"))
+                            } label: {
+                                row(name: pl.name, coverURL: pl.coverURL,
+                                    subtitle: "\(pl.trackCount) 首")
                             }
                         }
                     }
                 }
-                .onDelete { offsets in
-                    appState.playlists.remove(atOffsets: offsets)
-                }
             }
         }
         .navigationTitle("我的歌单")
+        .task { await loadNeteasePlaylists() }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 14) {
@@ -129,6 +156,29 @@ struct MyPlaylistsView: View {
         guard !name.isEmpty else { return }
         appState.playlists.insert(Playlist(name: name), at: 0)
         newPlaylistName = ""
+    }
+
+    private func row(name: String, coverURL: String?, subtitle: String) -> some View {
+        HStack(spacing: 12) {
+            ArtworkView(url: coverURL, size: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.body).lineLimit(1)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// 拉账号歌单（`api/user/playlist`）。未登录直接跳过，不浪费一次请求。
+    private func loadNeteasePlaylists() async {
+        guard session.isLoggedIn, let uid = session.account?.userId else { return }
+        isLoadingNetease = true
+        neteaseFailed = false
+        do {
+            neteasePlaylists = try await NeteaseMusicAPI.shared.userPlaylists(uid: uid)
+        } catch {
+            neteaseFailed = true
+        }
+        isLoadingNetease = false
     }
 }
 
@@ -377,5 +427,147 @@ struct RecentPlaysView: View {
             cloudTracks = cloud
         }
         isLoading = false
+    }
+}
+
+// MARK: - 收藏歌曲（本地收藏列表）
+
+/// 「收藏歌曲」：本地收藏的歌曲。
+///
+/// 内容原先是「音乐库」页里的「收藏歌曲」分段 —— 2026-10-14 用户要求删除音乐库页、
+/// 把这一项并到「我的」页，故独立成页。
+///
+/// 与「我喜欢」的区别：那个是**实时**拉网易云红心歌单，这个是 App 本地收藏列表
+/// （含非网易云来源的歌曲）。两者数据来源不同，按用户要求并存、不做合并。
+struct LocalFavoriteSongsView: View {
+    @EnvironmentObject private var appState: AppState
+    /// 只发起播放、不显示播放状态 → 取单例引用，不订阅（理由同 PlaylistDetailView）。
+    private var player: PlayerCore { PlayerCore.shared }
+
+    var body: some View {
+        Group {
+            if appState.favoriteTracks.isEmpty {
+                ProfileEmptyTip(icon: "music.note",
+                                title: "还没有收藏歌曲",
+                                note: "在歌曲上点收藏后会出现在这里")
+            } else {
+                List(appState.favoriteTracks) { item in
+                    TrackRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            player.play(queue: appState.favoriteTracks,
+                                        startIndex: appState.favoriteTracks.firstIndex(of: item) ?? 0)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                appState.favoriteTracks.removeAll { MusicItem.isSame($0, item) }
+                            } label: {
+                                Label("移除", systemImage: "trash")
+                            }
+                        }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("收藏歌曲")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 收藏专辑（网易云 api/album/sublist）
+
+/// 「收藏专辑」：网易云账号里收藏的专辑。
+struct NeteaseFavoriteAlbumsView: View {
+    @State private var albums: [WellAlbumSummary] = []
+    @State private var isLoading = true
+    @State private var failed = false
+    @State private var notLoggedIn = false
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if notLoggedIn {
+                ProfileEmptyTip(icon: "square.stack",
+                                title: "还没有登录网易云",
+                                note: "登录后这里显示你在网易云收藏的专辑")
+            } else if failed {
+                VStack(spacing: 10) {
+                    Text("暂时拿不到收藏专辑").foregroundStyle(.secondary)
+                    Button("重试") { Task { await load() } }
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if albums.isEmpty {
+                ProfileEmptyTip(icon: "square.stack",
+                                title: "还没有收藏专辑",
+                                note: "在网易云里收藏专辑后会出现在这里")
+            } else {
+                ScrollView {
+                    // 复用搜索页的自适应网格与卡片，尺寸逻辑不重复实现
+                    WellCardGrid {
+                        ForEach(albums) { album in
+                            NavigationLink {
+                                WellPlaylistDetailView(
+                                    source: .album(id: album.id, platform: album.platform,
+                                                   name: album.name, artist: album.artistName),
+                                    coverURL: album.picURL,
+                                    creatorName: album.artistName)
+                            } label: {
+                                WellCoverCard(coverURL: album.picURL,
+                                              title: album.name,
+                                              subtitle: album.artistName,
+                                              fillWidth: true)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
+                }
+                // 裸 ScrollView 不自带底色（理由同 WellMyPlaylistDetailView）
+                .background(AppTheme.background)
+            }
+        }
+        .navigationTitle("收藏专辑")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard NeteaseSession.shared.isLoggedIn else {
+            notLoggedIn = true
+            isLoading = false
+            return
+        }
+        isLoading = true
+        failed = false
+        do {
+            albums = try await NeteaseMusicAPI.shared.favoritedAlbums(limit: 200)
+        } catch {
+            failed = true
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - 空态提示（本文件内复用）
+
+/// 「我的」页各子页统一的空态样式。
+struct ProfileEmptyTip: View {
+    let icon: String
+    let title: String
+    let note: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text(title).font(.headline).foregroundStyle(.secondary)
+            Text(note).font(.caption).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

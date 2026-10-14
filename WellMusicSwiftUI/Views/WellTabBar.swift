@@ -2,7 +2,6 @@ import SwiftUI
 
 /// WellMusic 底部 Tab 枚举
 enum WellTab: String, CaseIterable, Identifiable {
-    case favorites
     case profile
     case radio
     case square
@@ -12,7 +11,6 @@ enum WellTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .favorites: return "收藏"
         case .profile: return "我的"
         case .radio: return "发现"
         case .square: return "精选"
@@ -22,7 +20,6 @@ enum WellTab: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .favorites: return "heart.fill"
         case .profile: return "person.fill"
         case .radio: return "house.fill"
         case .square: return "sparkles.rectangle.stack.fill"

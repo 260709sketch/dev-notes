@@ -760,6 +760,108 @@ final class NeteaseMusicAPI {
         }
     }
 
+    // MARK: 账号歌单 / 收藏专辑
+
+    /// 账号歌单条目（`api/user/playlist`）。
+    ///
+    /// 一个账号的这份列表里混着三类：`isLoved` 的「我喜欢的音乐」、用户自建歌单、
+    /// 用户收藏的别人的歌单 —— 界面上按 `isLoved` 与创建者区分。
+    struct UserPlaylistItem: Identifiable {
+        var id: String
+        var name: String
+        var coverURL: String?
+        var trackCount: Int
+        var creatorName: String?
+        /// 网易云「我喜欢的音乐」特征：`specialType == 5`。
+        ///
+        /// 刻意不按名字匹配 —— 用户能给这个歌单改名，名字一旦改了按名匹配就失效，
+        /// 而 `specialType` 是服务端字段，改名不动它。
+        var isLoved: Bool
+    }
+
+    private struct UserPlaylistsResponse: Decodable {
+        var code: Int?
+        var playlist: [Entry]?
+        struct Entry: Decodable {
+            var id: Int?
+            var name: String?
+            var coverImgUrl: String?
+            var trackCount: Int?
+            var specialType: Int?
+            var creator: Creator?
+            struct Creator: Decodable { var nickname: String? }
+        }
+    }
+
+    /// 账号歌单列表（`api/user/playlist`，明文可用，需登录 Cookie 才会返回私人歌单）。
+    ///
+    /// `uid` 传 `NeteaseSession.shared.account?.userId`。
+    func userPlaylists(uid: Int) async throws -> [UserPlaylistItem] {
+        let params: [String: Any] = ["uid": uid, "limit": 1000, "offset": 0, "csrf_token": ""]
+        let resp: UserPlaylistsResponse = try await Self.apiRequest(
+            "api/user/playlist", params: params, type: UserPlaylistsResponse.self)
+        return (resp.playlist ?? []).compactMap { entry in
+            guard let id = entry.id else { return nil }
+            return UserPlaylistItem(
+                id: String(id),
+                name: entry.name ?? "",
+                coverURL: entry.coverImgUrl,
+                trackCount: entry.trackCount ?? 0,
+                creatorName: entry.creator?.nickname,
+                isLoved: entry.specialType == 5
+            )
+        }
+    }
+
+    private struct AlbumSublistResponse: Decodable {
+        var code: Int?
+        var albums: [Entry]?
+        var data: Payload?
+        struct Payload: Decodable {
+            var albums: [Entry]?
+            var list: [Entry]?
+            var data: [Entry]?
+        }
+        struct Entry: Decodable {
+            var id: Int?
+            var name: String?
+            var picUrl: String?
+            var size: Int?
+            var publishTime: Int?
+            var artist: ArtistRef?
+            var artists: [ArtistRef]?
+            struct ArtistRef: Decodable { var name: String? }
+        }
+    }
+
+    /// 收藏的专辑（`api/album/sublist`，需登录 Cookie）。
+    ///
+    /// ⚠️ 这个接口的 payload 层级在不同账号下不一致：有时 `albums` 直接挂在根上，
+    /// 有时藏在 `data.albums` / `data.list` / `data.data` 里。四个位置都试一遍 ——
+    /// 只认一个位置的话，换个账号就整页空白（与 `recentSongs` 的双通道兜底同理）。
+    func favoritedAlbums(limit: Int = 100, offset: Int = 0) async throws -> [WellAlbumSummary] {
+        let params: [String: Any] = ["limit": limit, "offset": offset, "total": true, "csrf_token": ""]
+        let resp: AlbumSublistResponse = try await Self.apiRequest(
+            "api/album/sublist", params: params, type: AlbumSublistResponse.self)
+        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+        return entries.compactMap { entry in
+            guard let id = entry.id else { return nil }
+            let artistName = entry.artist?.name
+                ?? entry.artists?.compactMap(\.name).joined(separator: " / ")
+                ?? ""
+            return WellAlbumSummary(
+                id: String(id),
+                name: entry.name ?? "",
+                picURL: entry.picUrl,
+                artistName: artistName,
+                platform: .netease,
+                albumMid: nil,
+                albumType: nil,
+                publishTime: entry.publishTime
+            )
+        }
+    }
+
     // MARK: 每日推荐 / 私人漫游 / 心动模式
 
     /// 每日推荐歌曲（发现页顶部功能卡片之一）。
