@@ -1,57 +1,56 @@
 import SwiftUI
 
-/// 我的 Tab：网易云账号登录入口（导航栏右侧）+ 自建歌单 + 网易云内容入口 + 设置入口
+/// 我的 Tab —— 四分组布局（用户 2026-10-15 截图 IMG_3974 样式）。
+///
+/// 分组顺序（用户原话）：
+///   ① 入口组：听歌排行 / 最近播放 / 网易云的我喜欢（保持现有排版，List 行样式）
+///   ② 我的歌单：标题 + 查看更多，下方**横滑**选歌单（本地自建 + 网易云账号）
+///   ③ 最近喜欢：标题 + 查看更多，下方一列 **5 首**（本地收藏最新在前）
+///   ④ 收藏专辑：一横两个（两列网格），排数随收藏数量
+///
+/// 参考图为 Apple Music 音乐库风格：分组标题 = `⌄ 标题 (数量)` + 右侧「查看更多」。
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var session = NeteaseSession.shared
     @State private var showingSettings = false
     /// 点头像 → 底部弹出账号设置（未登录 = 登录入口；已登录 = 账号详情/退出登录）
     @State private var showingAccount = false
 
+    /// 网易云账号歌单（第二分组横滑后半段；未登录保持空）
+    @State private var neteasePlaylists: [NeteaseMusicAPI.UserPlaylistItem] = []
+    /// 网易云收藏专辑（第四分组网格）
+    @State private var favoriteAlbums: [WellAlbumSummary] = []
+    /// 首屏异步数据（账号歌单 / 收藏专辑）是否仍在加载
+    @State private var isLoadingContent = true
+
+    /// ⚠️ 性能铁律：不订阅 PlayerCore（20Hz 广播），只在点击时取单例发起播放。
+    private var player: PlayerCore { PlayerCore.shared }
+
+    /// 最近喜欢 = 本地收藏的最新 5 首（`favoriteTracks` 头插，最新在前）
+    private var recentLikes: [MusicItem] { Array(appState.favoriteTracks.prefix(5)) }
+
+    /// 「我的歌单」总数 = 本地自建 + 网易云账号
+    private var playlistTotalCount: Int { appState.playlists.count + neteasePlaylists.count }
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    NavigationLink { MyPlaylistsView() } label: {
-                        Label("我的歌单", systemImage: "music.note.list")
-                    }
-                    NavigationLink { NeteaseFavoriteAlbumsView() } label: {
-                        Label("收藏专辑", systemImage: "square.stack")
-                    }
-                    // 本地收藏列表（原先在已删除的「音乐库」页里）
-                    NavigationLink { LocalFavoriteSongsView() } label: {
-                        Label("收藏歌曲", systemImage: "music.note")
-                    }
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    quickEntries
+                    playlistsSection
+                    recentLikesSection
+                    favoriteAlbumsSection
+                    settingsSection
 
-                Section("网易云") {
-                    NavigationLink { NeteaseLikedSongsView() } label: {
-                        Label("我喜欢", systemImage: "heart.text.square")
-                    }
-                    NavigationLink { NeteasePlayRecordView() } label: {
-                        Label("听歌排行", systemImage: "chart.bar.fill")
-                    }
-                    NavigationLink { RecentPlaysView() } label: {
-                        Label("最近播放", systemImage: "clock.arrow.circlepath")
-                    }
+                    // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白
+                    Color.clear.frame(height: 170)
                 }
-
-                Section {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Label("设置", systemImage: "gearshape")
-                            .foregroundStyle(.primary)
-                    }
-                }
+                .padding(.top, 4)
             }
-            // ★ 2026-10-14 用户：标题要和其他页面一致（都在导航栏上）。
-            //   原先为了把头像钉在导航栏右上角，只能用 `.inline` + 自绘 34pt 大标题
-            //   （`.large` 模式下 `.topBarTrailing` 的 toolbar item 会被系统渲染进大标题那一行）；
-            //   本轮头像入口已按用户要求移除，该限制随之消失 → 回归系统大标题。
+            .background(AppTheme.background)
             .navigationTitle("我的")
             .navigationBarTitleDisplayMode(.large)
+            .task { await loadContent() }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
@@ -67,7 +66,300 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: 大标题（Apple Music 版式）
+    // MARK: - 分组标题（参考图样式：⌄ + 标题(数量) + 查看更多）
+
+    /// 带「查看更多」的标题（跳转用 `NavigationLink`）。
+    private func groupHeader<Destination: View>(
+        _ title: String,
+        count: Int? = nil,
+        @ViewBuilder seeAll: () -> Destination
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .bold))
+            Text(count.map { "\(title) (\($0))" } ?? title)
+                .font(.system(size: 20, weight: .bold))
+            Spacer(minLength: 8)
+            NavigationLink {
+                seeAll()
+            } label: {
+                Text("查看更多")
+                    .font(.system(size: 15))
+                    .foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// 无「查看更多」的标题（收藏专辑：全量展示，不另设入口）。
+    private func plainGroupHeader(_ title: String, count: Int? = nil) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .bold))
+            Text(count.map { "\(title) (\($0))" } ?? title)
+                .font(.system(size: 20, weight: .bold))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: - 分组① 入口：听歌排行 / 最近播放 / 我喜欢（保持现有排版）
+
+    private var quickEntries: some View {
+        VStack(spacing: 0) {
+            entryRow(icon: "chart.bar.fill", title: "听歌排行") { NeteasePlayRecordView() }
+            Divider().padding(.leading, 54)
+            entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
+            Divider().padding(.leading, 54)
+            entryRow(icon: "heart.text.square", title: "我喜欢") { NeteaseLikedSongsView() }
+        }
+        .background(AppTheme.secondaryBackground,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func entryRow<Destination: View>(
+        icon: String,
+        title: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17))
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(width: 26)
+                Text(title).font(.system(size: 16))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 分组② 我的歌单（标题 + 查看更多 + 横滑）
+
+    private var playlistsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            groupHeader("我的歌单", count: playlistTotalCount) { MyPlaylistsView() }
+
+            if isLoadingContent && playlistTotalCount == 0 {
+                loadingRow
+            } else if playlistTotalCount == 0 {
+                emptyRow("还没有歌单")
+            } else {
+                WellShelf(title: "", rowHeight: 220, showsHeader: false) {
+                    ForEach(appState.playlists) { pl in
+                        NavigationLink {
+                            WellMyPlaylistDetailView(source: .local(pl))
+                        } label: {
+                            playlistCard(name: pl.name, coverURL: pl.coverURL,
+                                         subtitle: "\(pl.tracks.count) 首")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    ForEach(neteasePlaylists) { pl in
+                        NavigationLink {
+                            WellMyPlaylistDetailView(
+                                source: .netease(id: pl.id, name: pl.name,
+                                                 coverURL: pl.coverURL,
+                                                 creatorName: "网易云音乐"))
+                        } label: {
+                            playlistCard(name: pl.name, coverURL: pl.coverURL,
+                                         subtitle: "\(pl.trackCount) 首 · 网易云")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 横滑歌单卡（参考图：150pt 封面 + 名称 2 行 + 副标题 1 行）。
+    private func playlistCard(name: String, coverURL: String?, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            WellRemoteImage(url: coverURL, displaySize: 150)
+                .frame(width: 150, height: 150)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(AppTheme.secondaryBackground,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text(name)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(2)
+                .frame(width: 150, height: 38, alignment: .topLeading)
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 150, height: 16, alignment: .topLeading)
+        }
+        .frame(width: 150, alignment: .topLeading)
+    }
+
+    // MARK: - 分组③ 最近喜欢（标题 + 查看更多 + 5 首）
+
+    private var recentLikesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            groupHeader("最近喜欢", count: appState.favoriteTracks.count) { LocalFavoriteSongsView() }
+
+            if recentLikes.isEmpty {
+                emptyRow("还没有喜欢的歌曲")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(recentLikes.enumerated()), id: \.offset) { index, track in
+                        likeRow(track, index: index)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 歌曲行（参考图：46pt 封面 + 歌名 + 「歌手 · 平台」，点击播放）。
+    private func likeRow(_ track: MusicItem, index: Int) -> some View {
+        Button {
+            player.play(queue: appState.favoriteTracks, startIndex: index)
+        } label: {
+            HStack(spacing: 12) {
+                WellRemoteImage(url: track.albumCoverURL, displaySize: 46)
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(AppTheme.secondaryBackground,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                    Text(likeSubtitle(track))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func likeSubtitle(_ track: MusicItem) -> String {
+        let platformName: String
+        switch track.source {
+        case .netease, .lx, .auto: platformName = "网易云"
+        case .qq: platformName = "QQ音乐"
+        case .kugou: platformName = "酷狗"
+        case .kuwo: platformName = "酷我"
+        }
+        if let artist = track.artist, !artist.isEmpty {
+            return "\(artist) · \(platformName)"
+        }
+        return platformName
+    }
+
+    // MARK: - 分组④ 收藏专辑（一横两个，全量展示）
+
+    private var favoriteAlbumsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            plainGroupHeader("收藏专辑", count: favoriteAlbums.count)
+
+            if isLoadingContent && favoriteAlbums.isEmpty {
+                loadingRow
+            } else if favoriteAlbums.isEmpty {
+                emptyRow(session.isLoggedIn ? "还没有收藏专辑" : "登录后显示网易云收藏的专辑")
+            } else {
+                // 复用搜索页的自适应两列网格与卡片
+                WellCardGrid {
+                    ForEach(favoriteAlbums) { album in
+                        NavigationLink {
+                            WellPlaylistDetailView(
+                                source: .album(id: album.id, platform: album.platform,
+                                               name: album.name, artist: album.artistName,
+                                               mid: album.albumMid),
+                                coverURL: album.picURL,
+                                creatorName: album.artistName)
+                        } label: {
+                            WellCoverCard(coverURL: album.picURL,
+                                          title: album.name,
+                                          subtitle: album.artistName,
+                                          fillWidth: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    // MARK: - 设置入口（保留）
+
+    private var settingsSection: some View {
+        VStack(spacing: 0) {
+            Button {
+                showingSettings = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 17))
+                        .foregroundStyle(AppTheme.accent)
+                        .frame(width: 26)
+                    Text("设置").font(.system(size: 16)).foregroundStyle(.primary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .background(AppTheme.secondaryBackground,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: - 加载/空态行
+
+    private var loadingRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text("加载中…").font(.system(size: 13)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func emptyRow(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+    }
+
+    // MARK: - 数据加载
+
+    private func loadContent() async {
+        isLoadingContent = true
+        if session.isLoggedIn {
+            async let albumsTask = NeteaseMusicAPI.shared.favoritedAlbums(limit: 200)
+            if let uid = session.account?.userId {
+                async let playlistsTask = NeteaseMusicAPI.shared.userPlaylists(uid: uid)
+                neteasePlaylists = (try? await playlistsTask) ?? []
+            }
+            favoriteAlbums = (try? await albumsTask) ?? []
+        }
+        isLoadingContent = false
+    }
 
     // MARK: 登录入口（原「我的」大标题右侧头像）
 
