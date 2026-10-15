@@ -1312,15 +1312,44 @@ final class NeteaseMusicAPI {
         }
     }
 
+    /// `/api/album/sublist` 响应。
+    ///
+    /// ⚠️ 2026-10-15 定案（对齐 Kumone 已知可用实现）：**`data` 直接是专辑数组**
+    /// （`{code, count, data: [album…]}`）。历史版本把 `data` 建模成包裹对象，
+    /// 数组灌进结构体 → 整个响应解码失败 → weapi/明文/eapi 三通道**全部**倒在
+    /// 解码上（表现为「修了几遍还是拿不到收藏专辑」）。现在 `data` 双形态兼容：
+    /// 先按数组解，解不动再按包裹对象解；`albums` 根级字段也一并保留。
     private struct AlbumSublistResponse: Decodable {
         var code: Int?
+        var count: Int?
         var albums: [Entry]?
-        var data: Payload?
+        var data: [Entry]?
+
+        private enum CodingKeys: String, CodingKey {
+            case code, count, albums, data
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            code = try? c.decode(Int.self, forKey: .code)
+            count = (try? c.decode(Int.self, forKey: .count))
+                ?? (try? c.decode(String.self, forKey: .count)).flatMap(Int.init)
+            albums = try? c.decode([Entry].self, forKey: .albums)
+            if let direct = try? c.decode([Entry].self, forKey: .data) {
+                data = direct
+            } else if let payload = try? c.decode(Payload.self, forKey: .data) {
+                data = payload.albums ?? payload.list ?? payload.data
+            } else {
+                data = nil
+            }
+        }
+
         struct Payload: Decodable {
             var albums: [Entry]?
             var list: [Entry]?
             var data: [Entry]?
         }
+
         struct Entry: Decodable {
             var id: Int?
             var name: String?
@@ -1330,14 +1359,39 @@ final class NeteaseMusicAPI {
             var artist: ArtistRef?
             var artists: [ArtistRef]?
             struct ArtistRef: Decodable { var name: String? }
+
+            private enum CodingKeys: String, CodingKey {
+                case id, name, picUrl, cover, size, publishTime, artist, artists
+            }
+
+            /// 全字段容错解码：数字字段在不同账号下可能是整数/浮点/数字字符串，
+            /// 任何字段的类型意外都不该让**整条响应**解码失败（云盘接口踩过同款）。
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = Self.lenientInt(c, .id)
+                name = try? c.decode(String.self, forKey: .name)
+                picUrl = (try? c.decode(String.self, forKey: .picUrl))
+                    ?? (try? c.decode(String.self, forKey: .cover))
+                size = Self.lenientInt(c, .size)
+                publishTime = Self.lenientInt(c, .publishTime)
+                artist = try? c.decode(ArtistRef.self, forKey: .artist)
+                artists = try? c.decode([ArtistRef].self, forKey: .artists)
+            }
+
+            private static func lenientInt(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int? {
+                (try? c.decode(Int.self, forKey: key))
+                    ?? (try? c.decode(Double.self, forKey: key)).map(Int.init)
+                    ?? (try? c.decode(String.self, forKey: key)).flatMap(Int.init)
+            }
         }
     }
 
     /// 收藏的专辑（`api/album/sublist`，需登录 Cookie）。
     ///
-    /// ⚠️ 这个接口的 payload 层级在不同账号下不一致：有时 `albums` 直接挂在根上，
-    /// 有时藏在 `data.albums` / `data.list` / `data.data` 里。四个位置都试一遍 ——
-    /// 只认一个位置的话，换个账号就整页空白（与 `recentSongs` 的双通道兜底同理）。
+    /// ⚠️ 2026-10-15：真实响应是 `{code, count, data: [album…]}`（`data` 直接是数组，
+    /// 对齐 Kumone 已知可用实现）。此前把 `data` 建模成包裹对象，导致**整条响应
+    /// 解码失败**、三通道全空 —— 这就是「修了几遍还是拿不到」的根因。
+    /// 响应结构见 `AlbumSublistResponse`（数组/包裹双形态兼容 + 字段容错）。
     ///
     /// ⚠️ 明文通道单页只稳定返回 25 条，limit 传大值会被截断 —— 内部按 25/页循环拉齐；
     /// 明文整体失败时回退 eapi 通道（登录态强绑定接口，与听歌排行同一套通道）。
@@ -1399,7 +1453,7 @@ final class NeteaseMusicAPI {
                 "/api/album/sublist",
                 params: ["limit": pageSize, "offset": current, "total": true],
                 type: AlbumSublistResponse.self)
-            let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+            let entries = resp.albums ?? resp.data ?? []
             let page = entries.compactMap(Self.mapSublistAlbum)
             if page.isEmpty { break }
             all.append(contentsOf: page)
@@ -1418,7 +1472,7 @@ final class NeteaseMusicAPI {
             let params: [String: Any] = ["limit": pageSize, "offset": current, "total": true, "csrf_token": ""]
             let resp: AlbumSublistResponse = try await Self.apiRequest(
                 "api/album/sublist", params: params, type: AlbumSublistResponse.self)
-            let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+            let entries = resp.albums ?? resp.data ?? []
             if entries.isEmpty { break }
             out.append(contentsOf: entries.compactMap(Self.mapSublistAlbum))
             if entries.count < pageSize { break }
@@ -1432,7 +1486,7 @@ final class NeteaseMusicAPI {
         let params: [String: Any] = ["limit": min(limit, 100), "offset": offset, "total": true]
         let resp: AlbumSublistResponse = try await Self.eapiRequest(
             "/api/album/sublist", params: params, type: AlbumSublistResponse.self)
-        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+        let entries = resp.albums ?? resp.data ?? []
         return Array(entries.compactMap(Self.mapSublistAlbum).prefix(limit))
     }
 
