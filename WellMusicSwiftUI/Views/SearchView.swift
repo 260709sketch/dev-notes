@@ -443,6 +443,11 @@ struct SearchView: View {
     private func mvRows(_ items: [WellMVSummary]) -> some View {
         ForEach(items) { mv in
             Button {
+                // ★ 2026-10-15 用户：点 MV 行先收起搜索页遗留的键盘再播放
+                //   （只在 tap 处收才收得掉 —— MV 页 .task 里再收已经晚了，
+                //   键盘会跟着 fullScreenCover 的呈现动画闪一下）。
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                 to: nil, from: nil, for: nil)
                 playingMV = mv
             } label: {
                 HStack(spacing: 12) {
@@ -539,7 +544,27 @@ struct WellMVPlayerView: View {
 
             VStack {
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    // 关闭钮放**左上角**：标题居中后右侧不再被占
+                    // （用户 2026-10-15：原标题在右侧会挡住网易云 logo 与隔空播放钮）
+                    Button {
+                        player?.pause()
+                        // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
+                        //    onDisappear 里再改会晚一拍 —— 「离开后一直横屏」的根因）
+                        restorePortrait()
+                        closeAndDismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.42), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer(minLength: 8)
+
+                    // 标题块**居中**（用户 2026-10-15）
+                    VStack(alignment: .center, spacing: 2) {
                         Text(mv.name)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.white)
@@ -549,23 +574,12 @@ struct WellMVPlayerView: View {
                             .foregroundStyle(.white.opacity(0.7))
                             .lineLimit(1)
                     }
-                    Spacer()
-                    Button {
-                        player?.pause()
-                        // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
-                        //    onDisappear 里再改会晚一拍 —— 「离开后一直横屏」的根因）
-                        restorePortrait()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            dismiss()
-                        }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(.black.opacity(0.42), in: Circle())
-                    }
-                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    Spacer(minLength: 8)
+
+                    // 右侧占位（与左上关闭钮等宽），保证标题真正居中
+                    Color.clear.frame(width: 34, height: 34)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -575,12 +589,15 @@ struct WellMVPlayerView: View {
         .statusBarHidden()
         .task {
             // ★ 2026-10-15 用户：进 MV 页先收起搜索页遗留的键盘
+            //   （双保险：tap 处已收过一次，这里兜住系统搜索栏等其它入口）
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                              to: nil, from: nil, for: nil)
             // ★ 2026-10-15 用户：MV 自动横屏（放开 App 方向锁 + 请求横屏）
             enterLandscape()
             // 播放 MV 时暂停后台音乐
             PlayerCore.shared.pause()
+            // ★ 2026-10-15 用户：MV 起播记入「近期播放」MV 段（纯本地）
+            AppState.shared.recordMVPlay(mv)
             // mvURL 返回 String?，try? 会再包一层 → ?? nil 展平
             let link = (try? await NeteaseMusicAPI.shared.mvURL(id: mv.id)) ?? nil
             guard let link, let url = URL(string: link) else {
@@ -595,6 +612,34 @@ struct WellMVPlayerView: View {
             player?.pause()
             player = nil
             restorePortrait()   // 双保险（点 X 之外的所有关闭路径）
+        }
+    }
+
+    // MARK: 关闭
+
+    /// 关 MV 页：先等方向复位动画走完再 dismiss，关完再强制根窗口重新布局。
+    ///
+    /// ★ 2026-10-15 用户：「播放 MV 退出来到发现页或其他页面会有些歌单和按钮错乱」——
+    /// 根因是横屏↔竖屏切换与 fullScreenCover 的 dismiss 挤在同一帧：
+    /// 底层页仍按横屏尺寸测量过，dismiss 后没有重新布局，货架/按钮就停留在
+    /// 错误的几何位置上。两招合用：① 把 dismiss 推迟到旋转动画之后；
+    /// ② dismiss 后对场景的窗口强制 setNeedsLayout + layoutIfNeeded，
+    /// 让底层 SwiftUI 树按竖屏重新测量。
+    private func closeAndDismiss() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [dismiss] in
+            dismiss()
+            Self.forceRootRelayout()
+        }
+    }
+
+    /// 强制前台场景的窗口重新布局（清掉横屏测量残留）。
+    private static func forceRootRelayout() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes where scene.activationState == .foregroundActive {
+            for window in scene.windows {
+                window.setNeedsLayout()
+                window.layoutIfNeeded()
+            }
         }
     }
 

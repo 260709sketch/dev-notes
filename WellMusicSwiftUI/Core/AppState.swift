@@ -44,6 +44,10 @@ final class AppState: ObservableObject {
     @Published var playHistory: [MusicItem] = [] {
         didSet { persistJSON(playHistory, key: "favorites.history") }
     }
+    /// MV 播放历史（「近期播放」MV 段用；纯本地，去重头插，上限 200）
+    @Published var mvHistory: [WellMVSummary] = [] {
+        didSet { persistJSON(mvHistory, key: "favorites.mvHistory") }
+    }
     /// 按歌曲保存的歌词偏移（秒）。key = "平台|平台内id"，只在用户调整过该曲时存在。
     /// 未调整过的歌不受影响（回落全局 `lyricOffset`）。
     @Published var songLyricOffsets: [String: Double] = [:] {
@@ -95,6 +99,7 @@ final class AppState: ObservableObject {
         favoriteTracks = loadJSON([MusicItem].self, key: "favorites.tracks") ?? []
         favoritePlaylists = loadJSON([RemotePlaylist].self, key: "favorites.playlists") ?? []
         playHistory = loadJSON([MusicItem].self, key: "favorites.history") ?? []
+        mvHistory = loadJSON([WellMVSummary].self, key: "favorites.mvHistory") ?? []
         playlists = loadJSON([Playlist].self, key: "playlists.all") ?? []
         songLyricOffsets = loadJSON([String: Double].self, key: "lyrics.songOffsets") ?? [:]
     }
@@ -139,6 +144,13 @@ final class AppState: ObservableObject {
         playHistory.removeAll { MusicItem.isSame($0, track) }
         playHistory.insert(track, at: 0)
         if playHistory.count > 500 { playHistory = Array(playHistory.prefix(500)) }
+    }
+
+    /// 记录 MV 播放历史（「近期播放」MV 段；去重，最新在前，上限 200）
+    func recordMVPlay(_ mv: WellMVSummary) {
+        mvHistory.removeAll { $0.id == mv.id }
+        mvHistory.insert(mv, at: 0)
+        if mvHistory.count > 200 { mvHistory = Array(mvHistory.prefix(200)) }
     }
 
     // MARK: 歌词偏移（按曲记忆）

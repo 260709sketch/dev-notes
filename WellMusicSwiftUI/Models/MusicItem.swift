@@ -56,6 +56,13 @@ struct MusicItem: Identifiable, Codable, Hashable {
     /// 播放页跳专辑详情用它 —— 缺失时会退化成哈希假 id，导致进错专辑。
     var platformAlbumId: String?
 
+    /// 网易云云盘歌曲标记（`/api/v1/cloud/get` 条目，用户 2026-10-15）。
+    ///
+    /// 云盘上传歌的 id 只在账号云盘里有效、公共曲库查不到，LX 自定义音源与
+    /// 内置音源都解析不到它；播放时必须**直走网易云官方通道**
+    /// （见 `MusicURLResolver` 的云盘分支），否则表现为「云盘歌曲不能播放」。
+    var isCloudDisk: Bool = false
+
     /// 通用 id：不同平台用各自主 id
     var platformId: String? {
         switch source {
@@ -89,7 +96,8 @@ struct MusicItem: Identifiable, Codable, Hashable {
          kuwoRid: String? = nil,
          platformAlbumId: String? = nil,
          playURL: String? = nil,
-         localFilePath: String? = nil) {
+         localFilePath: String? = nil,
+         isCloudDisk: Bool = false) {
         self.source = source
         self.title = title
         self.artist = artist
@@ -106,6 +114,42 @@ struct MusicItem: Identifiable, Codable, Hashable {
         self.platformAlbumId = platformAlbumId
         self.playURL = playURL
         self.localFilePath = localFilePath
+        self.isCloudDisk = isCloudDisk
+    }
+
+    // MARK: Codable
+
+    /// 自定义解码：**所有字段容错**（缺键用默认值，不让整条记录解码失败）。
+    ///
+    /// ⚠️ 之所以不能依赖合成 init(from:)：Swift 的合成解码对缺失的非可选键
+    /// 直接抛错，而收藏/历史是**跨版本持久化**的数据 —— 以后每加一个字段
+    /// （如 `isCloudDisk`），旧安装升级后会整条记录解不出来，表现为
+    /// 「收藏的歌莫名其妙少了一批」。这里统一 decodeIfPresent + 默认值。
+    private enum CodingKeys: String, CodingKey {
+        case source, title, artist, album, albumCoverURL, duration, isVip
+        case qqSongMid, qqMediaMid, qqAlbumMid, neteaseId, kugouHash, kuwoRid
+        case platformAlbumId, playURL, localFilePath, isCloudDisk
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = try c.decode(MusicSource.self, forKey: .source)
+        title = try c.decode(String.self, forKey: .title)
+        artist = try c.decodeIfPresent(String.self, forKey: .artist)
+        album = try c.decodeIfPresent(String.self, forKey: .album)
+        albumCoverURL = try c.decodeIfPresent(String.self, forKey: .albumCoverURL)
+        duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+        isVip = try c.decodeIfPresent(Bool.self, forKey: .isVip) ?? false
+        qqSongMid = try c.decodeIfPresent(String.self, forKey: .qqSongMid)
+        qqMediaMid = try c.decodeIfPresent(String.self, forKey: .qqMediaMid)
+        qqAlbumMid = try c.decodeIfPresent(String.self, forKey: .qqAlbumMid)
+        neteaseId = try c.decodeIfPresent(String.self, forKey: .neteaseId)
+        kugouHash = try c.decodeIfPresent(String.self, forKey: .kugouHash)
+        kuwoRid = try c.decodeIfPresent(String.self, forKey: .kuwoRid)
+        platformAlbumId = try c.decodeIfPresent(String.self, forKey: .platformAlbumId)
+        playURL = try c.decodeIfPresent(String.self, forKey: .playURL)
+        localFilePath = try c.decodeIfPresent(String.self, forKey: .localFilePath)
+        isCloudDisk = try c.decodeIfPresent(Bool.self, forKey: .isCloudDisk) ?? false
     }
 
     /// 判断是否为同一首歌（只比 id + 平台，与原版 isSameMediaItem 一致）

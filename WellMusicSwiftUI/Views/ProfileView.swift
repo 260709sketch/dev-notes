@@ -8,7 +8,55 @@ enum WellPlaylistSort: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// 我的页横滑歌单的统一条目（本地自建 + 网易云账号歌单合并后排）。
+/// 网易云账号歌单的「自定义位置」顺序（设置项：`wellmusic.profile.neteasePlaylistOrder`）。
+///
+/// 用户 2026-10-15：我的歌单「查看更多」页要能自己拖动排歌单位置。
+/// 网易云歌单是每次进页面拉的服务端列表，本地没有存储顺序可依，
+/// 所以把用户排好的**歌单 id 序列**存进 UserDefaults：
+///   * `apply(to:)` 按已存顺序重排，API 返回里新出现的歌单（别处新建/收藏的）
+///     按原序追加到末尾 —— 不打断用户已经排好的部分；
+///   * 仅「默认」排序下生效（名称/歌曲数走全局比较，与手动位置互斥）。
+enum WellNeteasePlaylistOrder {
+    private static let key = "wellmusic.profile.neteasePlaylistOrder"
+
+    /// 自定义位置变化通知。「我的」页横滑货架把合并歌单缓存在 @State 里，
+    /// 不会因为 UserDefaults 变化而刷新 —— 在「查看更多」页拖完歌单后，
+    /// 靠它通知货架重算，两边顺序才一致。
+    static let orderChangedNotification =
+        Notification.Name("wellmusic.profile.neteasePlaylistOrder.changed")
+
+    static func load() -> [String] {
+        UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    static func save(_ ids: [String]) {
+        UserDefaults.standard.set(ids, forKey: key)
+        NotificationCenter.default.post(name: Self.orderChangedNotification, object: nil)
+    }
+
+    /// 按已存顺序重排；未登记的新歌单按原顺序追加到末尾。
+    static func apply(to items: [NeteaseMusicAPI.UserPlaylistItem]) -> [NeteaseMusicAPI.UserPlaylistItem] {
+        let saved = load()
+        guard !saved.isEmpty else { return items }
+        var byID: [String: NeteaseMusicAPI.UserPlaylistItem] = [:]
+        for item in items { byID[item.id] = item }
+        var result: [NeteaseMusicAPI.UserPlaylistItem] = []
+        var used = Set<String>()
+        for id in saved {
+            if let item = byID[id], !used.contains(id) {
+                result.append(item)
+                used.insert(id)
+            }
+        }
+        for item in items where !used.contains(item.id) {
+            result.append(item)
+            used.insert(item.id)
+        }
+        return result
+    }
+}
+
+/// 我的页横滑歌单的统一条目（本地歌单 + 网易云账号歌单合并后排）。
 struct ProfilePlaylistItem: Identifiable {
     let id: String
     let name: String
@@ -17,15 +65,17 @@ struct ProfilePlaylistItem: Identifiable {
     let source: WellMyPlaylistSource
 }
 
-/// 我的 Tab —— 四分组布局（用户 2026-10-15 截图 IMG_3974 样式）。
+/// 我的 Tab —— 分组布局（用户 2026-10-15 定稿）。
 ///
-/// 分组顺序（用户原话）：
-///   ① 入口组：听歌排行 / 最近播放 / 网易云的我喜欢（保持现有排版，List 行样式）
-///   ② 我的歌单：标题 + 查看更多，下方**横滑**选歌单（本地自建 + 网易云账号）
-///   ③ 最近喜欢：标题 + 查看更多，下方一列 **5 首**（本地收藏最新在前）
-///   ④ 收藏专辑：一横两个（两列网格），排数随收藏数量
+/// 分组顺序（自上而下）：
+///   ① 设置卡（原入口组的听歌排行/最近播放/我喜欢已按用户要求删除 —— 发现页已有）
+///   ② 网易云登录卡片（未登录 = 登录入口；已登录 = 头像 + 昵称 + VIP + 设置图标）
+///   ③ 「近期播放」经典横卡（软件内全部播放记录，纯本地含 MV，分段控制）
+///   ④ 我的歌单：标题 + 查看更多，下方**横滑**选歌单（本地歌单 + 网易云账号）
+///   ⑤ 最近喜欢：标题 + 查看更多，下方一列 **5 首**（本地收藏最新在前）
+///   ⑥ 收藏专辑：一横两个（两列网格），排数随收藏数量
 ///
-/// 参考图为 Apple Music 音乐库风格：分组标题 = `⌄ 标题 (数量)` + 右侧「查看更多」。
+/// 分组标题 = `⌄ 标题 (数量)` + 右侧「查看更多」（Apple Music 音乐库风格）。
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var session = NeteaseSession.shared
@@ -70,7 +120,7 @@ struct ProfileView: View {
                 id: "local_\(pl.id.uuidString)", name: pl.name, coverURL: pl.coverURL,
                 subtitle: "\(pl.tracks.count) 首", source: .local(pl)))
         }
-        for pl in netease {
+        for pl in WellNeteasePlaylistOrder.apply(to: netease) {
             items.append(ProfilePlaylistItem(
                 id: "ne_\(pl.id)", name: pl.name, coverURL: pl.coverURL,
                 subtitle: "\(pl.trackCount) 首 · 网易云",
@@ -90,7 +140,7 @@ struct ProfileView: View {
     /// 最近喜欢 = 本地收藏的最新 5 首（`favoriteTracks` 头插，最新在前）
     private var recentLikes: [MusicItem] { Array(appState.favoriteTracks.prefix(5)) }
 
-    /// 「我的歌单」总数 = 本地自建 + 网易云账号
+    /// 「我的歌单」总数 = 本地歌单 + 网易云账号
     private var playlistTotalCount: Int { appState.playlists.count + neteasePlaylists.count }
 
     var body: some View {
@@ -101,6 +151,10 @@ struct ProfileView: View {
                 //   参与布局），滚动时每帧都要走过整棵子树。改 LazyVStack 后按需构建。
                 LazyVStack(alignment: .leading, spacing: 26) {
                     quickEntries
+                    // ★ 2026-10-15 用户：网易云登录卡片（置于「近期播放」上方）
+                    accountCardSection
+                    // ★ 2026-10-15 用户：「近期播放」经典横卡（置于「我的歌单」上方）
+                    recentPlaysCard
                     playlistsSection
                     recentLikesSection
                     favoriteAlbumsSection
@@ -127,6 +181,11 @@ struct ProfileView: View {
                 rebuildMergedPlaylists()
             }
             .onChange(of: playlistSortRaw) { _ in
+                rebuildMergedPlaylists()
+            }
+            // 网易云歌单在「查看更多」页被拖动重排后，横滑货架跟着重算
+            .onReceive(NotificationCenter.default.publisher(
+                for: WellNeteasePlaylistOrder.orderChangedNotification)) { _ in
                 rebuildMergedPlaylists()
             }
             .sheet(isPresented: $showingSettings) {
@@ -180,16 +239,13 @@ struct ProfileView: View {
         .padding(.horizontal, 16)
     }
 
-    // MARK: - 分组① 入口：听歌排行 / 最近播放 / 我喜欢 / 设置（保持现有排版）
+    // MARK: - 分组① 设置（入口组已按用户要求删除）
 
+    /// ★ 2026-10-15 用户：「我的歌单」上方的入口组（听歌排行 / 最近播放 /
+    /// 我喜欢的音乐）**整组删除** —— 这些入口发现页都有了，不重复放。
+    /// 设置不在发现页，保留为单独一张卡片。
     private var quickEntries: some View {
         VStack(spacing: 0) {
-            entryRow(icon: "chart.bar.fill", title: "听歌排行") { NeteasePlayRecordView() }
-            Divider().padding(.leading, 54)
-            entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
-            Divider().padding(.leading, 54)
-            entryRow(icon: "heart.text.square", title: "我喜欢的音乐") { NeteaseLikedSongsView() }
-            Divider().padding(.leading, 54)
             // ★ 2026-10-15 用户：设置卡片融合到「听歌排行」分组里（原独立卡片）
             settingsEntryRow
         }
@@ -221,31 +277,69 @@ struct ProfileView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func entryRow<Destination: View>(
-        icon: String,
-        title: String,
-        @ViewBuilder destination: @escaping () -> Destination
-    ) -> some View {
+    // MARK: - 网易云登录卡片（用户 2026-10-15）
+
+    /// 登录卡片（置于「近期播放」上方）：
+    /// 未登录 = 登录入口；已登录 = 头像 + 昵称 + VIP 标识 + 右侧设置图标。
+    private var accountCardSection: some View {
+        NeteaseAccountCard()
+            .padding(.horizontal, 16)
+    }
+
+    // MARK: - 近期播放（经典横卡；用户 2026-10-15）
+
+    /// 「近期播放」入口卡：经典横卡样式（与发现页经典横卡同一视觉语言，
+    /// 这里按「我的」页版式铺满宽）。点开 = `LocalRecentPlaysView`
+    /// （软件内全部播放记录，纯本地，顶部分段控制切 歌曲/MV）。
+    private var recentPlaysCard: some View {
         NavigationLink {
-            destination()
+            LocalRecentPlaysView()
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.blue)
-                    .frame(width: 26)
-                Text(title).font(.system(size: 16))
-                Spacer()
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                 Color(red: 0.41, green: 0.28, blue: 0.65)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 56, height: 56)
+                    .overlay {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("近期播放")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(recentPlaysSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
+            .padding(12)
+            .background(AppTheme.secondaryBackground,
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+    }
+
+    /// 横卡副标题：歌曲 / MV 各多少条。
+    private var recentPlaysSubtitle: String {
+        "\(appState.playHistory.count) 首歌曲 · \(appState.mvHistory.count) 个 MV"
     }
 
     // MARK: - 分组② 我的歌单（标题 + 查看更多 + 横滑）
@@ -268,7 +362,7 @@ struct ProfileView: View {
                                          subtitle: item.subtitle)
                         }
                         .buttonStyle(.plain)
-                        // ★ 2026-10-15 用户：长按删除歌单（仅本地自建；网易云账号歌单不可删）
+                        // ★ 2026-10-15 用户：长按删除歌单（仅本地歌单；网易云账号歌单不可删）
                         .contextMenu {
                             if case .local(let pl) = item.source {
                                 Button(role: .destructive) {
@@ -520,11 +614,20 @@ struct ProfileView: View {
     }
 }
 
-/// 我的歌单：分两组 —— 本地自建 + 网易云账号歌单。
+/// 我的歌单：分两组 —— 网易云歌单（上）+ 本地歌单（下）。
 ///
 /// 点进去一律走 `WellMyPlaylistDetailView`（用户 2026-10-14 截图 IMG_3957 版式）。
-/// 本地自建歌单没有平台属性，所以详情页里不显示「网易云音乐」平台行；
+/// 本地歌单没有平台属性，所以详情页里不显示「网易云音乐」平台行；
 /// 账号歌单则有 —— 这正是截图里的样子。
+///
+/// ★ 2026-10-15 用户：
+///   ① 原「本地自建」分组改名「本地歌单」，并移到「网易云歌单」**下面**；
+///   ② 右上角「编辑」进编辑态，可直接**拖动调整歌单位置** ——
+///      本地歌单的位置就是 `appState.playlists` 的存储顺序；
+///      网易云歌单的位置持久化在 `wellmusic.profile.neteasePlaylistOrder`
+///      （服务端列表没有顺序可依，只能本地记 id 序列）。
+///      拖动落在哪个排序视图上，就把那个视图的顺序固化成「默认」顺序
+///      （见两处 `onMove`），避免 offsets 与底层数组错位。
 struct MyPlaylistsView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var session = NeteaseSession.shared
@@ -536,29 +639,7 @@ struct MyPlaylistsView: View {
 
     var body: some View {
         List {
-            Section("本地自建") {
-                if appState.playlists.isEmpty {
-                    Text("还没有自建歌单")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(sortedLocalPlaylists) { pl in
-                        NavigationLink {
-                            WellMyPlaylistDetailView(source: .local(pl))
-                        } label: {
-                            row(name: pl.name, coverURL: pl.coverURL,
-                                subtitle: "\(pl.tracks.count) 首")
-                        }
-                    }
-                    .onDelete { offsets in
-                        // 排序后删除要把 offsets 映射回原数组下标
-                        let sorted = sortedLocalPlaylists
-                        let idsToDelete = offsets.map { sorted[$0].id }
-                        appState.playlists.removeAll { idsToDelete.contains($0.id) }
-                    }
-                }
-            }
-
+            // ★ 2026-10-15 用户：网易云歌单分组移到本地歌单上面
             if session.isLoggedIn {
                 Section("网易云歌单") {
                     if isLoadingNetease && neteasePlaylists.isEmpty {
@@ -582,6 +663,49 @@ struct MyPlaylistsView: View {
                                     subtitle: "\(pl.trackCount) 首")
                             }
                         }
+                        .onMove { offsets, destination in
+                            // 拖动排序：把新顺序（歌单 id 序列）存进 UserDefaults。
+                            // offsets 对应的是**当前展示数组**（可能是名称/歌曲数排序后的），
+                            // 所以 move 之后还要切回「默认」排序，让展示与存下的顺序一致。
+                            var ordered = sortedNeteasePlaylists
+                            ordered.move(fromOffsets: offsets, toOffset: destination)
+                            WellNeteasePlaylistOrder.save(ordered.map(\.id))
+                            if sort != .manual { sortRaw = WellPlaylistSort.manual.rawValue }
+                        }
+                    }
+                }
+            }
+
+            // ★ 2026-10-15 用户：原「本地自建」改名「本地歌单」，下移到网易云歌单分组下面
+            Section("本地歌单") {
+                if appState.playlists.isEmpty {
+                    Text("还没有本地歌单")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(sortedLocalPlaylists) { pl in
+                        NavigationLink {
+                            WellMyPlaylistDetailView(source: .local(pl))
+                        } label: {
+                            row(name: pl.name, coverURL: pl.coverURL,
+                                subtitle: "\(pl.tracks.count) 首")
+                        }
+                    }
+                    .onDelete { offsets in
+                        // 排序后删除要把 offsets 映射回原数组下标
+                        let sorted = sortedLocalPlaylists
+                        let idsToDelete = offsets.map { sorted[$0].id }
+                        appState.playlists.removeAll { idsToDelete.contains($0.id) }
+                    }
+                    .onMove { offsets, destination in
+                        // 拖动排序：本地歌单的位置 = appState.playlists 的存储顺序。
+                        // offsets 对应的是当前展示数组（可能是排序后的），move 之后
+                        // 整个写回存储顺序；非「默认」排序下拖完顺手切回默认，
+                        // 让用户看到的就是自己排的结果。
+                        var list = sortedLocalPlaylists
+                        list.move(fromOffsets: offsets, toOffset: destination)
+                        appState.playlists = list
+                        if sort != .manual { sortRaw = WellPlaylistSort.manual.rawValue }
                     }
                 }
             }
@@ -590,6 +714,10 @@ struct MyPlaylistsView: View {
         .task { await loadNeteasePlaylists() }
         // ★ 2026-10-15 用户：右上角新增「歌单排序」（与我的页第二分组共用同一排序设置）。
         .toolbar {
+            // ★ 2026-10-15 用户：右上角「编辑」进编辑态，支持拖动调整歌单位置
+            ToolbarItem(placement: .navigationBarTrailing) {
+                EditButton()
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Picker("排序方式", selection: $sortRaw) {
@@ -625,7 +753,8 @@ struct MyPlaylistsView: View {
     /// 网易云账号歌单（按排序方式）。
     private var sortedNeteasePlaylists: [NeteaseMusicAPI.UserPlaylistItem] {
         switch sort {
-        case .manual: return neteasePlaylists
+        // 默认排序 = 用户拖动出来的自定义位置（持久化的 id 序列）
+        case .manual: return WellNeteasePlaylistOrder.apply(to: neteasePlaylists)
         case .name:
             return neteasePlaylists.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .trackCount:
@@ -733,8 +862,10 @@ struct NeteaseLikedSongsView: View {
         // 通道 1：红心 id 列表 + 分块详情（登录态稳定，优先）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
             tracks = songs
-            // 封面用网易云「我喜欢的音乐」官方默认封面（与官方 App 一致）
-            coverURL = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+            // 封面用用户「我喜欢」歌单的真实封面（歌单 id == uid）；
+            // 拉不到时回落网易云官方默认封面（与官方 App 一致）
+            coverURL = (try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)"))
+                ?? "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
             isLoading = false
             return
         }

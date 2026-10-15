@@ -578,6 +578,29 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 是否已成功向系统写入过 NowPlaying 信息（用于 tick 兜底补写）
     private var hasPublishedNowPlaying = false
 
+    // MARK: 控制中心歌词（用户 2026-10-15，默认关）
+
+    /// 控制中心 / 锁屏「艺人」位改显示歌词的开关键（默认关）。
+    nonisolated static let nowPlayingLyricsKey = "wellmusic.player.nowPlayingLyrics"
+
+    /// 开关当前值（启动时读一次；设置页切换由 `setNowPlayingLyricsEnabled(_:)` 同步）。
+    private var nowPlayingLyricsEnabled =
+        UserDefaults.standard.bool(forKey: PlayerCore.nowPlayingLyricsKey)
+    /// 已写进 NowPlaying「艺人」位的歌词行文本（跨行才重写，见 tick）。
+    private var nowPlayingLyricLine: String?
+
+    /// 设置页开关：控制中心 / 锁屏的歌手名位置改成显示当前歌词行（默认关）。
+    ///
+    /// 切换后立即重写 NowPlaying：关 → 立刻退回歌手名（不等下一句歌词）；
+    /// 开 → 先回落歌手名，50ms 内的 tick 会把当前歌词行补上。
+    func setNowPlayingLyricsEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.nowPlayingLyricsKey)
+        guard enabled != nowPlayingLyricsEnabled else { return }
+        nowPlayingLyricsEnabled = enabled
+        nowPlayingLyricLine = nil
+        if hasActiveTrack { updateNowPlaying() }
+    }
+
     // MARK: 网易云听歌上报（scrobble）状态
 
     /// 当前曲目的网易云 song id（只有网易云来源的歌才会上报）。
@@ -799,6 +822,18 @@ final class PlayerCore: NSObject, ObservableObject {
         if hasActiveTrack, !hasPublishedNowPlaying {
             updateNowPlaying()
         }
+        // ★ 控制中心歌词（用户 2026-10-15，默认关）：开启时把当前歌词行写进
+        //   NowPlaying 的「艺人」位。只在**跨行**时重写 —— 20Hz 每 tick 写
+        //   nowPlayingInfo 是纯浪费（字典重建 + 系统侧刷新）。
+        //   关着的时候整个块被第一个条件短路，零开销。
+        if nowPlayingLyricsEnabled, hasActiveTrack {
+            // 用 displayTime（拖动中 = 预览时间）+ 全局歌词偏移，与歌词页同一口径
+            let line = currentLyricLineText(at: displayTime + AppState.shared.lyricOffset)
+            if line != nowPlayingLyricLine {
+                nowPlayingLyricLine = line
+                updateNowPlaying()
+            }
+        }
         // ★ 预加载下一首：播放到 5 秒时，后台把下一首的播放地址解析好并缓存，
         //   用户点「下一首」时可以直接用缓存地址起播，消除解析等待（响应更跟手）。
         //
@@ -948,6 +983,7 @@ final class PlayerCore: NSObject, ObservableObject {
         if isNewSong {
             nowPlayingArtworkKey = song.keyOf
             nowPlayingArtwork = nil     // 换歌即作废上一首封面，防止错配
+            nowPlayingLyricLine = nil   // 换歌即作废上一首歌词行，新歌歌词由 tick 补上
         }
         // ★ 标记「已经成功写过一条 NowPlaying」——不能用 nowPlayingArtworkKey 判断
         //   （它在封面下载前就被赋值，无法区分「已写过基础信息」与「只登记了 key」）。
@@ -995,10 +1031,15 @@ final class PlayerCore: NSObject, ObservableObject {
     /// ⚠️ `MPNowPlayingInfoPropertyMediaType = .audio`：显式声明媒体类型。
     /// 不声明时，部分 iOS 版本在锁屏/灵动岛上会把媒体卡片按「未知类型」处理
     /// 甚至不展示 —— 这是「控制中心显示未在播放」的一个常见成因。
+    ///
+    /// ★ 用户 2026-10-15：控制中心歌词开关（默认关）打开时，「艺人」位改填
+    /// 当前歌词行文本；没有可用歌词行（无歌词 / 首行之前 / 纯音乐空行）时回落歌手名。
     private func nowPlayingInfo(for song: MusicItem) -> [String: Any] {
+        let artistText = (nowPlayingLyricsEnabled ? nowPlayingLyricLine : nil)
+            ?? song.artist ?? "未知艺术家"
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: song.title,
-            MPMediaItemPropertyArtist: song.artist ?? "未知艺术家",
+            MPMediaItemPropertyArtist: artistText,
             MPMediaItemPropertyAlbumTitle: song.album ?? "",
             MPMediaItemPropertyPlaybackDuration: max(duration, 0),
             MPNowPlayingInfoPropertyElapsedPlaybackTime: max(currentTime, 0),
@@ -1011,5 +1052,31 @@ final class PlayerCore: NSObject, ObservableObject {
             info[MPNowPlayingInfoPropertyPlaybackProgress] = max(currentTime, 0) / duration
         }
         return info
+    }
+
+    /// 当前时间对应的歌词行文本（控制中心歌词用）。没有歌词 / 在首行之前 /
+    /// 空行（纯音乐占位）→ nil，由调用方回落歌手名。
+    ///
+    /// `AppState.currentLrc` 按 `time` 升序（LRC 解析保证），二分找最后一个
+    /// `time <= 当前时间` 的行。放在 tick（20Hz）里跑，必须 O(log n) ——
+    /// 线性扫一遍上千行歌词每个 tick 都做，就是新一轮掉帧源。
+    private func currentLyricLineText(at time: TimeInterval) -> String? {
+        let lines = AppState.shared.currentLrc
+        guard !lines.isEmpty else { return nil }
+        var lo = 0
+        var hi = lines.count - 1
+        var found: LrcLine?
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if lines[mid].time <= time {
+                found = lines[mid]
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        guard let line = found else { return nil }
+        let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 }

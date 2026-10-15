@@ -634,7 +634,10 @@ final class NeteaseMusicAPI {
                 duration: TimeInterval(song?.dt ?? 0) / 1000,
                 isVip: (song?.fee ?? 0) == 1 || (song?.fee ?? 0) == 4,
                 neteaseId: "\(rawId)",
-                platformAlbumId: song?.al?.id.map { "\($0)" }
+                platformAlbumId: song?.al?.id.map { "\($0)" },
+                // ★ 2026-10-15 用户：云盘歌曲播放必须直走网易云官方通道（不走 LX），
+                //   解析器靠这个标记识别（见 MusicURLResolver 的云盘分支）。
+                isCloudDisk: true
             )
         }
     }
@@ -675,7 +678,7 @@ final class NeteaseMusicAPI {
     }
 
     /// 我喜欢的音乐：红心 id 列表（weapi `/api/song/like/get`）
-    /// + 分块详情（明文 `api/song/detail`）。
+    /// + 分块详情（weapi `/api/v3/song/detail`）。
     func likedSongs(uid: String, limit: Int = 2000) async throws -> [MusicItem] {
         let resp: LikelistResponse = try await Self.weapiRequest(
             "/api/song/like/get", params: ["uid": uid], type: LikelistResponse.self)
@@ -693,9 +696,28 @@ final class NeteaseMusicAPI {
         return out
     }
 
-    /// 歌曲详情（明文 `api/song/detail`，`ids` 形如 `[1,2,3]`）。
+    /// 「我喜欢的音乐」歌单的封面（网易云老规矩：该歌单 id == 用户 uid）。
+    /// 只取歌单元数据，不拉曲目 —— 给发现页卡片与「我喜欢」页头部用。
+    func likedPlaylistCover(uid: String) async throws -> String? {
+        let idValue: Any = Int(uid).map { $0 as Any } ?? uid
+        let params: [String: Any] = ["id": idValue, "n": 1, "s": 0, "csrf_token": ""]
+        let resp: PlaylistDetailResponse = try await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        return resp.playlist?.coverImgUrl
+    }
+
+    /// 歌曲详情（weapi `/api/v3/song/detail`，`c` 形如 `[{"id":1},{"id":2}]`）。
+    /// weapi 通道失败时回退明文 `api/song/detail`（`ids=[1,2,3]`），保证总能拉到。
     func songDetails(ids: [String]) async throws -> [MusicItem] {
         guard !ids.isEmpty else { return [] }
+        let cPayload = "[" + ids.map { "{\"id\":\($0)}" }.joined(separator: ",") + "]"
+        if let resp: SongsDetailResponse = try? await Self.weapiRequest(
+            "/api/v3/song/detail", params: ["c": cPayload, "csrf_token": ""],
+            type: SongsDetailResponse.self),
+           let songs = resp.songs, !songs.isEmpty {
+            return songs.compactMap(Self.mapSong)
+        }
+        // 兜底：明文通道（ids 形如 [1,2,3]）
         var comps = URLComponents(string: "https://music.163.com/api/song/detail")!
         comps.queryItems = [
             URLQueryItem(name: "ids", value: "[\(ids.joined(separator: ","))]"),

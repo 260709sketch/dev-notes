@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// 「我的」页顶部的网易云账号卡片。
+/// 「我的」页顶部的网易云账号卡片（用户 2026-10-15 定稿版式）。
 ///
-/// 未登录时是登录入口（点击弹出 `NeteaseLoginSheet`），
-/// 已登录时显示昵称头像，并提供一个带确认的退出入口。
+/// 未登录时是登录入口（点击弹出 `NeteaseLoginSheet`）；
+/// 已登录时显示**网易云头像 + 昵称 + 昵称旁的 VIP 标识**，
+/// 右侧一个**设置图标**（点击进入设置页；退出登录在「设置 → 账号」里）。
 ///
-/// 卡片自己持有登录面板的呈现状态 —— 登录态是全局的（`NeteaseSession`），
+/// 卡片自己持有登录面板与设置页的呈现状态 —— 登录态是全局的（`NeteaseSession`），
 /// 但「面板开不开」纯粹是这一处的局部 UI 状态，没必要往上提。
 @MainActor
 struct NeteaseAccountCard: View {
     @ObservedObject private var session = NeteaseSession.shared
     @State private var showingLogin = false
-    @State private var showingLogoutConfirm = false
+    @State private var showingSettings = false
 
     private var brandGradient: LinearGradient {
         LinearGradient(colors: [AppTheme.accent, AppTheme.accent.opacity(0.72)],
@@ -38,17 +39,8 @@ struct NeteaseAccountCard: View {
         .sheet(isPresented: $showingLogin) {
             NeteaseLoginSheet()
         }
-        .confirmationDialog("确定退出网易云账号？", isPresented: $showingLogoutConfirm, titleVisibility: .visible) {
-            Button("退出登录", role: .destructive) {
-                Task {
-                    await NeteaseMusicAPI.shared.logout()
-                    session.clearAuth()
-                    ToastCenter.shared.show("已退出网易云账号")
-                }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("退出后我的歌单、我喜欢等在线内容将不可用，本地歌曲不受影响")
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
         }
     }
 
@@ -97,29 +89,31 @@ struct NeteaseAccountCard: View {
             avatar(account)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(account.nickname)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
+                // 昵称 + VIP 标识（用户 2026-10-15：VIP 放昵称旁）
                 HStack(spacing: 5) {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(AppTheme.accent)
-                    Text("网易云音乐已登录")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    Text(account.nickname)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    vipBadge
                 }
+                Text("网易云音乐已登录")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 6)
 
-            Button("退出") {
-                showingLogoutConfirm = true
+            // ★ 2026-10-15 用户：卡片右侧设置图标 → 进入设置
+            //   （退出登录在「设置 → 账号」里，与本图标同路径可达）
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.primary.opacity(0.06), in: Circle())
             }
-            .font(.system(size: 12.5, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.06), in: Capsule())
             .buttonStyle(.plain)
         }
         .padding(15)
@@ -136,6 +130,18 @@ struct NeteaseAccountCard: View {
             // 而不是让用户点进歌单才发现什么都加载不出来。
             await session.refreshAccount()
         }
+    }
+
+    /// VIP 标识：描边胶囊 + VIP 字样（与网易云音乐会员角标同款语言）。
+    private var vipBadge: some View {
+        Text("VIP")
+            .font(.system(size: 8.5, weight: .bold))
+            .foregroundStyle(AppTheme.accent)
+            .padding(.horizontal, 4.5)
+            .padding(.vertical, 2)
+            .overlay(
+                Capsule().strokeBorder(AppTheme.accent, lineWidth: 0.8)
+            )
     }
 
     // MARK: 零件

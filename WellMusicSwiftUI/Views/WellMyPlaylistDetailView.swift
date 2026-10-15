@@ -48,7 +48,8 @@ struct WellMyPlaylistDetailView: View {
     @State private var tracks: [MusicItem]
     @State private var title: String
     @State private var coverURL: String?
-    /// 有值 = 显示「网易云音乐」平台行（本地自建歌单没有这个行）
+    /// 有值 = 显示平台行（本地自建歌单没有这个行）。
+    /// 行首图标按平台名取对应 App 图标，见 `platformMark`。
     @State private var creatorName: String?
     /// 总曲目数：网易云歌单元数据里的总数可能大于已加载条数
     @State private var trackTotal: Int
@@ -150,7 +151,7 @@ struct WellMyPlaylistDetailView: View {
 
                     if let creatorName, !creatorName.isEmpty {
                         HStack(spacing: 6) {
-                            neteaseMark
+                            platformMark
                             Text(creatorName)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -249,8 +250,34 @@ struct WellMyPlaylistDetailView: View {
         .buttonStyle(.plain)
     }
 
-    /// 网易云品牌方块（红底白音符）—— 官方图标就是这个形态，不需要额外素材
-    private var neteaseMark: some View {
+    /// 平台行图标（用户 2026-10-15）：
+    /// 平台名是「网易云音乐」→ 网易云 App 图标（红底白音符，PlatformNetease）；
+    /// 是「QQ音乐」→ QQ 音乐 App 图标（黄底绿音符，PlatformQQMusic）；
+    /// 其余（如搜索结果的用户昵称）退回原来的通用红方块，不猜平台。
+    /// 尺寸沿用旧值 18×18、圆角 5，和文字基线对齐。
+    @ViewBuilder
+    private var platformMark: some View {
+        if let creatorName {
+            if creatorName.contains("网易云") {
+                Image("PlatformNetease")
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            } else if creatorName.contains("QQ") {
+                Image("PlatformQQMusic")
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            } else {
+                genericMark
+            }
+        } else {
+            genericMark
+        }
+    }
+
+    /// 通用品牌方块（红底白音符）—— 平台认不出来的行用它
+    private var genericMark: some View {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
             .fill(Self.accent)
             .frame(width: 18, height: 18)

@@ -56,6 +56,19 @@ final class MusicURLResolver {
                                     fromCustomSource: nil,
                                     isFallbackSource: false)
         }
+        // ★ 2026-10-15 用户：云盘歌曲**不走 LX / 内置音源**，直走网易云官方通道。
+        //   云盘上传歌的 id 只在账号云盘里有效，公共曲库查不到 —— LX 音源按
+        //   songmid 解析必然失败，兜底链路还会弹「自动换源」提示；官方通道
+        //   对云盘 id 直接回云盘文件地址（需登录态，apiRequest 自动带 Cookie）。
+        if item.isCloudDisk {
+            let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
+            return ResolvedPlayback(
+                url: url,
+                headers: WellLXPlaybackHeaders.requestHeaders(
+                    for: url, platform: WellLXPlaybackHeaders.platformKey(for: item)),
+                fromCustomSource: nil,
+                isFallbackSource: false)
+        }
         let hasLX = await WellLXSourceStore.shared.hasActiveSource
         let builtinEnabled = UserDefaults.standard.bool(forKey: Self.builtinSourceKey)
 

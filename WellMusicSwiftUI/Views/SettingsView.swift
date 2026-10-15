@@ -62,6 +62,11 @@ struct SettingsView: View {
                     Toggle("启动恢复上次播放", isOn: $settings.restoreLastPlayback)
                     // 预加载下一首（2026-10-14 用户要求提供开关）
                     Toggle("预加载下一首", isOn: $settings.preloadNextEnabled)
+                    // 控制中心显示歌词（2026-10-15 用户：歌手名位置变成显示歌词，默认关）
+                    Toggle("控制中心显示歌词", isOn: Binding(
+                        get: { UserDefaults.standard.bool(forKey: PlayerCore.nowPlayingLyricsKey) },
+                        set: { PlayerCore.shared.setNowPlayingLyricsEnabled($0) }
+                    ))
                     // 动态封面开关（2026-10-15 用户：可自选是否打开；
                     // 未登录网易云时自动隐藏 —— 动态封面数据来自账号收藏）
                     if NeteaseSession.shared.isLoggedIn {

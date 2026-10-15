@@ -121,7 +121,10 @@ struct WellToplistSummary: Identifiable, Hashable {
 }
 
 /// 搜索结果里的 MV 条目。
-struct WellMVSummary: Identifiable, Hashable {
+///
+/// `Codable`：「近期播放」的 MV 段要本地持久化（用户 2026-10-15），
+/// 合成 Codable 即可（所有成员本身可编码）。
+struct WellMVSummary: Identifiable, Hashable, Codable {
     var id: String
     var name: String
     var coverURL: String?

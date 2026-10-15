@@ -61,7 +61,10 @@ actor WellImageCache {
 
     private nonisolated(unsafe) let memory = NSCache<NSString, UIImage>()
 
-    private let directory: URL
+    /// 磁盘缓存目录（Caches/WellArtwork）。init 里建好后再不变更，
+    /// 标 `nonisolated(unsafe)` 是为了让 `syncCachedImage(for:)` 能在
+    /// 非 actor 上下文里同步读盘（见该函数的说明）。
+    private nonisolated(unsafe) let directory: URL
     private let session: URLSession
     private var inflight: [String: Task<UIImage?, Never>] = [:]
 
@@ -79,9 +82,25 @@ actor WellImageCache {
         session = URLSession(configuration: config)
     }
 
-    /// 同步内存命中（无 actor 跳转，供视图初始化时预热）。
-    nonisolated func cachedImage(for url: URL) -> UIImage? {
-        memory.object(forKey: Self.cacheKey(for: url) as NSString)
+    /// 同步取图（内存 → 磁盘），供视图 init 与 `.task` 首帧预热。
+    ///
+    /// 解决「进专辑再退出来，货架封面集体闪一下占位图」（用户 2026-10-15）：
+    /// 专辑详情页会加载一批大封面，NSCache 在内存压力下把货架封面淘汰掉；
+    /// 返回时行视图重建，init 只探内存必然 miss → 先渲染一帧占位图，
+    /// 等 actor 跳转 + 磁盘读 + 解码回来才出真图，就是那一下「闪」。
+    ///
+    /// 这里把磁盘探测挪进同步路径：文件都在本地 Caches，单张
+    /// `Data(contentsOf:)` + ImageIO 降采样解码 ≈ 1~2 ms，命中的话
+    /// 首帧直接就是真图，没有闪跳；未命中才继续走异步网络链路。
+    ///
+    /// 线程安全：`memory`（NSCache）本身线程安全；磁盘读是纯本地小文件
+    /// 读 + ImageIO 解码，不碰任何 actor 可变状态，可在主线程调用。
+    nonisolated func syncCachedImage(for url: URL) -> UIImage? {
+        let key = Self.cacheKey(for: url)
+        if let hit = memory.object(forKey: key as NSString) { return hit }
+        guard let diskImage = Self.loadFromDisk(directory: directory, key: key) else { return nil }
+        memory.setObject(diskImage, forKey: key as NSString, cost: Self.cost(of: diskImage))
+        return diskImage
     }
 
     /// 取图：内存 → 磁盘 → 网络。`onCachedImage` 用于先回显磁盘预览。
@@ -194,8 +213,8 @@ actor WellImageCache {
 
 /// `AsyncImage` 的替代：由 `WellImageCache` 驱动，带交叉淡入。
 ///
-/// 关键收益：视图重建（如 iOS 26 底栏 accessory 重刷）时直接从内存拿已解码图片，
-/// 不会闪回占位图；列表滚动也不会重复请求。
+/// 关键收益：视图重建（如 iOS 26 底栏 accessory 重刷、货架行回收再显示）时
+/// 从「内存 → 同步磁盘」直接拿到已解码图片，不会闪回占位图；列表滚动也不会重复请求。
 struct WellAsyncImage<Placeholder: View>: View {
     let url: URL?
     var animated: Bool
@@ -208,8 +227,10 @@ struct WellAsyncImage<Placeholder: View>: View {
         self.url = url
         self.animated = animated
         self.placeholder = placeholder
-        // 用内存缓存预热，避免首帧空白
-        let seeded = url.flatMap { WellImageCache.shared.cachedImage(for: $0) }
+        // 用「内存 → 同步磁盘」预热：行被 LazyVGrid 回收再显示时，内存多半已被
+        // NSCache 淘汰，只探内存会先闪一帧占位图（用户 2026-10-15 报「专辑封面闪一下」）。
+        // 本地小文件同步读 ≈ 1~2 ms，命中就首帧出真图。
+        let seeded = url.flatMap { WellImageCache.shared.syncCachedImage(for: $0) }
         _loaded = State(initialValue: seeded)
         _loadedURL = State(initialValue: seeded == nil ? nil : url)
     }
@@ -230,9 +251,11 @@ struct WellAsyncImage<Placeholder: View>: View {
                 loadedURL = nil
                 return
             }
-            // 同步内存命中
-            if let memoryHit = WellImageCache.shared.cachedImage(for: url) {
-                if loadedURL != url { loaded = memoryHit; loadedURL = url }
+            // 同步命中（内存 → 磁盘）：init 已探过一次，这里通常直接命中内存、
+            // 零 I/O；URL 变化（如复用视图换封面）时同步探盘，命中就不走
+            // 异步链路，避免中间闪一帧占位图。
+            if let syncHit = WellImageCache.shared.syncCachedImage(for: url) {
+                if loadedURL != url { loaded = syncHit; loadedURL = url }
                 return
             }
             if loadedURL != url { loaded = nil; loadedURL = url }

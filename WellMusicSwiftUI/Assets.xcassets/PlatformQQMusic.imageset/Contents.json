@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "platform_qqmusic.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

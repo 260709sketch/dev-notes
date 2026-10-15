@@ -19,12 +19,12 @@ import SwiftUI
 struct DiscoverView: View {
     @State private var dailySongs: [MusicItem] = []
     @State private var recommendedPlaylists: [WellPlaylistSummary] = []
-    // ★ 2026-10-15 用户：推荐歌单下方新增「我的歌单」横滑区（网易云登录后显示）
-    @ObservedObject private var session = NeteaseSession.shared
-    @State private var myPlaylists: [WellPlaylistSummary] = []
     /// 「我喜欢的音乐 / 最近播放」两张入口卡要读本地收藏数与播放历史封面
     ///（只读这两个值，**不订阅 PlayerCore**，遵守本页性能铁律）。
     @EnvironmentObject private var appState: AppState
+    /// 「我喜欢的音乐」卡片的封面：用户在网易云的「我喜欢」歌单真实封面
+    ///（登录后异步拉取；未登录/拉不到时回落官方默认封面）。
+    @State private var likedCoverURL: String?
     @State private var newAlbums: [WellAlbumSummary] = []
     @State private var toplists: [WellToplistSummary] = []
     @State private var artists: [WellArtistSummary] = []
@@ -45,7 +45,6 @@ struct DiscoverView: View {
                 } else {
                     dailySection
                     recommendedSection
-                    myPlaylistsSection
                     myMusicSection
                     newAlbumsSection
                     artistsSection
@@ -94,20 +93,10 @@ struct DiscoverView: View {
             errorMessage = "内容加载失败，请下拉重试"
         }
 
-        // ★ 我的歌单（登录后显示；副标题为网易云用户昵称）
-        myPlaylists = await loadMyPlaylists()
-    }
-
-    /// 网易云用户自己的歌单（发现页横滑区用）。
-    private func loadMyPlaylists() async -> [WellPlaylistSummary] {
-        guard session.isLoggedIn, let uid = session.account?.userId else { return [] }
-        let items = (try? await NeteaseMusicAPI.shared.userPlaylists(uid: uid)) ?? []
-        let nickname = session.account?.nickname ?? ""
-        return items.map { pl in
-            WellPlaylistSummary(
-                id: pl.id, name: pl.name, coverURL: pl.coverURL,
-                playCount: 0, trackCount: pl.trackCount,
-                creatorName: nickname, platform: .netease)
+        // 「我喜欢的音乐」封面：登录后拉用户真实的「我喜欢」歌单封面
+        //（网易云老规矩：该歌单 id == 用户 uid）；未登录保持 nil，用默认封面。
+        if let uid = NeteaseSession.shared.account?.userId {
+            likedCoverURL = try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)")
         }
     }
 
@@ -135,34 +124,9 @@ struct DiscoverView: View {
         }
     }
 
-    // MARK: - 我的歌单（推荐歌单下方；网易云登录后显示，副标题为用户昵称）
-
-    @ViewBuilder
-    private var myPlaylistsSection: some View {
-        if !myPlaylists.isEmpty {
-            let nickname = session.account?.nickname ?? "网易云"
-            WellShelf(title: "\(nickname) 的歌单", rowHeight: 220) {
-                ForEach(Array(myPlaylists.enumerated()), id: \.element.id) { index, pl in
-                    NavigationLink {
-                        // 与「我的歌单」页一致：进我的歌单版式
-                        WellMyPlaylistDetailView(
-                            source: .netease(id: pl.id, name: pl.name,
-                                             coverURL: pl.coverURL,
-                                             creatorName: nickname))
-                    } label: {
-                        WellCoverCard(coverURL: pl.coverURL, title: pl.name,
-                                      subtitle: nickname, playCount: pl.playCount)
-                    }
-                    .buttonStyle(.plain)
-                    .modifier(WellCardEntrance(index: index, itemID: "mypl-\(pl.id)"))
-                }
-            }
-        }
-    }
-
     // MARK: - 我的音乐（我喜欢的音乐 / 最近播放 / 听歌排行 / 我的云盘）
 
-    /// 网易云「我喜欢的音乐」官方默认封面。
+    /// 网易云「我喜欢的音乐」官方默认封面（未登录或拉不到用户封面时的兜底）。
     private static let likedMusicCover = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
 
     /// ★ 2026-10-15 用户：四张个人入口卡从「我的」页挪到发现页，
@@ -178,7 +142,8 @@ struct DiscoverView: View {
                     title: "我喜欢的音乐",
                     subtitle: "\(appState.favoriteTracks.count) 首",
                     icon: "heart.fill",
-                    coverURL: Self.likedMusicCover,
+                    // ★ 2026-10-15 用户：封面用用户「我喜欢」歌单的真实封面
+                    coverURL: likedCoverURL ?? Self.likedMusicCover,
                     gradient: [Color(red: 0.88, green: 0.24, blue: 0.30),
                                Color(red: 0.65, green: 0.14, blue: 0.22)])
             }
