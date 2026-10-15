@@ -27,14 +27,6 @@ final class LyricsService {
         let key = item.keyOf
         if let cached = cache[key] { return cached }
 
-        // ★ 2026-10-15 用户：在线 TTML 歌词优先（AMLL TTML DB；开关关/平台不支持/拉取
-        //   失败都静默落回下面的平台通道）。逐字与翻译一并来自 TTML 文档。
-        if let ttml = await fetchTTMLResult(item: item) {
-            let result = filterMetadata(in: ttml, item: item)
-            store(result, for: key)
-            return result
-        }
-
         let fallbacks: [MusicSource] = [.netease, .qq, .kugou, .kuwo]
 
         // 优先要**逐字**结果。
@@ -61,21 +53,6 @@ final class LyricsService {
             return fallback
         }
         return nil
-    }
-
-    /// 在线 TTML 歌词（AMLL TTML DB）：抓取 + 解析 + 组装成标准结果。
-    /// 设置项与缓存语义见 `AmllTTMLService`。
-    private func fetchTTMLResult(item: MusicItem) async -> LyricResult? {
-        guard let (platformPath, ids) = AmllTTMLService.candidates(for: item),
-              let xml = await AmllTTMLService.fetch(platformPath: platformPath, ids: ids) else {
-            return nil
-        }
-        let parsed = TTMLParser.parse(xml)
-        guard !parsed.lines.isEmpty else { return nil }
-        return LyricResult(
-            lrc: parsed.lines,
-            wordLyric: parsed.words.isEmpty ? nil : parsed.words,
-            source: item.source)
     }
 
     /// 剔除「非演唱行」—— 网易云/QQ 歌词**开头**那一串带正常时间戳的职员表

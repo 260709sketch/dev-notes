@@ -54,7 +54,7 @@ struct WellStorageView: View {
                     Label("清除图片缓存", systemImage: "trash")
                 }
                 HStack {
-                    Text("歌词缓存（TTML）")
+                    Text("歌词缓存")
                     Spacer()
                     Text(lyricCacheSize).foregroundStyle(.secondary)
                 }
@@ -67,7 +67,7 @@ struct WellStorageView: View {
             } header: {
                 Text("缓存")
             } footer: {
-                Text("图片缓存为封面等网络图片的本地副本；歌词缓存为 AMLL TTML DB 的在线歌词副本。清除后再次使用时会自动重新下载。")
+                Text("图片缓存为封面等网络图片的本地副本；歌词缓存为历史版本遗留的在线歌词副本（已不再使用），可安全清除。")
                     .font(.system(size: 12))
             }
         }
