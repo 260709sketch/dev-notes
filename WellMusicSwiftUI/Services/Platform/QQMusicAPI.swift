@@ -164,6 +164,15 @@ final class QQMusicAPI {
         return NetworkClient.jsonObject(resp.data)
     }
 
+    /// OrderedJSON 版本：直接用 `encoded()` 序列化（保序，比 JSONSerialization 更稳）。
+    private func musicuGET(_ body: OrderedJSON) async -> [String: Any]? {
+        let jsonString = body.encoded()
+        guard let encoded = jsonString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(Self.musicuAPI)?data=\(encoded)") else { return nil }
+        guard let resp = try? await NetworkClient.shared.get(url.absoluteString, headers: ["Referer": "https://y.qq.com/"]) else { return nil }
+        return NetworkClient.jsonObject(resp.data)
+    }
+
     /// 桌面版搜索（`DoSearchForQQMusicDesktop`，无签名）。
     /// 返回原始条目数组；`searchType`：1 = 歌手、2 = 专辑。
     private func desktopSearchItems(_ keyword: String, searchType: Int, limit: Int, page: Int) async -> [[String: Any]] {
@@ -537,7 +546,7 @@ final class QQMusicAPI {
         var list = await desktopSearchItems(keyword, searchType: 1, limit: limit, page: 1)
         // 回退 1：移动端签名接口
         if list.isEmpty {
-            list = await searchItems(keyword, searchType: 1, limit: limit, page: 1, key: "item_singer")
+            list = (try? await searchItems(keyword, searchType: 1, limit: limit, page: 1, key: "item_singer")) ?? []
         }
         // 回退 2：smartbox 联想（结果少但几乎永不挂）
         if list.isEmpty {
@@ -570,7 +579,7 @@ final class QQMusicAPI {
         }
         // 回退 2：移动端签名接口
         if list.isEmpty {
-            list = await searchItems(keyword, searchType: 2, limit: limit, page: 1, key: "item_album")
+            list = (try? await searchItems(keyword, searchType: 2, limit: limit, page: 1, key: "item_album")) ?? []
         }
         return list.compactMap { parseMobileAlbum($0) }
     }
