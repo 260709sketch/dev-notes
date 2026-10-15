@@ -84,6 +84,9 @@ struct MainTabView: View {
     @available(iOS 26.0, *)
     private var iOS26TabView: some View {
         TabView(selection: $selectedTab) {
+            // ⚠️ `Tab` 的结构（是否 search 角色）随设置变化，切换时必须让
+            //   TabView 重建一次，否则系统可能沿用旧结构（表现为「切了没反应」）。
+            //   `.id` 绑到开关上，切换即重建。
             Tab("发现", systemImage: "house.fill", value: WellTab.radio) {
                 // 原生 TabView 不提供导航容器，这里由 MainTabView 统一补上
                 //（页面自身不带 NavigationStack）。
@@ -112,6 +115,9 @@ struct MainTabView: View {
                 NavigationStack(path: $profilePath) { pageContent(for: .profile) }
             }
         }
+        // ⚠️ `Tab` 的结构（是否 search 角色）随设置变化：`.id` 绑到开关上，
+        //   切换时强制 TabView 重建一次（否则系统可能沿用旧结构，表现为「切了没反应」）。
+        .id(settings.searchLegacyUI)
     }
 
     /// 自定义底部栏：页面 ZStack 切换 + 底部 MiniPlayer + 胶囊栏

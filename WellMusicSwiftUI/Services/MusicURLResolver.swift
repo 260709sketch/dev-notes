@@ -61,8 +61,18 @@ final class MusicURLResolver {
         throw hasLX ? MusicURLResolverError.lxResolveFailed : MusicURLResolverError.lxSourceUnavailable
     }
 
-    /// 内置音源：官方平台通道（QQ vkey / 网易云 / 酷狗 / 酷我），成功后 Toast 提示。
+    /// 内置音源：**解锁源优先**（自动匹配酷狗/酷我完整音频），
+    /// 失败再回退官方平台通道（可能受试听限制）；成功后 Toast 提示。
     private func resolveViaBuiltinSource(item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
+        if let unlocked = await BuiltinAudioSource.resolve(item: item) {
+            await ToastCenter.shared.show("使用内置音源播放")
+            return ResolvedPlayback(
+                url: unlocked.url,
+                headers: WellLXPlaybackHeaders.requestHeaders(
+                    for: unlocked.url, platform: WellLXPlaybackHeaders.platformKey(for: item)),
+                fromCustomSource: unlocked.sourceName,
+                isFallbackSource: true)
+        }
         let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
         await ToastCenter.shared.show("使用内置音源播放")
         return ResolvedPlayback(
