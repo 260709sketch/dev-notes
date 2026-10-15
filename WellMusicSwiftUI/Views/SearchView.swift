@@ -574,6 +574,9 @@ struct WellMVPlayerView: View {
         }
         .statusBarHidden()
         .task {
+            // ★ 2026-10-15 用户：进 MV 页先收起搜索页遗留的键盘
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                             to: nil, from: nil, for: nil)
             // ★ 2026-10-15 用户：MV 自动横屏（放开 App 方向锁 + 请求横屏）
             enterLandscape()
             // 播放 MV 时暂停后台音乐
