@@ -154,6 +154,7 @@ final class NeteaseMusicAPI {
         var fee: Int?
         struct Artist: Decodable { var name: String? }
         struct Album: Decodable {
+            var id: Int?
             var name: String?
             var picUrl: String?
         }

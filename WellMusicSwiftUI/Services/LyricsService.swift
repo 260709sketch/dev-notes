@@ -117,16 +117,24 @@ final class LyricsService {
         let parsedLRC = LyricParser.parseLRCWithMeta(lrcText)
         guard !parsedLRC.lines.isEmpty else { return nil }
         var lrc = parsedLRC.lines
-        // 翻译：同接口的 `trans` 字段（有翻译的歌曲才有；明文 LRC，与 lyric 时间轴一致）
-        if let transText = json["trans"] as? String, !transText.isEmpty {
-            LyricParser.mergeTranslation(&lrc, translation: transText, offsetMs: parsedLRC.offsetMs)
-        }
+        // 逐字（QRC）+ 翻译：均为 `GetPlayLyricInfo` 的返回（qrc=1 / trans=1）。
+        // 翻译 `trans` 是 base64 的 LRC；网页接口的 trans 字段在有翻译时是明文，优先用。
+        let info = await QQMusicAPI.shared.playLyricInfo(songmid: mid)
         var word: [WordLyricLine]?
-        // 逐字：QQ 的逐字是 **QRC**（hex 加密，3DES+zlib），走
-        // `GetPlayLyricInfo qrc=1` 拉取（无需登录）。旧接口的 `yrc` 字段永远缺席。
-        if let qrcText = await QQMusicAPI.shared.wordLyric(songmid: mid), !qrcText.isEmpty {
+        if let qrcText = info?.qrc, !qrcText.isEmpty {
             let parsed = QQMusicAPI.shared.parseQrc(qrcText)
             if !parsed.isEmpty { word = parsed }
+        }
+        var transText = (json["trans"] as? String) ?? ""
+        if transText.isEmpty { transText = info?.transLRC ?? "" }
+        if !transText.isEmpty {
+            // 网页接口偶发返回 base64：解码失败按明文处理
+            if !transText.hasPrefix("[") && !transText.hasPrefix("["),
+               let data = Data(base64Encoded: transText, options: .ignoreUnknownCharacters),
+               let decoded = String(data: data, encoding: .utf8) {
+                transText = decoded
+            }
+            LyricParser.mergeTranslation(&lrc, translation: transText, offsetMs: parsedLRC.offsetMs)
         }
         return LyricResult(lrc: lrc, wordLyric: word, source: .qq)
     }
@@ -195,8 +203,9 @@ final class LyricsService {
            let krcJSON = NetworkClient.jsonObject(krcResp.data),
            let krcContent = krcJSON["content"] as? String,
            let krcText = LyricParser.decodeKRC(base64: krcContent) {
+            let translationRows = LyricParser.krcTranslationRows(krcText)
             let word = LyricParser.parseKRC(krcText)
-            let lrc = LyricParser.krcToLRC(krcText)
+            let lrc = LyricParser.krcToLRC(krcText, translationRows: translationRows)
             if !lrc.isEmpty || !word.isEmpty {
                 return LyricResult(lrc: lrc, wordLyric: word.isEmpty ? nil : word, source: .kugou)
             }
@@ -516,12 +525,41 @@ enum LyricParser {
         return result.sorted { $0.start < $1.start }
     }
 
-    /// 从 KRC 文档生成逐行 LRC（无逐字能力场景下的行级回退；文本取每行拼接结果）。
-    static func krcToLRC(_ text: String) -> [LrcLine] {
+    /// 解码 KRC 的 `[language:BASE64]` 翻译段 → 每行文本数组。
+    ///
+    /// 结构：base64 → JSON `{"content":[{"language":0,"lyricContent":[["词","词"],...]}]}`。
+    /// `lyricContent` 与**未过滤的歌词原始行**一一对应（含制作人员行），
+    /// 供 `krcToLRC` 按原始行序对齐合并。
+    static func krcTranslationRows(_ text: String) -> [String] {
+        for rawLine in text.components(separatedBy: .newlines) {
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("[language:") else { continue }
+            line = String(line.dropFirst("[language:".count))
+            if line.hasSuffix("]") { line = String(line.dropLast()) }
+            guard let data = Data(base64Encoded: line, options: .ignoreUnknownCharacters),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let content = obj["content"] as? [[String: Any]] else { continue }
+            for entry in content {
+                guard let rows = entry["lyricContent"] as? [[String]] else { continue }
+                let texts = rows.map { $0.joined() }
+                if texts.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                    return texts
+                }
+            }
+        }
+        return []
+    }
+
+    /// 从 KRC 文档生成逐行 LRC（含翻译；文本取每行拼接结果）。
+    /// - Parameter translationRows: `krcTranslationRows` 的输出（按原始行序对齐）。
+    static func krcToLRC(_ text: String, translationRows: [String] = []) -> [LrcLine] {
         var lines: [LrcLine] = []
         guard let lineRE = try? NSRegularExpression(pattern: #"^\[(\d+),(\d+)\]"#),
               let wordRE = try? NSRegularExpression(pattern: #"<(\d+),(\d+),\d+>([^<]*)"#)
         else { return [] }
+        // 原始行序游标：翻译数组与「未过滤的原始行」对齐（含制作人员行），
+        // 所以每解析到一个 `[数字,数字]` 行都要自增（无论最终是否输出）。
+        var rawIndex = 0
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
@@ -533,9 +571,16 @@ enum LyricParser {
             for m in wordRE.matches(in: line, range: full) where m.numberOfRanges >= 4 {
                 composed += ns.substring(with: m.range(at: 3))
             }
+            let translation: String? = rawIndex < translationRows.count
+                ? translationRows[rawIndex].trimmingCharacters(in: .whitespaces)
+                : nil
+            rawIndex += 1
             let trimmed = composed.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
-            lines.append(LrcLine(time: lineStartMs / 1000, text: trimmed))
+            lines.append(LrcLine(
+                time: lineStartMs / 1000,
+                text: trimmed,
+                translated: (translation?.isEmpty == false) ? translation : nil))
         }
         return lines.sorted { $0.time < $1.time }
     }

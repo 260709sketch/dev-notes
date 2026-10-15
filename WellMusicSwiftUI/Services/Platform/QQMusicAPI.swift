@@ -478,13 +478,22 @@ final class QQMusicAPI {
     /// QQ 音乐逐字歌词接口。
     /// 返回解密后的 QRC 明文；无逐字 / 解析失败返回 nil。
     func wordLyric(songmid: String) async -> String? {
+        await playLyricInfo(songmid: songmid)?.qrc
+    }
+
+    /// QQ 歌词信息（`GetPlayLyricInfo`）：逐字 QRC + 翻译 LRC。
+    ///
+    /// 响应字段：`lyric` = hex 加密 QRC；`trans` = **base64 编码的翻译 LRC**
+    /// （带 `[ti:]/[ar:]` 等元信息头，时间轴与主歌词一致）。
+    /// ⚠️ 必须带 `"trans": 1` 参数，否则该字段不返回。
+    func playLyricInfo(songmid: String) async -> (qrc: String?, transLRC: String?)? {
         let body: [String: Any] = [
             "comm": ["uin": 0, "format": 1, "ct": 19, "cv": 0],
             "detail": [
                 "module": "music.musichallSong.PlayLyricInfo",
                 "method": "GetPlayLyricInfo",
                 "param": [
-                    "qrc": 1, "qrc_t": 0, "roma": 1, "guoke": 1,
+                    "qrc": 1, "qrc_t": 0, "roma": 1, "trans": 1, "guoke": 1,
                     "type": -1, "licenseID": "", "cp": 0, "cv": 0, "ct": 19,
                     "songmid": songmid,
                 ],
@@ -503,12 +512,26 @@ final class QQMusicAPI {
         guard let resp = try? await NetworkClient.shared.rawRequest(request),
               let json = NetworkClient.jsonObject(resp.data),
               let detail = json["detail"] as? [String: Any],
-              let detailData = detail["data"] as? [String: Any],
-              let qrcFlag = detailData["qrc"] as? Int, qrcFlag == 1,
-              let encrypted = detailData["lyric"] as? String, !encrypted.isEmpty else {
+              let detailData = detail["data"] as? [String: Any] else {
             return nil
         }
-        return QQQrcDecoder.decrypt(encrypted)
+        var qrc: String?
+        if let qrcFlag = detailData["qrc"] as? Int, qrcFlag == 1,
+           let encrypted = detailData["lyric"] as? String, !encrypted.isEmpty {
+            qrc = QQQrcDecoder.decrypt(encrypted)
+        }
+        var transLRC: String?
+        if let transRaw = detailData["trans"] as? String, !transRaw.isEmpty {
+            // base64 → LRC 明文（解码失败时按明文处理）
+            if let data = Data(base64Encoded: transRaw, options: .ignoreUnknownCharacters),
+               let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                transLRC = text
+            } else {
+                transLRC = transRaw
+            }
+        }
+        guard qrc != nil || transLRC != nil else { return nil }
+        return (qrc, transLRC)
     }
 
     /// 解析 QRC 明文 → `WordLyricLine`（复用网易云 YRC 的模型）。
