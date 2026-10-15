@@ -7,6 +7,10 @@ import Foundation
 /// - QQ：source=tencent（用 songmid）
 /// - 酷狗：source=kugou（用 hash）/ 酷我：source=kuwo（用 rid）
 ///
+/// 与 RN 版 `helpers/unblockSources.ts`（内置兜底音源）对照：同为
+/// 「Pyncmd（本 API）→ 酷狗 trackercdn」两级；酷狗级实测已失效（status=2），
+/// 故本项目只保留本通道 + 官方兜底。
+///
 /// 说明（用户 2026-10-15）：
 /// - 参考项目的「黑解」通道（酷狗 trackercdn v2 / 酷我 anti.s）实测**已全部失效**
 ///   （trackercdn 返回 status=2；anti.s 常返回试听片段），故不再保留；
@@ -41,6 +45,9 @@ enum BuiltinAudioSource {
     }
 
     /// 平台 → GD 音乐 API 的 source 名 + 歌曲 id。
+    /// ⚠️ 与 RN 版内置音源（unblockSources.ts）对照：它只用 netease（Pyncmd）——
+    /// GD 音乐 API 实测支持 netease / tencent；kugou / kuwo 的 source 会直接报
+    /// 「not supported」，故只保留前两者。
     private static func platformSourceAndId(for item: MusicItem) -> (String, String)? {
         switch item.source {
         case .netease, .lx:
@@ -49,13 +56,7 @@ enum BuiltinAudioSource {
         case .qq:
             guard let mid = item.qqSongMid else { return nil }
             return ("tencent", mid)
-        case .kugou:
-            guard let hash = item.kugouHash else { return nil }
-            return ("kugou", hash)
-        case .kuwo:
-            guard let rid = item.kuwoRid else { return nil }
-            return ("kuwo", rid)
-        case .auto:
+        default:
             return nil
         }
     }
