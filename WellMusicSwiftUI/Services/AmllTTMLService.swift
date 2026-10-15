@@ -60,6 +60,25 @@ enum AmllTTMLService {
 
     // MARK: 单 id 抓取（缓存 + 去重）
 
+    /// 候选 URL：主模板 + 内置镜像回退。
+    ///
+    /// ⚠️ `raw.githubusercontent.com` 在中国大陆网络下时通时断（实测同一地址
+    /// 会在 200 / 连接超时之间跳变），只试主地址会让 TTML 经常「拉不到」。
+    /// 仅当模板是默认 GitHub raw 地址时追加镜像（自定义模板尊重用户配置）。
+    private static func candidateURLs(template: String, platformPath: String, id: String) -> [String] {
+        guard let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return [] }
+        let primary = template
+            .replacingOccurrences(of: "%p", with: platformPath)
+            .replacingOccurrences(of: "%s", with: encoded)
+        var urls = [primary]
+        if template.contains("raw.githubusercontent.com") {
+            let path = "amll-dev/amll-ttml-db/refs/heads/main/\(platformPath)/\(encoded)"
+            urls.append("https://gh-proxy.com/https://raw.githubusercontent.com/\(path)")
+            urls.append("https://fastly.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/\(platformPath)/\(encoded)")
+        }
+        return urls
+    }
+
     private static func fetchOne(template: String, platformPath: String, id: String) async -> String? {
         let key = "\(platformPath):\(id)"
 
@@ -78,36 +97,35 @@ enum AmllTTMLService {
         // 并发去重
         if let task = inflight[key] { return await task.value }
 
+        // ⚠️ 多源**并发竞速**：取最快成功的一个。逐个串行试会把歌词下发
+        //   拖到 3×超时的最坏情况（歌词本应先于 TTML 出；TTML 只是加分项）。
         let task = Task<String?, Never> {
-            guard let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-                  let url = URL(string: template
-                    .replacingOccurrences(of: "%p", with: platformPath)
-                    .replacingOccurrences(of: "%s", with: encoded)) else {
-                return nil
-            }
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 8
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                if status == 200 {
-                    let content = String(data: data, encoding: .utf8) ?? ""
-                    if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        writeNegativeStamp(key: key)   // 200 + 空 body → 负缓存
-                        return nil
+            let urls = candidateURLs(template: template, platformPath: platformPath, id: id)
+            let content: String? = await withTaskGroup(of: String?.self) { group in
+                for urlString in urls {
+                    guard let url = URL(string: urlString) else { continue }
+                    group.addTask {
+                        var request = URLRequest(url: url)
+                        request.timeoutInterval = 5
+                        guard let (data, response) = try? await URLSession.shared.data(for: request),
+                              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+                        let text = String(data: data, encoding: .utf8) ?? ""
+                        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
                     }
-                    memoryCache[key] = content
-                    writeDiskCache(key: key, content: content)
-                    return content
                 }
-                if status == 404 {
-                    writeNegativeStamp(key: key)
-                    return nil
+                for await result in group {
+                    if let result {
+                        group.cancelAll()
+                        return result
+                    }
                 }
-                return nil   // 其它状态码不缓存，下次重试
-            } catch {
                 return nil
             }
+            if let content {
+                memoryCache[key] = content
+                writeDiskCache(key: key, content: content)
+            }
+            return content
         }
         inflight[key] = task
         let result = await task.value
