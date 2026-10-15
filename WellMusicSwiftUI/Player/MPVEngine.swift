@@ -229,6 +229,14 @@ final class MPVEngine: @unchecked Sendable {
         mpv_set_property(h, "volume", MPV_FORMAT_DOUBLE, &d)
     }
 
+    /// 当前音量（mpv 百分比 0~100）。淡入淡出斜坡的起点真值就从这里读。
+    var volumePercent: Double? {
+        guard let h = handle else { return nil }
+        var d = CDouble(0)
+        guard mpv_get_property(h, "volume", MPV_FORMAT_DOUBLE, &d) >= 0 else { return nil }
+        return d
+    }
+
     /// 最近一次的均衡器滤镜链（引擎初始化时重放用）。
     private var pendingAFChain: String = ""
 

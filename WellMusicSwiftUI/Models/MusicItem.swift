@@ -208,6 +208,9 @@ struct Playlist: Identifiable, Codable, Hashable {
     var coverURL: String?
     var tracks: [MusicItem] = []
     var createdAt: Date = Date()
+    /// 来源平台：`"netease"` / `"qq"`（导入的网易云 / QQ 歌单）；nil = 用户自建。
+    /// Optional Codable：旧安装升级后缺失该键用 nil 解码，不会整条失败。
+    var sourcePlatform: String? = nil
 }
 
 /// 搜索歌单（平台返回）

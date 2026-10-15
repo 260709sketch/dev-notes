@@ -2,12 +2,16 @@ import Foundation
 
 /// 已登录的网易云账号。
 ///
-/// 只保留界面上真正会用到的三项，不照搬接口返回的一大坨字段 ——
+/// 只保留界面上真正会用到的几项，不照搬接口返回的一大坨字段 ——
 /// 以后要做「关注/粉丝数」之类再按需加。
+///
+/// `vipType`：0 = 未开通、10 = 音乐包、11 = 黑胶VIP；web 接口不暴露 SVIP
+/// （官方明示网页端不展示 SVIP），非这三档的取值按 SVIP 档显示。
 struct NeteaseAccount: Codable, Equatable {
     var userId: Int
     var nickname: String
     var avatarURL: String?
+    var vipType: Int?
 }
 
 /// 网易云登录态的唯一持有者。

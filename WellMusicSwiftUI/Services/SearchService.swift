@@ -131,7 +131,7 @@ final class SearchService {
     /// 优先走各平台的真实详情接口；失败时再退回同名搜索兜底。
     func detailTracks(for source: WellSearchDetailSource) async -> [MusicItem] {
         switch source {
-        case .tracks(let items):
+        case .tracks(let items, _):
             return items
 
         case .playlist(let id, let platform, _):

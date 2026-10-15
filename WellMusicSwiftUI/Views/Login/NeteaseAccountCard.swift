@@ -2,7 +2,8 @@ import SwiftUI
 
 /// 「我的」页顶部的网易云账号卡片（用户 2026-10-15 定稿版式）。
 ///
-/// 未登录时是登录入口（点击弹出 `NeteaseLoginSheet`）；
+/// 未登录时**整张卡就是设置卡**（用户 2026-10-16）：网易云图标位置改成蓝色设置按钮，
+/// 点击进入「设置 → 账号」登录（账号是设置页第一个 Section，打开即达）。
 /// 已登录时显示**网易云头像 + 昵称 + 昵称旁的 VIP 标识**，
 /// 右侧一个**设置图标**（点击进入设置页；退出登录在「设置 → 账号」里）。
 ///
@@ -11,7 +12,7 @@ import SwiftUI
 @MainActor
 struct NeteaseAccountCard: View {
     @ObservedObject private var session = NeteaseSession.shared
-    @State private var showingLogin = false
+    /// 未登录卡的唯一动作就是进设置（登录入口在「设置 → 账号」里，见 loggedOut 注释）
     @State private var showingSettings = false
 
     private var brandGradient: LinearGradient {
@@ -28,6 +29,13 @@ struct NeteaseAccountCard: View {
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
+    /// 卡片阴影（用户 2026-10-15：登录卡与近期播放卡加阴影）。
+    /// 半径/偏移刻意收敛：与下方卡片只隔 10pt，阴影别落到下一张卡上
+    /// （下方卡片是不透明背景，轻微溢出也会被盖住，双保险）。
+    private var cardShadow: (Color, CGFloat, CGFloat, CGFloat) {
+        (Color.black.opacity(0.10), 7, 0, 2)
+    }
+
     var body: some View {
         Group {
             if let account = session.account, session.isLoggedIn {
@@ -36,28 +44,32 @@ struct NeteaseAccountCard: View {
                 loggedOut
             }
         }
-        .sheet(isPresented: $showingLogin) {
-            NeteaseLoginSheet()
-        }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
     }
 
-    // MARK: 未登录
+    // MARK: 未登录（= 设置卡）
 
     private var loggedOut: some View {
         Button {
-            showingLogin = true
+            // ★ 2026-10-16 用户：未登录时这张卡就是设置卡，蓝色设置按钮 →
+            //   设置页（账号是第一个 Section，打开就在登录入口上）
+            showingSettings = true
         } label: {
             HStack(spacing: 14) {
-                brandBadge(size: 46)
+                // 原网易云图标位置 → 蓝色设置按钮
+                Image(systemName: "gearshape")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(Color.blue))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("登录网易云音乐")
+                    Text("设置")
                         .font(.system(size: 15.5, weight: .semibold))
                         .foregroundStyle(.primary)
-                    Text("扫码即可，同步歌单与每日推荐")
+                    Text("登录网易云音乐，同步歌单与每日推荐")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -80,6 +92,7 @@ struct NeteaseAccountCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .shadow(color: cardShadow.0, radius: cardShadow.1, x: cardShadow.2, y: cardShadow.3)
     }
 
     // MARK: 已登录
@@ -94,7 +107,9 @@ struct NeteaseAccountCard: View {
                     Text(account.nickname)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
-                    vipBadge
+                    if let badge = vipBadge(vipType: account.vipType) {
+                        badge
+                    }
                 }
                 Text("网易云音乐已登录")
                     .font(.system(size: 12))
@@ -125,6 +140,7 @@ struct NeteaseAccountCard: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
         }
+        .shadow(color: cardShadow.0, radius: cardShadow.1, x: cardShadow.2, y: cardShadow.3)
         .task {
             // 进页面时顺手校验一次票据：过期就自动回到未登录态，
             // 而不是让用户点进歌单才发现什么都加载不出来。
@@ -132,40 +148,57 @@ struct NeteaseAccountCard: View {
         }
     }
 
-    /// VIP 标识：描边胶囊 + VIP 字样（与网易云音乐会员角标同款语言）。
-    private var vipBadge: some View {
-        Text("VIP")
-            .font(.system(size: 8.5, weight: .bold))
-            .foregroundStyle(AppTheme.accent)
-            .padding(.horizontal, 4.5)
-            .padding(.vertical, 2)
-            .overlay(
-                Capsule().strokeBorder(AppTheme.accent, lineWidth: 0.8)
-            )
+    /// VIP 标识：描边胶囊 + 档位字样（用户 2026-10-15：按网易云实际开通状态显示）。
+    ///
+    /// * 没开通（0 / 拿不到）→ **不显示**
+    /// * 黑胶VIP（11）/ 音乐包（10）→ `vip`
+    /// * 其他非零取值 → `svip`
+    ///
+    /// ⚠️ 网易云官方明示 SVIP「网页端暂不支持展示」，web 接口只区分 0/10/11；
+    /// 服务端哪天给出 SVIP 的独立取值，这里自动按 svip 显示，不用改代码。
+    @ViewBuilder
+    private func vipBadge(vipType: Int?) -> some View {
+        if let vipType, vipType != 0 {
+            let text = (vipType == 10 || vipType == 11) ? "vip" : "svip"
+            Text(text)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(AppTheme.accent)
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2)
+                .overlay(
+                    Capsule().strokeBorder(AppTheme.accent, lineWidth: 0.8)
+                )
+        }
     }
 
     // MARK: 零件
 
     /// 头像：加载失败或没有头像时退回品牌色徽标。
+    ///
+    /// ★ 2026-10-16 用户：「网易头像怎么不是圆形的」—— 根因是回退徽标是
+    /// **圆角方形**（RoundedRectangle），头像 URL 缺失/加载失败时就露出方块。
+    /// 修法：徽标本身改 `Circle`，且整个 ZStack 统一 `clipShape(Circle())`，
+    /// 任何状态（加载中/失败/成功）都是圆的。
     private func avatar(_ account: NeteaseAccount) -> some View {
         ZStack {
-            brandBadge(size: 52)
             if let urlString = account.avatarURL, let url = URL(string: urlString), !urlString.isEmpty {
                 WellAsyncImage(url: url) {
                     brandBadge(size: 52)
                 }
                 .frame(width: 52, height: 52)
-                .clipShape(Circle())
+            } else {
+                brandBadge(size: 52)
             }
         }
         .frame(width: 52, height: 52)
+        .clipShape(Circle())
         .overlay {
             Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
         }
     }
 
     private func brandBadge(size: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
+        Circle()
             .fill(brandGradient)
             .frame(width: size, height: size)
             .overlay {

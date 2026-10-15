@@ -68,7 +68,11 @@ struct WellMyPlaylistDetailView: View {
             _tracks = State(initialValue: playlist.tracks)
             _title = State(initialValue: playlist.name)
             _coverURL = State(initialValue: playlist.coverURL)
-            _creatorName = State(initialValue: nil)
+            // 导入的歌单带平台来源（netease / qq）→ 显示平台行 + 对应 App 图标；
+            // 用户自建歌单（sourcePlatform == nil）不显示平台行
+            _creatorName = State(initialValue: playlist.sourcePlatform.map {
+                $0 == "qq" ? "QQ音乐" : "网易云音乐"
+            })
             _trackTotal = State(initialValue: playlist.tracks.count)
             _isLoading = State(initialValue: false)
         case .netease(_, let name, let cover, let creator):
@@ -159,11 +163,9 @@ struct WellMyPlaylistDetailView: View {
                         }
                         .padding(.top, 8)
                     }
-
-                    Text("\(trackTotal) 首")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 8)
+                    // ★ 2026-10-16 用户（问题7）：标题下的「N 首」移除
+                    //   （截图版式：封面 + 标题 + 平台行 + 红色播放全部，无数量行；
+                    //    曲目数在「播放全部 (N)」按钮上已经有一份，不重复显示）
                 }
 
                 Spacer(minLength: 0)

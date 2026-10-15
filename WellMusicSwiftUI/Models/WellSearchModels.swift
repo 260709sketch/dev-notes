@@ -170,14 +170,15 @@ enum WellSearchDetailSource: Hashable {
     case artist(id: String, platform: MusicSource, name: String, mid: String?)
     /// ★ 2026-10-15：直接携带曲目的「数据版式」入口（最近播放 / 云盘等本地数据
     /// 复用「发现页歌单页」的展示，不再请求接口）。
-    case tracks([MusicItem])
+    /// `name` = 页面标题（如「最近播放」），详情页用它显示标题与分享等文案。
+    case tracks([MusicItem], name: String)
 
     var title: String {
         switch self {
         case .playlist(_, _, let name): return name
         case .album(_, _, let name, _, _): return name
         case .artist(_, _, let name, _): return name
-        case .tracks: return ""
+        case .tracks(_, let name): return name
         }
     }
 

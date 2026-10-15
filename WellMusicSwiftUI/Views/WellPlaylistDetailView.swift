@@ -18,6 +18,9 @@ struct WellPlaylistDetailView: View {
     var playCount: Int = 0
     /// ★ 每日推荐模式：数据走 `dailyRecommendSongs()`，header 封面用首曲封面
     var dailyMode: Bool = false
+    /// ★ 2026-10-16 用户：发现页进来的歌单/每日推荐**不显示搜索行**（专辑本来就没有）。
+    ///   默认 true 保持其它入口（我的页 / 搜索页等）行为不变。
+    var showsSearchRow: Bool = true
 
     @EnvironmentObject private var appState: AppState
 
@@ -114,7 +117,8 @@ struct WellPlaylistDetailView: View {
                     controlsRow
                     descriptionBlock
                     // ★ 2026-10-15 用户：专辑详情暂时移除搜索框（歌单保留）
-                    if !isAlbumSource {
+                    // ★ 2026-10-16 用户：发现页歌单/每日推荐也移除（见 showsSearchRow）
+                    if showsSearchRow && !isAlbumSource {
                         searchRow
                     }
                     songsSection
@@ -150,7 +154,7 @@ struct WellPlaylistDetailView: View {
         }
         .task {
             // ★ 数据版式（.tracks：最近播放 / 云盘等本地数据）：直接装载，不走网络。
-            if case .tracks(let items) = source {
+            if case .tracks(let items, _) = source {
                 tracks = items
                 isLoading = false
                 return
@@ -583,8 +587,11 @@ struct WellPlaylistDetailView: View {
             await extractCoverBackdrop()
         }
 
-        // 歌单简介（网易云歌单；每日推荐无）
-        if case .playlist(let pid, let plat, _) = source, plat == .netease, !dailyMode {
+        // 歌单简介：网易云歌单取服务端简介；每日推荐无简介接口，
+        // 按用户指定文案写死（2026-10-16 问题13：「捕捉你的音乐开口味 每日6：00更新每日推荐」）
+        if dailyMode {
+            playlistDescription = "捕捉你的音乐开口味 每日6：00更新每日推荐"
+        } else if case .playlist(let pid, let plat, _) = source, plat == .netease {
             playlistDescription = await NeteaseMusicAPI.shared.playlistDescription(id: pid)
         }
     }

@@ -93,10 +93,10 @@ struct DiscoverView: View {
             errorMessage = "内容加载失败，请下拉重试"
         }
 
-        // 「我喜欢的音乐」封面：登录后拉用户真实的「我喜欢」歌单封面
-        //（网易云老规矩：该歌单 id == 用户 uid）；未登录保持 nil，用默认封面。
+        // 「我喜欢的音乐」封面：登录后拉网易云我喜欢**第一首歌曲**的专辑封面
+        //（用户 2026-10-16 问题7）；未登录/拉不到时回落官方默认封面。
         if let uid = NeteaseSession.shared.account?.userId {
-            likedCoverURL = try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)")
+            likedCoverURL = try? await NeteaseMusicAPI.shared.likedFirstTrackCover(uid: "\(uid)")
         }
     }
 
@@ -112,7 +112,8 @@ struct DiscoverView: View {
                             source: .playlist(id: pl.id, platform: .netease, name: pl.name),
                             coverURL: pl.coverURL,
                             creatorName: pl.creatorName,
-                            playCount: pl.playCount)
+                            playCount: pl.playCount,
+                            showsSearchRow: false)
                     } label: {
                         WellCoverCard(coverURL: pl.coverURL, title: pl.name,
                                       subtitle: pl.creatorName, playCount: pl.playCount)
@@ -132,6 +133,8 @@ struct DiscoverView: View {
     /// ★ 2026-10-15 用户：四张个人入口卡从「我的」页挪到发现页，
     /// 要求与「推荐歌单」一样的左右滑 —— 统一走 `WellShelf` 横向货架 +
     /// `WellFeatureCard` 156pt 方卡（与 `WellCoverCard` 同尺寸同内衬）。
+    /// ★ 2026-10-16 用户（问题7）：四卡副标题全部移除（封面自己会说话）；
+    /// 「我喜欢的音乐」封面用网易云我喜欢第一首歌的封面（见 load()）。
     @ViewBuilder
     private var myMusicSection: some View {
         WellShelf(title: "我的音乐", rowHeight: 220) {
@@ -140,9 +143,8 @@ struct DiscoverView: View {
             } label: {
                 WellFeatureCard(
                     title: "我喜欢的音乐",
-                    subtitle: "\(appState.favoriteTracks.count) 首",
                     icon: "heart.fill",
-                    // ★ 2026-10-15 用户：封面用用户「我喜欢」歌单的真实封面
+                    // ★ 2026-10-16 用户：封面用用户「我喜欢」第一首歌的封面
                     coverURL: likedCoverURL ?? Self.likedMusicCover,
                     gradient: [Color(red: 0.88, green: 0.24, blue: 0.30),
                                Color(red: 0.65, green: 0.14, blue: 0.22)])
@@ -155,7 +157,6 @@ struct DiscoverView: View {
             } label: {
                 WellFeatureCard(
                     title: "最近播放",
-                    subtitle: "最近听过",
                     icon: "clock.arrow.circlepath",
                     coverURL: appState.playHistory.first?.albumCoverURL
                         ?? appState.favoriteTracks.first?.albumCoverURL,
@@ -170,7 +171,6 @@ struct DiscoverView: View {
             } label: {
                 WellFeatureCard(
                     title: "听歌排行",
-                    subtitle: "按播放次数",
                     icon: "chart.bar.fill",
                     gradient: [Color(red: 0.42, green: 0.16, blue: 0.72),
                                Color(red: 0.85, green: 0.24, blue: 0.38)])
@@ -183,7 +183,6 @@ struct DiscoverView: View {
             } label: {
                 WellFeatureCard(
                     title: "我的云盘",
-                    subtitle: "网易云云盘",
                     icon: "cloud.fill",
                     gradient: [Color(red: 0.16, green: 0.38, blue: 0.62),
                                Color(red: 0.28, green: 0.62, blue: 0.82)])
@@ -222,7 +221,8 @@ struct DiscoverView: View {
                 WellPlaylistDetailView(
                     source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
                     coverURL: nil,
-                    dailyMode: true)
+                    dailyMode: true,
+                    showsSearchRow: false)
             } label: {
                 WellFeatureCard(
                     title: "每日推荐",
@@ -274,7 +274,8 @@ struct DiscoverView: View {
                     WellPlaylistDetailView(
                         source: .playlist(id: "daily", platform: .netease, name: "每日推荐"),
                         coverURL: nil,
-                        dailyMode: true)
+                        dailyMode: true,
+                        showsSearchRow: false)
                 } label: {
                     WellActionCard(
                         title: "每日推荐",
@@ -316,15 +317,21 @@ struct DiscoverView: View {
         }
     }
 
-    /// 私人漫游：连续批次灌入队列（先起播，再持续 append 后续批次）。
+    /// 私人漫游：连拉 3 批（每批 3 首，去重后约 9 首）组成可播队列。
+    /// 需要登录（未登录时服务端不给内容，直接提示登录）。
     private func startPersonalFM() async {
         guard actionLoading == nil else { return }
         actionLoading = "fm"
         defer { actionLoading = nil }
 
+        guard NeteaseSession.shared.isLoggedIn else {
+            ToastCenter.shared.show("请先登录网易云")
+            return
+        }
+
         var started = false
         do {
-            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 2)
+            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 3)
             guard !tracks.isEmpty else {
                 ToastCenter.shared.show("私人漫游暂时没有推荐")
                 return
@@ -337,41 +344,41 @@ struct DiscoverView: View {
         }
     }
 
-    /// 心动模式：以「我喜欢」歌单随机种子走 intelligenceList；失败逐级兜底
-    /// （相似歌曲 simiSong → 我喜欢歌单随机起播），保证总能出歌。
+    /// 心动模式：让服务端以一首种子歌 + 「我喜欢」歌单为口味范围推一串相近的歌。
     /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid。
     ///
-    /// ★ 2026-10-14 用户反馈「登陆了网易云点击不能播放」→ 根因在**取种子这一步**：
-    /// 之前用 `playlistTracks(id:)`（`n=100_000, s=8`），网易云对 `s=8` 只回 **10 条**、
-    /// 且**忽略 `n`**；那 10 条里若没有可解析的 `neteaseId`，种子就取不到，
-    /// 后面 intelligenceList / simiSongs 全部跳过，最终连「我喜欢随机起播」也因
-    /// 列表为空而落到一句 toast —— 表现就是「点了没反应」。
-    /// 现在改用与「我喜欢」页**同一个**已知可用的取列表接口 `playlistForImport`
-    /// （走 `trackIds` 分块补齐，能拿到完整曲目），种子与兜底队列都稳了。
+    /// ★ 2026-10-16 用户反馈「已登录不能播」→ 两处对齐参考实现（kumone）：
+    /// ① 种子改用**每日推荐的第一首**（参考实现同款；我喜欢的随机一首作兜底）；
+    /// ② `intelligenceList` 接口本身切 weapi 加密通道（原先走明文，登录态拿不到数据）。
+    /// 失败仍有逐级兜底（相似歌曲 simiSong → 我喜欢歌单随机起播），保证总能出歌。
     private func startHeartbeat() async {
         guard actionLoading == nil else { return }
         actionLoading = "heartbeat"
         defer { actionLoading = nil }
 
-        guard let uid = NeteaseSession.shared.account?.userId else {
+        guard NeteaseSession.shared.isLoggedIn else {
             ToastCenter.shared.show("请先登录网易云")
             return
         }
-        let likedId = "\(uid)"
+        let likedId = "\(NeteaseSession.shared.account?.userId ?? 0)"
 
-        // 种子：我喜欢歌单随机一首（完整列表，见上方说明）
-        var seedId: String?
+        // 种子 ①（参考实现同款）：每日推荐第一首
+        var seedId: String? = dailySongs.first?.neteaseId
         var likedTracks: [MusicItem] = []
-        if let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId),
-           !imported.tracks.isEmpty {
-            likedTracks = imported.tracks
-            seedId = likedTracks.randomElement()?.neteaseId
-        }
-        // 兜底一次：极端情况下（大歌单 trackIds 缺失）退回老接口，至少拿到前 10 条
-        if likedTracks.isEmpty,
-           let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
-            likedTracks = list
-            seedId = list.randomElement()?.neteaseId
+
+        // 种子 ② 兜底：我喜欢歌单随机一首（完整列表，见历史说明）
+        if seedId == nil {
+            if let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId),
+               !imported.tracks.isEmpty {
+                likedTracks = imported.tracks
+                seedId = likedTracks.randomElement()?.neteaseId
+            }
+            // 再兜底一次：极端情况下（大歌单 trackIds 缺失）退回老接口，至少拿到前 10 条
+            if likedTracks.isEmpty,
+               let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
+                likedTracks = list
+                seedId = list.randomElement()?.neteaseId
+            }
         }
 
         // ① 种子 + 口味范围 → intelligenceList（服务端推相似串）
@@ -391,6 +398,10 @@ struct DiscoverView: View {
         }
 
         // ③ 最后兜底：我喜欢歌单随机起播（总能出歌）
+        if likedTracks.isEmpty,
+           let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId) {
+            likedTracks = imported.tracks
+        }
         if !likedTracks.isEmpty {
             PlayerCore.shared.play(queue: likedTracks.shuffled(), startIndex: 0)
             ToastCenter.shared.show("已开启心动模式")
@@ -444,7 +455,8 @@ struct DiscoverView: View {
                             NavigationLink {
                                 WellPlaylistDetailView(
                                     source: .playlist(id: top.id, platform: .netease, name: top.name),
-                                    coverURL: top.coverURL)
+                                    coverURL: top.coverURL,
+                                    showsSearchRow: false)
                             } label: {
                                 WellToplistCard(item: top)
                             }
@@ -603,7 +615,8 @@ struct WellActionCard: View {
 /// 避免 label 内嵌 Button 吞掉 NavigationLink 的点击（踩过：每日推荐点不进去）。
 struct WellFeatureCard: View {
     let title: String
-    var subtitle: String?
+    /// 副标题（可省略；用户 2026-10-16 问题7：「我的音乐」四卡副标题全移除）
+    var subtitle: String? = nil
     let icon: String
     var coverURL: String?
     let gradient: [Color]

@@ -317,7 +317,9 @@ struct PlaylistImportView: View {
     private func finishImport(name: String, sourcePlatform: String, coverURL: String?, tracks: [MusicItem]) {
         playlistName = name
         importedTracks = tracks
-        appState.playlists.insert(Playlist(name: name, coverURL: coverURL, tracks: tracks), at: 0)
+        var playlist = Playlist(name: name, coverURL: coverURL, tracks: tracks)
+        playlist.sourcePlatform = sourcePlatform
+        appState.playlists.insert(playlist, at: 0)
         showSuccess = true
     }
 }

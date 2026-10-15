@@ -38,7 +38,7 @@ struct LocalRecentPlaysView: View {
 
             content
         }
-        .navigationTitle("近期播放")
+        .navigationTitle("本地近期播放")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $playingMV) { mv in
             WellMVPlayerView(mv: mv)

@@ -32,8 +32,8 @@ final class NeteaseMusicAPI {
     /// - Parameter params: 会被编码成 `application/x-www-form-urlencoded` 表单。
     ///   `Bool` 会编码为 `true` / `false`（网易云不少接口的 `total` 是布尔）。
     ///
-    /// 之所以不用 `NeteaseCrypto.weapi`：加密通道已被服务端停用，只会返回空响应体，
-    /// 详见本文件头部说明。
+    /// 与 `weapiRequest` 的分工见文件头部说明：公开读接口走明文（省一次加解密），
+    /// 登录族 / 风控敏感接口走 weapi。两条通道都正常，别再说「加密通道已停用」。
     private static func apiRequest<T: Decodable>(_ path: String,
                                                  params: [String: Any] = [:],
                                                  type: T.Type) async throws -> T {
@@ -363,12 +363,41 @@ final class NeteaseMusicAPI {
         var hotSongs: [Song]?
     }
 
+    /// 播放地址响应。
+    ///
+    /// ⚠️ `data` 的形态**三种都出现过**（2026-10-16 实测）：
+    /// 1. `player/url/v1` → **数组**（每曲一项）；
+    /// 2. `download/url/v1` → **单对象**（云盘文件直链就走这个）；
+    /// 3. 风控响应（`code:-462`）→ 带 `verifyUrl` 的**单对象**。
+    /// 早期只按数组解码，遇到 2/3 整条失败 → 表现为「没有返回数据」。
     private struct URLResponse: Decodable {
         var code: Int?
-        var data: [URLItem]?
+        var message: String?
+        var data: URLPayload?
+        /// 是否触发了风控滑块验证（`code:-462`）
+        var isRiskControl: Bool {
+            code == -462 || data?.single?.verifyUrl != nil
+        }
+        struct URLPayload: Decodable {
+            var items: [URLItem]?
+            var single: URLItem?
+            init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let array = try? container.decode([URLItem].self) {
+                    items = array
+                } else if let object = try? container.decode(URLItem.self) {
+                    single = object
+                }
+            }
+        }
         struct URLItem: Decodable {
             var url: String?
             var br: Int?
+            var level: String?
+            /// 单曲级别状态码（200 = 有地址）
+            var code: Int?
+            /// 风控验证页地址（出现即表示被风控）
+            var verifyUrl: String?
         }
     }
 
@@ -454,14 +483,18 @@ final class NeteaseMusicAPI {
         struct Body: Decodable { var dailySongs: [Song]? }
     }
 
-    /// 私人 FM 的歌曲（老格式，与 `Song` 不同，见 `mapFMTrack` 的说明）
+    /// 私人 FM 的歌曲（**两套格式都可能出现**，见 `mapFMTrack` 的说明）
     private struct FMTrack: Decodable {
         var id: Int?
         var name: String?
-        /// 毫秒
+        /// 毫秒（老格式字段名）
         var duration: Int?
+        /// 毫秒（新格式字段名，与搜索 / 日推同一套 `ar` / `al` / `dt`）
+        var dt: Int?
         var artists: [Artist]?
         var album: Album?
+        var ar: [Song.Artist]?
+        var al: Song.Album?
         struct Artist: Decodable { var name: String? }
         struct Album: Decodable {
             var name: String?
@@ -721,12 +754,30 @@ final class NeteaseMusicAPI {
     }
 
     /// 「我喜欢的音乐」歌单的封面（网易云老规矩：该歌单 id == 用户 uid）。
-    /// 只取歌单元数据，不拉曲目 —— 给发现页卡片与「我喜欢」页头部用。
+    /// 只取歌单元数据，不拉曲目 —— 给「我喜欢」页头部用。
     func likedPlaylistCover(uid: String) async throws -> String? {
         let idValue: Any = Int(uid).map { $0 as Any } ?? uid
         let params: [String: Any] = ["id": idValue, "n": 1, "s": 0, "csrf_token": ""]
         let resp: PlaylistDetailResponse = try await Self.apiRequest(
             "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        return resp.playlist?.coverImgUrl
+    }
+
+    /// 「我喜欢的音乐」**第一首歌曲**的专辑封面（用户 2026-10-16 问题7：
+    /// 发现页「我喜欢的音乐」卡封面要按网易云我喜欢第一首歌的封面拉取）。
+    ///
+    /// 通道与 `likedPlaylistCover` 相同（`api/v6/playlist/detail`，`n=1`），
+    /// 同一个响应里既有内嵌的 `playlist.tracks[0].al.picUrl` 也有歌单自己的
+    /// `coverImgUrl` —— 前者优先，拿不到再回退歌单封面，再不行回退 nil
+    /// （调用方有官方默认封面兜底）。
+    func likedFirstTrackCover(uid: String) async throws -> String? {
+        let idValue: Any = Int(uid).map { $0 as Any } ?? uid
+        let params: [String: Any] = ["id": idValue, "n": 1, "s": 0, "csrf_token": ""]
+        let resp: PlaylistDetailResponse = try await Self.apiRequest(
+            "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
+        if let first = resp.playlist?.tracks?.first?.al?.picUrl, !first.isEmpty {
+            return first
+        }
         return resp.playlist?.coverImgUrl
     }
 
@@ -782,6 +833,10 @@ final class NeteaseMusicAPI {
             var userId: Int?
             var nickname: String?
             var avatarUrl: String?
+            /// 会员类型：0 = 未开通，10 = 音乐包，11 = 黑胶VIP。
+            /// ⚠️ 网易云官方明示 SVIP「网页端暂不支持展示」，web 接口不区分 SVIP；
+            /// 这里对 0/10/11 之外的取值一律按 SVIP 档处理（见 NeteaseAccountCard.vipBadge）。
+            var vipType: Int?
         }
     }
 
@@ -1567,13 +1622,15 @@ final class NeteaseMusicAPI {
 
     /// 私人漫游（私人 FM）。
     ///
-    /// 服务端**每次只返回 1 首**（实测），所以这里连拉几批拼成一个可播队列；
-    /// 批与批之间留一点间隔，避免被限流吞掉。
-    func personalFMTracks(batches: Int = 4) async throws -> [MusicItem] {
+    /// 服务端**每次返回 3 首**（2026-10-16 修正：旧注释「每次 1 首」是误判，
+    /// 那份实测把新格式字段当空数据处理了），所以连拉几批拼成一个可播队列；
+    /// 批与批之间 500ms 间隔（参考实现同款），避免被限流吞掉。
+    /// 参考实现默认 3 批（9 首），首次快速开播可传 batches=1。
+    func personalFMTracks(batches: Int = 3) async throws -> [MusicItem] {
         var collected: [MusicItem] = []
         var seen = Set<String>()
         for index in 0..<max(1, batches) {
-            if index > 0 { try? await Task.sleep(nanoseconds: 250_000_000) }
+            if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
             let resp: FMResponse = try await Self.apiRequest(
                 "api/v1/radio/get", params: [:], type: FMResponse.self)
             try Self.ensureOK(resp.code, fallback: "私人漫游加载失败")
@@ -1587,6 +1644,12 @@ final class NeteaseMusicAPI {
     }
 
     /// 心动模式：以一首歌为种子、以一个歌单为口味范围，让服务端推一串相近的歌。
+    ///
+    /// ★ 2026-10-16 用户反馈「已登录不能播」→ 根因：原先走**明文**
+    /// `api/playmode/intelligence/list`，登录态下该明文路径拿不到数据。
+    /// 参考实现（kumone）同款接口走 **weapi** `/api/playmode/intelligence/list`
+    /// （songId / type=fromPlayOne / playlistId / startMusicId / count / csrf_token），
+    /// 已切过来。种子由调用方给（参考实现用**每日推荐第一首**，见 DiscoverView）。
     func intelligenceList(songId: String, playlistId: String) async throws -> [MusicItem] {
         let params: [String: Any] = [
             "songId": songId,
@@ -1596,24 +1659,32 @@ final class NeteaseMusicAPI {
             "count": 1,
             "csrf_token": "",
         ]
-        let resp: IntelligenceResponse = try await Self.apiRequest(
-            "api/playmode/intelligence/list", params: params, type: IntelligenceResponse.self)
+        let resp: IntelligenceResponse = try await Self.weapiRequest(
+            "/api/playmode/intelligence/list", params: params, type: IntelligenceResponse.self)
         try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "心动模式加载失败")
         return (resp.data ?? []).compactMap { $0.songInfo }.compactMap(Self.mapSong)
     }
 
-    /// 私人 FM 的歌曲结构是**老格式**（`artists` / `album` / `duration`），
-    /// 与搜索、日推用的 `ar` / `al` / `dt` 不是一套 —— 实测确认，别混用。
+    /// 私人 FM 的歌曲结构**两套都可能出现**：老格式（`artists` / `album` /
+    /// `duration`）与新格式（`ar` / `al` / `dt`，与搜索、日推同一套）。
+    /// 2026-10-16 实测当前服务端返回的是**新格式** —— 只按老格式映射会把
+    /// 歌手 / 封面 / 时长全部丢掉（歌能放但信息全空），所以两套都接。
     private static func mapFMTrack(_ track: FMTrack) -> MusicItem? {
         guard let id = track.id, let name = track.name else { return nil }
-        let names = track.artists?.compactMap { $0.name }.joined(separator: "/")
+        let artistNames: String? = {
+            if let ar = track.ar, !ar.isEmpty {
+                return ar.compactMap { $0.name }.joined(separator: "/")
+            }
+            return track.artists?.compactMap { $0.name }.joined(separator: "/")
+        }()
+        let artistText = artistNames.flatMap { $0.isEmpty ? nil : $0 } ?? "未知歌手"
         return MusicItem(
             source: .netease,
             title: name,
-            artist: names?.isEmpty == false ? names : "未知歌手",
-            album: track.album?.name,
-            albumCoverURL: track.album?.picUrl,
-            duration: TimeInterval(track.duration ?? 0) / 1000,
+            artist: artistText,
+            album: track.al?.name ?? track.album?.name,
+            albumCoverURL: track.al?.picUrl ?? track.album?.picUrl,
+            duration: TimeInterval(track.dt ?? track.duration ?? 0) / 1000,
             neteaseId: "\(id)"
         )
     }
@@ -1783,7 +1854,8 @@ final class NeteaseMusicAPI {
         return NeteaseAccount(
             userId: id,
             nickname: profile.nickname ?? "网易云用户",
-            avatarURL: profile.avatarUrl
+            avatarURL: profile.avatarUrl,
+            vipType: profile.vipType
         )
     }
 
@@ -1800,22 +1872,74 @@ final class NeteaseMusicAPI {
 
     // MARK: 播放地址（音质：standard/higher/exhigh/lossless/hires）
 
+    /// 官方播放地址（登录态；云盘歌曲与「内置音源」兜底走这里）。
+    ///
+    /// ★ 2026-10-16 用户反馈「云盘歌曲不能播放（已登录也不行）」→ 多端点 fallback：
+    /// 云盘上传歌的 id 只在账号云盘里有效，公共曲库的 `player/url/v1` 对它回空；
+    /// 云盘文件的直链在 **`download/url/v1`**（`data` 是单对象，不是数组）。
+    /// 顺序（都带登录 Cookie）：
+    ///   ① 云盘曲目：`download/url/v1`（云盘直链）→ `player/url/v1` → weapi `player/url/v1`
+    ///   ② 普通曲目：`player/url/v1` → weapi `player/url/v1`
+    /// 风控响应（`code:-462`，滑块验证）单独识别：换网络 / 稍后再试，
+    /// 不再和「没有返回数据」混在一起看不清真因。
     func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
         guard let id = item.neteaseId ?? item.platformId else {
             throw NetworkClient.NetworkError.noData
         }
-        let params: [String: Any] = [
+        let idValue: Any = Int(id).map { $0 as Any } ?? id
+        let playerParams: [String: Any] = [
             "ids": "[\(id)]",
             "level": quality.neteaseLevel,
             "encodeType": "flac",
             "csrf_token": "",
         ]
-        let resp: URLResponse = try await Self.apiRequest(
-            "api/song/enhance/player/url/v1", params: params, type: URLResponse.self)
-        guard let url = resp.data?.first?.url, !url.isEmpty else {
-            throw NetworkClient.NetworkError.noData
+        let downloadParams: [String: Any] = [
+            "id": idValue,
+            "level": quality.neteaseLevel,
+            "encodeType": "flac",
+            "csrf_token": "",
+        ]
+        var riskMessage: String?
+
+        // ① 云盘曲目：先试云盘文件直链端点（data 为单对象）
+        if item.isCloudDisk {
+            if let resp: URLResponse = try? await Self.apiRequest(
+                "api/song/enhance/download/url/v1", params: downloadParams, type: URLResponse.self) {
+                if resp.isRiskControl {
+                    riskMessage = resp.message
+                } else if let url = resp.data?.single?.url ?? resp.data?.items?.first?.url,
+                          !url.isEmpty {
+                    return url
+                }
+            }
         }
-        return url
+
+        // ② 播放端点（明文）
+        if let resp: URLResponse = try? await Self.apiRequest(
+            "api/song/enhance/player/url/v1", params: playerParams, type: URLResponse.self) {
+            if resp.isRiskControl {
+                riskMessage = resp.message
+            } else if let url = resp.data?.items?.first?.url ?? resp.data?.single?.url,
+                      !url.isEmpty {
+                return url
+            }
+        }
+
+        // ③ weapi 播放端点（带设备指纹 Cookie，风控评分低于裸明文）
+        if let resp: URLResponse = try? await Self.weapiRequest(
+            "/api/song/enhance/player/url/v1", params: playerParams, type: URLResponse.self) {
+            if resp.isRiskControl {
+                riskMessage = resp.message
+            } else if let url = resp.data?.items?.first?.url ?? resp.data?.single?.url,
+                      !url.isEmpty {
+                return url
+            }
+        }
+
+        if let riskMessage {
+            throw NetworkClient.NetworkError.riskControl(riskMessage)
+        }
+        throw NetworkClient.NetworkError.noData
     }
 
     // MARK: 纯文本接口（搜索等不需要加密的备用通道，保留给歌词/评论）

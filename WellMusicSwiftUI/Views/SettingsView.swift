@@ -9,6 +9,10 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var lxStore = WellLXSourceStore.shared
+    /// 播放/暂停淡入淡出开关（2026-10-16 用户；未开启时不显示档位调节）
+    @AppStorage(PlayerCore.fadeEnabledKey) private var fadeEnabled = false
+    /// 淡入淡出时长（毫秒；300 / 500 / 1000 三档）
+    @AppStorage(PlayerCore.fadeDurationKey) private var fadeDurationMs = 500
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
@@ -91,6 +95,18 @@ struct SettingsView: View {
                             }
                         )) {
                             ForEach(AudioCacheManager.LimitOption.allCases) { option in
+                                Text(option.displayName).tag(option)
+                            }
+                        }
+                    }
+                    // 播放/暂停淡入淡出（2026-10-16 用户：未开启时不显示档位调节）
+                    Toggle("播放淡入淡出", isOn: $fadeEnabled)
+                    if fadeEnabled {
+                        Picker("淡入淡出时长", selection: Binding(
+                            get: { PlayerCore.PlayFadeDuration(rawValue: fadeDurationMs) ?? .ms500 },
+                            set: { fadeDurationMs = $0.rawValue }
+                        )) {
+                            ForEach(PlayerCore.PlayFadeDuration.allCases) { option in
                                 Text(option.displayName).tag(option)
                             }
                         }

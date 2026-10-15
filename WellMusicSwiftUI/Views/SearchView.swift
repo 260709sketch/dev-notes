@@ -231,6 +231,9 @@ struct SearchView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(AppTheme.secondaryBackground, in: Capsule())
+        // ★ 2026-10-16 用户：「给新版的搜索框也加下阴影」
+        //   （与我的页两张卡片同档阴影：黑 10% / radius 7 / y 2）
+        .shadow(color: Color.black.opacity(0.10), radius: 7, x: 0, y: 2)
         .padding(.horizontal, WellSearchLayout.contentInset)
         .padding(.top, 8)
     }
@@ -544,22 +547,8 @@ struct WellMVPlayerView: View {
 
             VStack {
                 HStack(alignment: .top) {
-                    // 关闭钮放**左上角**：标题居中后右侧不再被占
-                    // （用户 2026-10-15：原标题在右侧会挡住网易云 logo 与隔空播放钮）
-                    Button {
-                        player?.pause()
-                        // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
-                        //    onDisappear 里再改会晚一拍 —— 「离开后一直横屏」的根因）
-                        restorePortrait()
-                        closeAndDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(.black.opacity(0.42), in: Circle())
-                    }
-                    .buttonStyle(.plain)
+                    // 左侧占位（与右上关闭钮等宽），保证标题真正居中
+                    Color.clear.frame(width: 34, height: 34)
 
                     Spacer(minLength: 8)
 
@@ -578,8 +567,22 @@ struct WellMVPlayerView: View {
 
                     Spacer(minLength: 8)
 
-                    // 右侧占位（与左上关闭钮等宽），保证标题真正居中
-                    Color.clear.frame(width: 34, height: 34)
+                    // 关闭钮放**右上角**（用户 2026-10-16：「退出按钮移到右边」；
+                    // 左上角版本会挡住系统返回手势起点一侧的视觉重心）
+                    Button {
+                        player?.pause()
+                        // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
+                        //    onDisappear 里再改会晚一拍 —— 「离开后一直横屏」的根因）
+                        restorePortrait()
+                        closeAndDismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.42), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)

@@ -24,6 +24,7 @@ enum NeteaseLikedAutoImporter {
             var playlist = Playlist(name: name)
             playlist.coverURL = imported.coverURL
             playlist.tracks = imported.tracks
+            playlist.sourcePlatform = "netease"
             let state = AppState.shared
             if let index = state.playlists.firstIndex(where: { $0.name == name }) {
                 // 同名歌单（上一次导入的）整体替换为最新

@@ -341,6 +341,9 @@ final class PlayerCore: NSObject, ObservableObject {
                     // App 占用），或会话在后台被抢走后被系统 deactivate —— 每次
                     // 开始播放前主动激活一次，保证后台播放 / 控件中心 / 锁屏链路完整。
                     AudioSessionManager.activate()
+                    // 换歌不走淡入淡出：打断进行中的斜坡，音量拉回目标值再加载
+                    // （否则旧斜坡回调会把新歌音量继续按旧目标改写）。
+                    cancelFade()
                     engine.load(url: resolved.url,
                                 headers: resolved.headers,
                                 startAt: time,
@@ -396,22 +399,35 @@ final class PlayerCore: NSObject, ObservableObject {
     func play() {
         guard hasActiveTrack else { return }
         AudioSessionManager.activate()
-        engine.setPaused(false)
+        if fadeEnabled {
+            fadeIn()
+        } else {
+            engine.setPaused(false)
+        }
         isPlaying = true
         updateNowPlaying()
     }
 
     func pause() {
-        engine.setPaused(true)
+        if fadeEnabled, !engine.isPaused {
+            // 淡出：音量斜坡落到底才真暂停；位置在暂停瞬间落盘（见 fadeOutThenPause）
+            fadeOutThenPause()
+        } else {
+            engine.setPaused(true)
+            // 暂停时保存精确位置，供「启动恢复上次播放」从暂停处续播
+            persistPlaybackState()
+        }
         isPlaying = false
         updateNowPlaying()
-        // 暂停时保存精确位置，供「启动恢复上次播放」从暂停处续播
-        persistPlaybackState()
     }
 
     func resume() {
         AudioSessionManager.activate()
-        engine.setPaused(false)
+        if fadeEnabled {
+            fadeIn()
+        } else {
+            engine.setPaused(false)
+        }
         isPlaying = true
         updateNowPlaying()
     }
@@ -482,12 +498,133 @@ final class PlayerCore: NSObject, ObservableObject {
 
     /// 音量（0~1），来自 PlayerService 的桥接
     func applyVolume(_ volume: Float) {
+        // 用户手动改音量 → 打断进行中的淡入淡出斜坡，按新音量落地
+        cancelFade()
         engine.setVolume(percent: Double(volume) * 100)
     }
 
     /// 应用均衡器（转发给 MPV 音频滤镜链）。
     func applyEqualizer(enabled: Bool, gains: [Double]) {
         engine.applyEqualizer(enabled: enabled, gains: gains)
+    }
+
+    // MARK: - 播放/暂停淡入淡出（2026-10-16 用户）
+
+    /// 淡入淡出开关（UserDefaults key）
+    static let fadeEnabledKey = "wellmusic.player.fadeEnabled"
+    /// 淡入淡出时长（毫秒，UserDefaults key）
+    static let fadeDurationKey = "wellmusic.player.fadeDurationMs"
+
+    /// 淡入淡出档位（用户指定三档：300 / 500 / 1000 ms）
+    enum PlayFadeDuration: Double, CaseIterable, Identifiable {
+        case ms300 = 300
+        case ms500 = 500
+        case ms1000 = 1000
+
+        var id: Double { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .ms300: return "0.3 秒"
+            case .ms500: return "0.5 秒"
+            case .ms1000: return "1 秒"
+            }
+        }
+    }
+
+    /// 斜坡定时器（与 `tickTimer` 同款 Timer + RunLoop.common 模式）
+    private var fadeTimer: Timer?
+    /// 斜坡代数：每次新斜坡 +1，旧定时器回调发现代数不符即静默退出
+    /// （防用户快速连点播放/暂停时两条斜坡互相打架）。
+    private var fadeGeneration = 0
+
+    private var fadeEnabled: Bool {
+        UserDefaults.standard.bool(forKey: Self.fadeEnabledKey)
+    }
+
+    private var fadeDuration: TimeInterval {
+        let ms = UserDefaults.standard.double(forKey: Self.fadeDurationKey)
+        return (ms > 0 ? ms : 500) / 1000
+    }
+
+    /// 目标音量（mpv 百分比 0~100）。与 `PlayerServiceBridge` 写入的
+    /// "player.volume" 同源；从未写过按 100% 算（见 `restoredVolume` 的迁移说明）。
+    private var targetVolumePercent: Double {
+        let d = UserDefaults.standard
+        let v: Float = d.object(forKey: "player.volume") != nil ? d.float(forKey: "player.volume") : 1.0
+        return Double(min(max(v, 0), 1)) * 100
+    }
+
+    /// 取消进行中的音量斜坡，并把音量拉回目标值。
+    private func cancelFade() {
+        fadeGeneration &+= 1
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        engine.setVolume(percent: targetVolumePercent)
+    }
+
+    /// 淡入：音量 0 → 目标值（默认 0.5s 斜坡，约 30fps）。
+    private func fadeIn() {
+        cancelFade()
+        let duration = fadeDuration
+        let target = targetVolumePercent
+        guard fadeEnabled, duration > 0.05, target > 0 else {
+            engine.setPaused(false)
+            return
+        }
+        engine.setVolume(percent: 0)
+        engine.setPaused(false)
+        startFadeRamp(from: 0, to: target, duration: duration) { [weak self] in
+            self?.engine.setVolume(percent: target)
+        }
+    }
+
+    /// 淡出：音量当前值 → 0，落到底再真暂停。
+    private func fadeOutThenPause() {
+        cancelFade()
+        let duration = fadeDuration
+        // 起点取 mpv 真值：可能正处在淡入中途被打断（避免先跳响再渐弱）
+        let from = engine.volumePercent ?? targetVolumePercent
+        guard fadeEnabled, duration > 0.05, from > 0 else {
+            engine.setPaused(true)
+            return
+        }
+        startFadeRamp(from: from, to: 0, duration: duration) { [weak self] in
+            self?.engine.setPaused(true)
+            // 位置在真正暂停时落盘（斜坡期间 time-pos 还在走）
+            self?.persistPlaybackState()
+        }
+    }
+
+    /// 起一条音量斜坡定时器。`completion` 只在斜坡自然结束时调用；
+    /// 被 `cancelFade` 打断时静默丢弃（不再补刀）。
+    private func startFadeRamp(from: Double, to: Double, duration: TimeInterval,
+                               completion: @escaping @MainActor () -> Void) {
+        fadeGeneration &+= 1
+        let generation = fadeGeneration
+        let steps = max(2, Int((duration / 0.033).rounded()))
+        var step = 0
+        let t = Timer.scheduledTimer(withTimeInterval: duration / Double(steps), repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if generation != self.fadeGeneration {
+                    self.fadeTimer?.invalidate()
+                    self.fadeTimer = nil
+                    return
+                }
+                step += 1
+                if step >= steps {
+                    self.fadeTimer?.invalidate()
+                    self.fadeTimer = nil
+                    completion()
+                } else {
+                    let ratio = Double(step) / Double(steps)
+                    self.engine.setVolume(percent: from + (to - from) * ratio)
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        fadeTimer = t
     }
 
     func next() {

@@ -33,12 +33,16 @@ final class NetworkClient {
         case invalidURL
         case badStatus(Int)
         case noData
+        /// 触发网易云风控（滑块验证页，`code:-462`）——换网络 / 稍后再试
+        case riskControl(String?)
 
         var errorDescription: String? {
             switch self {
             case .invalidURL: return "无效的 URL"
             case .badStatus(let code): return "网络请求失败 (\(code))"
             case .noData: return "没有返回数据"
+            case .riskControl(let message):
+                return (message?.isEmpty == false ? message : nil) ?? "官方音源触发了安全验证，请稍后再试"
             }
         }
     }
