@@ -25,6 +25,7 @@ final class SearchService {
         case .artists: return await artists(key, platform: platform, limit: limit)
         case .albums: return await albums(key, platform: platform, limit: limit)
         case .playlists: return await playlists(key, platform: platform, limit: limit)
+        case .mvs: return await mvs(key, platform: platform, limit: limit)
         }
     }
 
@@ -98,6 +99,14 @@ final class SearchService {
                 out.albums = try await KugouMusicAPI.shared.searchAlbums(keyword: key, limit: limit)
             }
         } catch { }
+        return out
+    }
+
+    /// MV 搜索（当前仅网易通道提供关键词搜索；其余平台返回空）。
+    private func mvs(_ key: String, platform: WellSearchPlatform, limit: Int) async -> WellSearchResult {
+        var out = WellSearchResult()
+        guard platform == .netease else { return out }
+        out.mvs = (try? await NeteaseMusicAPI.shared.searchMVs(keyword: key, limit: limit)) ?? []
         return out
     }
 

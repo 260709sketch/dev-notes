@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 // MARK: - 视图模型
 
@@ -124,6 +125,8 @@ struct SearchView: View {
 
     /// 旧版搜索界面开关（设置 → 界面；默认关 = 新版常驻自绘搜索框）。
     @AppStorage("wellmusic.search.legacyUI") private var legacySearchUI = false
+    /// 正在播放的 MV（点击 MV 卡片后全屏播放）
+    @State private var playingMV: WellMVSummary?
 
     var body: some View {
         Group {
@@ -148,6 +151,9 @@ struct SearchView: View {
         // load() 自带 loadedKey 守卫（同条件直接跳过），条件真变化时由它自己分流。
         .task(id: taskID) {
             await model.load(keyword: committedQuery)
+        }
+        .fullScreenCover(item: $playingMV) { mv in
+            WellMVPlayerView(mv: mv)
         }
     }
 
@@ -306,6 +312,9 @@ struct SearchView: View {
         case .albums:
             WellSearchCardGrid { albumCards(model.result.albums) }
                 .padding(.horizontal, WellSearchLayout.contentInset)
+        case .mvs:
+            WellSearchCardGrid { mvCards(model.result.mvs) }
+                .padding(.horizontal, WellSearchLayout.contentInset)
         case .playlists:
             WellSearchCardGrid { playlistCards(model.result.playlists) }
                 .padding(.horizontal, WellSearchLayout.contentInset)
@@ -410,6 +419,40 @@ struct SearchView: View {
         }
     }
 
+    /// MV 卡片（2 列网格：封面 + MV 角标 + 名称 + 歌手）。
+    private func mvCards(_ items: [WellMVSummary]) -> some View {
+        ForEach(items) { mv in
+            Button {
+                playingMV = mv
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    ZStack(alignment: .bottomTrailing) {
+                        WellRemoteImage(url: mv.coverURL, displaySize: 320)
+                            .aspectRatio(1, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        Text("MV")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.55), in: Capsule())
+                            .padding(6)
+                    }
+                    Text(mv.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .foregroundStyle(.primary)
+                    Text(mv.artistName ?? "")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// 歌单打开目标：网易云走「我的歌单」版式；QQ / 酷狗先拉曲目再套同款版式。
     @ViewBuilder
     private func playlistDestination(_ playlist: WellPlaylistSummary) -> some View {
@@ -425,6 +468,84 @@ struct SearchView: View {
                 source: .netease(id: playlist.id, name: playlist.name,
                                  coverURL: playlist.coverURL,
                                  creatorName: playlist.creatorName))
+        }
+    }
+}
+
+/// MV 全屏播放页（AVPlayer；进入时暂停后台音乐）。
+struct WellMVPlayerView: View {
+    let mv: WellMVSummary
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+            } else if failed {
+                VStack(spacing: 12) {
+                    Image(systemName: "film")
+                        .font(.system(size: 42))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text("暂时拿不到这个 MV")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+            } else {
+                ProgressView().tint(.white)
+            }
+
+            VStack {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(mv.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text(mv.artistName ?? "")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button {
+                        player?.pause()
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.42), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                Spacer()
+            }
+        }
+        .statusBarHidden()
+        .task {
+            // 播放 MV 时暂停后台音乐
+            PlayerCore.shared.pause()
+            // mvURL 返回 String?，try? 会再包一层 → ?? nil 展平
+            let link = (try? await NeteaseMusicAPI.shared.mvURL(id: mv.id)) ?? nil
+            guard let link, let url = URL(string: link) else {
+                failed = true
+                return
+            }
+            let avPlayer = AVPlayer(url: url)
+            player = avPlayer
+            avPlayer.play()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
         }
     }
 }

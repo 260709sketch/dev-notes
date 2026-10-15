@@ -480,6 +480,52 @@ final class NeteaseMusicAPI {
         var msg: String?
     }
 
+    /// MV 搜索（明文 `api/cloudsearch/pc`，type=1004）。
+    func searchMVs(keyword: String, limit: Int = 30, offset: Int = 0) async throws -> [WellMVSummary] {
+        let params: [String: Any] = ["s": keyword, "type": 1004,
+                                     "limit": limit, "offset": offset, "total": true]
+        let resp: MVCloudSearchResponse = try await Self.apiRequest(
+            "api/cloudsearch/pc", params: params, type: MVCloudSearchResponse.self)
+        return (resp.result?.mvs ?? []).compactMap { mv in
+            guard let id = mv.id else { return nil }
+            return WellMVSummary(
+                id: "\(id)",
+                name: mv.name ?? "",
+                coverURL: neteaseCover(mv.cover, size: 500),
+                artistName: mv.artistName,
+                duration: TimeInterval(mv.duration ?? 0) / 1000,
+                playCount: mv.playCount ?? 0,
+                platform: .netease)
+        }
+    }
+
+    /// MV 播放地址（weapi `/api/song/enhance/play/mv/url`；r = 清晰度 1080）。
+    func mvURL(id: String, resolution: Int = 1080) async throws -> String? {
+        let resp: MVURLResponse = try await Self.weapiRequest(
+            "/api/song/enhance/play/mv/url",
+            params: ["id": id, "r": resolution],
+            type: MVURLResponse.self)
+        return resp.data?.url
+    }
+
+    private struct MVCloudSearchResponse: Decodable {
+        var result: Payload?
+        struct Payload: Decodable { var mvs: [MVItem]? }
+        struct MVItem: Decodable {
+            var id: Int?
+            var name: String?
+            var cover: String?
+            var artistName: String?
+            var duration: Int?
+            var playCount: Int?
+        }
+    }
+
+    private struct MVURLResponse: Decodable {
+        var data: Payload?
+        struct Payload: Decodable { var url: String? }
+    }
+
     /// 我喜欢的音乐（Kumone 同款链路）：红心 id 列表（weapi `song/like/get`）
     /// + 分块详情（明文 `api/song/detail`）。
     func likedSongs(uid: String, limit: Int = 2000) async throws -> [MusicItem] {

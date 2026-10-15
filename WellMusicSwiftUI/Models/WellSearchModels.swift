@@ -26,6 +26,7 @@ enum WellSearchType: String, CaseIterable, Identifiable {
     case artists = "歌手"
     case albums = "专辑"
     case playlists = "歌单"
+    case mvs = "MV"
 
     var id: String { rawValue }
 }
@@ -119,17 +120,31 @@ struct WellToplistSummary: Identifiable, Hashable {
     var updateFrequency: String?
 }
 
+/// 搜索结果里的 MV 条目。
+struct WellMVSummary: Identifiable, Hashable {
+    var id: String
+    var name: String
+    var coverURL: String?
+    var artistName: String?
+    /// 秒
+    var duration: TimeInterval
+    var playCount: Int
+    var platform: MusicSource = .netease
+}
+
 /// 一次聚合搜索的结果集合。
 struct WellSearchResult {
     var songs: [MusicItem] = []
     var artists: [WellArtistSummary] = []
     var albums: [WellAlbumSummary] = []
     var playlists: [WellPlaylistSummary] = []
+    var mvs: [WellMVSummary] = []
 
     /// 某模块是否为空（综合模块需四类全空才算空）
     func isEmpty(for type: WellSearchType) -> Bool {
         switch type {
         case .all: return songs.isEmpty && artists.isEmpty && albums.isEmpty && playlists.isEmpty
+        case .mvs: return mvs.isEmpty
         case .songs: return songs.isEmpty
         case .artists: return artists.isEmpty
         case .albums: return albums.isEmpty
