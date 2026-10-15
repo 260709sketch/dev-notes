@@ -43,18 +43,29 @@ final class SearchService {
         return out
     }
 
+    /// 单曲分页（搜索页「加载更多」用）。
+    /// hasMore 判定：网易云用接口总数；QQ 单页上限 30（接口硬限制）；酷狗按返回满页判。
+    func songsPage(_ key: String, platform: WellSearchPlatform, limit: Int, page: Int) async -> (songs: [MusicItem], hasMore: Bool) {
+        switch platform {
+        case .netease:
+            if let (r, hasMore) = try? await NeteaseMusicAPI.shared.search(key, kind: .songs, limit: limit, page: page) {
+                return (r.songs, hasMore)
+            }
+        case .qq:
+            if let list = try? await QQMusicAPI.shared.search(keyword: key, limit: limit, page: page) {
+                return (list, list.count >= 30)
+            }
+        case .kugou:
+            if let list = try? await KugouMusicAPI.shared.search(keyword: key, limit: limit, page: page) {
+                return (list, list.count >= limit)
+            }
+        }
+        return ([], false)
+    }
+
     private func songs(_ key: String, platform: WellSearchPlatform, limit: Int) async -> WellSearchResult {
         var out = WellSearchResult()
-        do {
-            switch platform {
-            case .netease:
-                out.songs = try await NeteaseMusicAPI.shared.search(key, kind: .songs, limit: limit).songs
-            case .qq:
-                out.songs = try await QQMusicAPI.shared.search(keyword: key, limit: limit)
-            case .kugou:
-                out.songs = try await KugouMusicAPI.shared.search(keyword: key, limit: limit)
-            }
-        } catch { }
+        out.songs = await songsPage(key, platform: platform, limit: limit, page: 1).songs
         return out
     }
 

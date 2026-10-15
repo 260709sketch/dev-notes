@@ -251,7 +251,18 @@ final class PlayerService: ObservableObject {
     /// iOS 直接给了实测值（`outputLatency` + `ioBufferDuration`），所以**不需要让用户手动猜**。
     /// 之前「歌词偏移」面板下面写着「用于校准蓝牙耳机等设备的输出延迟」，说的就是这个数 ——
     /// 现在由这里自动补上，用户的偏移只作为**额外**微调。
+    /// UI 显示用的输出延迟（低频发布）。
+    ///
+    /// ⚠️★ 2026-10-15 用户：「播放器界面在放歌时，睡眠定时打开之后每两秒自动关闭」。
+    /// 根因：播放中 `AVAudioSession.outputLatency` 读数**持续微抖**，而旧代码每 2s 兜底
+    /// 测量后只要抖动 > 1ms 就写这个 `@Published` → 播放页每 2s 全量重算 → 展开中的
+    /// `Menu` 被 SwiftUI 重建而立刻收起（睡眠定时是唯一的子菜单，只有它暴露症状）。
+    /// 修法：**拆两个值** —— 计算用 `liveLatency`（实时、不发布），UI 显示用本值
+    /// （变化 ≥ 50ms 才发布，人耳/人眼对 50ms 内的偏移无感知）。
     @Published private(set) var outputLatency: TimeInterval = 0
+
+    /// 实时输出延迟（歌词对齐计算用；不发布，避免周期性重算播放页）。
+    private(set) var liveLatency: TimeInterval = 0
 
     /// 上次实测输出延迟的时刻（限频闸门，见 `refreshOutputLatency`）。
     private var lastLatencyMeasureAt: TimeInterval = 0
@@ -276,8 +287,12 @@ final class PlayerService: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         let measured = session.outputLatency + session.ioBufferDuration
         let clamped = measured.isFinite ? max(0, min(measured, 3)) : 0
-        // 抖动 < 1ms 不写 @Published，避免无谓的视图重算
-        if abs(clamped - outputLatency) > 0.001 {
+        // 实时值：抖动 < 1ms 不写（内部计算零成本更新）
+        if abs(clamped - liveLatency) > 0.001 {
+            liveLatency = clamped
+        }
+        // UI 显示值：变化 ≥ 50ms 才发布（旧阈值 1ms 会让播放页每 2s 重算 → Menu 收起）
+        if abs(clamped - outputLatency) > 0.05 {
             outputLatency = clamped
         }
     }
@@ -439,7 +454,7 @@ final class PlayerService: ObservableObject {
         // 所以歌词要跟着晚一点显示才对得上（蓝牙耳机通常差 150–250ms，很显眼）。
         // 用户自己的偏移仍然照加/照减，作为额外微调。
         lyricsCursor.updateProgress(PlayerCore.shared.displayTime,
-                                    offset: offset - outputLatency)
+                                    offset: offset - liveLatency)
     }
 
     // MARK: - Control Actions

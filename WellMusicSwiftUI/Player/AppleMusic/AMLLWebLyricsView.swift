@@ -342,7 +342,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// `AVAudioSession.outputLatency` 把实测值给了我们，所以不必让用户手动猜。
         private var lyricTimeShift: TimeInterval {
             UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
-                - PlayerService.shared.outputLatency
+                - PlayerService.shared.liveLatency
         }
 
         private func currentSeconds() -> TimeInterval {

@@ -24,18 +24,18 @@ final class KugouMusicAPI {
     /// + 桌面 Chrome UA，参考 Kumone KugouAPI.searchSongs）。
     /// 回退：`mobilecdn.kugou.com/api/v3/search/song` —— ⚠️ mobilecdn 系接口**必须用 http**，
     /// https 会返回空响应（curl 实测 + 参考源码注释双确认），这是此前酷狗搜索全挂的根因。
-    func search(keyword: String, limit: Int = 30) async throws -> [MusicItem] {
-        if let results = await songSearchV2(keyword, limit: limit), !results.isEmpty {
+    func search(keyword: String, limit: Int = 30, page: Int = 1) async throws -> [MusicItem] {
+        if let results = await songSearchV2(keyword, limit: limit, page: page), !results.isEmpty {
             return results
         }
-        return try await mobilecdnSearch(keyword, limit: limit)
+        return try await mobilecdnSearch(keyword, limit: limit, page: page)
     }
 
     /// 主通道：song_search_v2（lx-music 同款）。
-    private func songSearchV2(_ keyword: String, limit: Int) async -> [MusicItem]? {
+    private func songSearchV2(_ keyword: String, limit: Int, page: Int = 1) async -> [MusicItem]? {
         let url = "https://songsearch.kugou.com/song_search_v2?" +
             "platform=AndroidFilter&iscorrection=1&keyword=\(kugouEncode(keyword))&hifiquality=0" +
-            "&pagesize=\(limit)&PrivilegeFilter=0&page=1"
+            "&pagesize=\(limit)&PrivilegeFilter=0&page=\(page)"
         guard let resp = try? await NetworkClient.shared.get(url, headers: [
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": "https://www.kugou.com/",
@@ -49,9 +49,9 @@ final class KugouMusicAPI {
     }
 
     /// 备用：mobilecdn v3 接口（必须 http）。
-    private func mobilecdnSearch(_ keyword: String, limit: Int) async throws -> [MusicItem] {
+    private func mobilecdnSearch(_ keyword: String, limit: Int, page: Int = 1) async throws -> [MusicItem] {
         let url = "http://mobilecdn.kugou.com/api/v3/search/song?" +
-            "format=json&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)" +
+            "format=json&keyword=\(kugouEncode(keyword))&page=\(page)&pagesize=\(limit)" +
             "&showtype=1&plat=2&version=8990"
         let resp = try await NetworkClient.shared.get(url, headers: headers)
         guard let json = NetworkClient.jsonObject(resp.data),

@@ -8,13 +8,21 @@ final class WellSearchViewModel: ObservableObject {
     @Published var type: WellSearchType = .all
     @Published var result = WellSearchResult()
     @Published var isLoading = false
+    /// 单曲 Tab 是否还有更多页（2026-10-15：QQ 搜索单曲单页上限 30，用户要求能下拉加载）
+    @Published var songsHasMore = false
 
     private var loadedKey = ""
+    private var currentKeyword = ""
+    private var songsPage = 1
+    private var isLoadingMore = false
 
     func clear() {
         result = WellSearchResult()
         isLoading = false
         loadedKey = ""
+        songsHasMore = false
+        songsPage = 1
+        currentKeyword = ""
     }
 
     func load(keyword: String) async {
@@ -24,12 +32,50 @@ final class WellSearchViewModel: ObservableObject {
         guard tag != loadedKey else { return }
 
         isLoading = true
-        let fetched = await SearchService.shared.search(keyword: key, platform: platform, type: type)
-        // 请求期间条件若已变化则丢弃本次结果
-        guard tag == "\(platform.rawValue)|\(type.rawValue)|\(key)" else { return }
-        result = fetched
+        songsPage = 1
+        currentKeyword = key
+        if type == .songs {
+            // 单曲 Tab 走分页通道（首页）
+            let (songs, hasMore) = await SearchService.shared
+                .songsPage(key, platform: platform, limit: 50, page: 1)
+            guard tag == "\(platform.rawValue)|\(type.rawValue)|\(key)" else { return }
+            result = WellSearchResult()
+            result.songs = songs
+            songsHasMore = hasMore
+        } else {
+            let fetched = await SearchService.shared.search(keyword: key, platform: platform, type: type)
+            // 请求期间条件若已变化则丢弃本次结果
+            guard tag == "\(platform.rawValue)|\(type.rawValue)|\(key)" else { return }
+            result = fetched
+            songsHasMore = false
+        }
         loadedKey = tag
         isLoading = false
+    }
+
+    /// 单曲 Tab 触底加载下一页（滚动到列表末尾自动触发）。
+    func loadMoreSongs() async {
+        let tag = "\(platform.rawValue)|\(type.rawValue)|\(currentKeyword)"
+        guard type == .songs, songsHasMore, !isLoadingMore, tag == loadedKey else { return }
+        isLoadingMore = true
+        let nextPage = songsPage + 1
+        let (songs, hasMore) = await SearchService.shared
+            .songsPage(currentKeyword, platform: platform, limit: 50, page: nextPage)
+        // 请求期间条件变了就丢弃
+        guard type == .songs,
+              "\(platform.rawValue)|\(type.rawValue)|\(currentKeyword)" == loadedKey else {
+            isLoadingMore = false
+            return
+        }
+        // 按平台 id 去重后追加
+        var seen = Set(result.songs.map { "\($0.source.rawValue)|\($0.platformId ?? $0.title)" })
+        for song in songs {
+            let k = "\(song.source.rawValue)|\(song.platformId ?? song.title)"
+            if seen.insert(k).inserted { result.songs.append(song) }
+        }
+        songsHasMore = hasMore
+        songsPage = nextPage
+        isLoadingMore = false
     }
 }
 
@@ -182,8 +228,17 @@ struct SearchView: View {
         case .all:
             allContent
         case .songs:
-            songList(model.result.songs)
-                .padding(.horizontal, WellSearchLayout.contentInset - 10)
+            // 单曲 Tab：触底自动加载下一页（QQ 搜索单曲单页上限 30，用户 2026-10-15）
+            VStack(spacing: 0) {
+                songList(model.result.songs)
+                    .padding(.horizontal, WellSearchLayout.contentInset - 10)
+                if model.songsHasMore {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .onAppear { Task { await model.loadMoreSongs() } }
+                }
+            }
         case .artists:
             WellSearchCardGrid { artistCards(model.result.artists) }
                 .padding(.horizontal, WellSearchLayout.contentInset)

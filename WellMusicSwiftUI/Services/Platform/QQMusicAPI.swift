@@ -219,19 +219,21 @@ final class QQMusicAPI {
 
     // MARK: - 搜索歌曲（search_type = 0）
 
-    func search(keyword: String, limit: Int = 30) async throws -> [MusicItem] {
+    func search(keyword: String, limit: Int = 30, page: Int = 1) async throws -> [MusicItem] {
         // 主通道：老 web 接口 search_for_qq_cp（无需签名，实测结果全）。
-        let web = await webSearchSongs(keyword, limit: limit)
+        // ⚠️ 该接口单页上限 30 条（请求 n=50 也只回 30），翻页靠 p 参数。
+        let web = await webSearchSongs(keyword, limit: limit, page: page)
         if !web.isEmpty { return web }
-        // 回退：移动端签名接口
+        // 回退：移动端签名接口（无分页，仅首页兜底）
+        if page > 1 { return [] }
         return try await searchItems(keyword, searchType: 0, limit: limit, page: 1, key: "item_song")
             .compactMap { parseMobileSong($0) }
     }
 
     /// `search_for_qq_cp` 歌曲搜索（t=0，无需签名；与参考实现同款）。
-    private func webSearchSongs(_ keyword: String, limit: Int) async -> [MusicItem] {
+    private func webSearchSongs(_ keyword: String, limit: Int, page: Int = 1) async -> [MusicItem] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?format=json&w=\(encoded)&n=\(limit)&p=1&t=0") else { return [] }
+              let url = URL(string: "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?format=json&w=\(encoded)&n=\(limit)&p=\(page)&t=0") else { return [] }
         var req = URLRequest(url: url)
         req.timeoutInterval = 12
         req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
@@ -302,10 +304,14 @@ final class QQMusicAPI {
     }
 
     private func parseMobileArtist(_ dict: [String: Any]) -> WellArtistSummary? {
+        // ⚠️ Desktop 版搜索（DoSearchForQQMusicDesktop）返回的是**驼峰字段**
+        //（singerName / singerMID / singerID），移动端才是小写 —— 键名不齐会把
+        // 整页结果全部过滤成空（「QQ 歌手搜索只剩几条 / 歌手主页没专辑」的根因）。
         let mid = (dict["mid"] as? String) ?? (dict["singerMID"] as? String) ?? ""
-        let name = (dict["name"] as? String) ?? (dict["singername"] as? String) ?? ""
+        let name = (dict["name"] as? String) ?? (dict["singername"] as? String)
+            ?? (dict["singerName"] as? String) ?? ""
         guard !name.isEmpty else { return nil }
-        let id = (dict["id"] as? Int) ?? abs(mid.hashValue)
+        let id = (dict["id"] as? Int) ?? (dict["singerID"] as? Int) ?? abs(mid.hashValue)
         var pic = (dict["pic"] as? String) ?? (dict["singerPic"] as? String) ?? ""
         pic = pic.replacingOccurrences(of: "http://", with: "https://")
         let songNum = (dict["songNum"] as? Int) ?? (dict["songnum"] as? Int) ?? 0
@@ -316,10 +322,13 @@ final class QQMusicAPI {
     }
 
     private func parseMobileAlbum(_ dict: [String: Any]) -> WellAlbumSummary? {
+        // ⚠️ 同 parseMobileArtist：Desktop 版 / client_search_cp 返回驼峰字段
+        //（albumName / albumMID / singerName），键名不齐整页过滤成空。
         let mid = (dict["mid"] as? String) ?? (dict["albummid"] as? String) ?? (dict["albumMID"] as? String) ?? ""
-        let name = (dict["name"] as? String) ?? (dict["albumname"] as? String) ?? ""
+        let name = (dict["name"] as? String) ?? (dict["albumname"] as? String)
+            ?? (dict["albumName"] as? String) ?? ""
         guard !name.isEmpty else { return nil }
-        let id = (dict["id"] as? Int) ?? abs(mid.hashValue)
+        let id = (dict["id"] as? Int) ?? (dict["albumID"] as? Int) ?? (dict["albumid"] as? Int) ?? abs(mid.hashValue)
         var pic = (dict["pic"] as? String) ?? (dict["albumPic"] as? String) ?? ""
         pic = pic.replacingOccurrences(of: "http://", with: "https://")
         if pic.isEmpty, !mid.isEmpty { pic = Self.albumCoverImage(mid) }
@@ -327,7 +336,9 @@ final class QQMusicAPI {
         if let singers = dict["singer"] as? [[String: Any]] {
             singerName = singers.compactMap { $0["name"] as? String }.joined(separator: "/")
         }
-        if singerName.isEmpty { singerName = (dict["singername"] as? String) ?? "" }
+        if singerName.isEmpty {
+            singerName = (dict["singername"] as? String) ?? (dict["singerName"] as? String) ?? ""
+        }
         return WellAlbumSummary(
             id: "\(id)", name: name, picURL: pic.isEmpty ? nil : pic,
             artistName: singerName.isEmpty ? "未知歌手" : singerName,
