@@ -486,6 +486,25 @@ final class NeteaseMusicAPI {
     /// 前面（与官方 App 的观感明显不同）——这里做轻量净化：剔除访谈类标题与
     /// 30 秒以下的预告片段；其余保持接口原顺序（不做重排，避免引入更大偏差）。
     func searchMVs(keyword: String, limit: Int = 30, offset: Int = 0) async throws -> [WellMVSummary] {
+        var results = try await searchMVsRaw(keyword: keyword, limit: limit, offset: offset)
+        // ★ 2026-10-15 用户：「搜 playboicarti 只有两个」——搜索词的空格/大小写
+        //   不规范时结果骤减（实测 playboicarti=4 条 vs Playboi Carti=61 条）。
+        //   与官方一致地做**搜索建议纠错**：结果过少时用建议接口拿规范写法再搜并合并。
+        if results.count < 5 {
+            if let corrected = await correctedMVKeyword(for: keyword), corrected != keyword {
+                if let more = try? await searchMVsRaw(keyword: corrected, limit: limit, offset: offset) {
+                    var seen = Set(results.map(\.id))
+                    for mv in more where !seen.contains(mv.id) {
+                        seen.insert(mv.id)
+                        results.append(mv)
+                    }
+                }
+            }
+        }
+        return results
+    }
+
+    private func searchMVsRaw(keyword: String, limit: Int, offset: Int) async throws -> [WellMVSummary] {
         let params: [String: Any] = ["s": keyword, "type": 1004,
                                      "limit": limit, "offset": offset, "total": true]
         let resp: MVCloudSearchResponse = try await Self.apiRequest(
@@ -503,6 +522,36 @@ final class NeteaseMusicAPI {
                 duration: duration,
                 playCount: mv.playCount ?? 0,
                 platform: .netease)
+        }
+    }
+
+    /// 用搜索建议接口纠正关键词：优先取歌手建议名（playboicarti → Playboi Carti）。
+    /// 仅当纠正词与原词**只在空格/大小写上不同**（或原词完全无结果）时才采用，
+    /// 避免把正常关键词替换成撞词结果。
+    private func correctedMVKeyword(for keyword: String) async -> String? {
+        let params: [String: Any] = ["s": keyword, "limit": 8]
+        guard let resp: SuggestResponse = try? await Self.apiRequest(
+            "api/search/suggest/web", params: params, type: SuggestResponse.self) else { return nil }
+        let artistName = resp.result?.artists?.first?.name
+        let songArtistName = resp.result?.songs?.first?.artists?.first?.name
+        let candidate = (artistName?.isEmpty == false ? artistName : songArtistName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let candidate, !candidate.isEmpty else { return nil }
+        let a = keyword.replacingOccurrences(of: " ", with: "").lowercased()
+        let b = candidate.replacingOccurrences(of: " ", with: "").lowercased()
+        return (a == b || a.isEmpty) ? candidate : nil
+    }
+
+    private struct SuggestResponse: Decodable {
+        var result: Payload?
+        struct Payload: Decodable {
+            var artists: [Artist]?
+            var songs: [Song]?
+            struct Artist: Decodable { var name: String? }
+            struct Song: Decodable {
+                var name: String?
+                var artists: [Artist]?
+            }
         }
     }
 
