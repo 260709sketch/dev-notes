@@ -10,6 +10,7 @@ import UIKit
 /// 这里只需要 `hasActiveTrack` 一个低频信号（有无播放曲目），用投影 publisher
 /// 落到本地 @State 即可。
 struct MainTabView: View {
+    @EnvironmentObject private var settings: SettingsManager
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
@@ -93,10 +94,19 @@ struct MainTabView: View {
             Tab("精选", systemImage: MainTabView.squareTabSymbol, value: WellTab.square) {
                 NavigationStack(path: $squarePath) { pageContent(for: .square) }
             }
-            // ⚠️ 2026-10-15 用户：搜索框每次进页默认折叠（系统 search 角色行为）
-            //   → 改回普通 tab，搜索框由页面自绘常驻（SearchView.searchBar）。
-            Tab("搜索", systemImage: "magnifyingglass", value: WellTab.search) {
-                NavigationStack(path: $searchPath) { pageContent(for: .search) }
+            // ★ 2026-10-15 用户：搜索界面新旧可切换（设置 → 界面「旧版搜索界面」）。
+            //   新版 = 普通 tab + 页面自绘常驻搜索框；旧版 = 系统 search 角色
+            //   （进页折叠的系统搜索栏）。
+            if settings.searchLegacyUI {
+                Tab(value: WellTab.search, role: .search) {
+                    NavigationStack(path: $searchPath) { pageContent(for: .search) }
+                } label: {
+                    Label("搜索", systemImage: "magnifyingglass")
+                }
+            } else {
+                Tab("搜索", systemImage: "magnifyingglass", value: WellTab.search) {
+                    NavigationStack(path: $searchPath) { pageContent(for: .search) }
+                }
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
                 NavigationStack(path: $profilePath) { pageContent(for: .profile) }

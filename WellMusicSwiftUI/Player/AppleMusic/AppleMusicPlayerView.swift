@@ -977,12 +977,16 @@ struct AppleMusicPlayerView: View {
             //   顶端一直到「喜欢 / 更多」这一条都能下滑关页。歌词本体留给
             //   下方滚动区 / AMLL 层（Apple Music 歌词页同样只在顶部区域收）。
             VStack(spacing: 0) {
-                ZStack {
+                // ★ 2026-10-15 用户：歌词页的小横条要与大封面状态的**完全一致**
+                //   （44×5、white 0.38、屏幕顶部同一高度）。这里的容器起点比
+                //   屏幕顶低 `headerTopSpacing`（portraitLayout 顶部的占位），
+                //   用 offset 补偿回去，视觉位置与大封面的 dismissIndicator 对齐。
+                ZStack(alignment: .top) {
                     Color.clear
-                    // ★ 2026-10-15 用户：歌词界面要有小横条（下滑关闭把手，显形）
                     Capsule()
-                        .fill(.white.opacity(0.4))
-                        .frame(width: 36, height: 5)
+                        .fill(.white.opacity(0.38))
+                        .frame(width: 44, height: 5)
+                        .offset(y: -(PlayerLayoutMetrics.headerTopSpacing + 1))
                 }
                 .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))
                 .contentShape(Rectangle())

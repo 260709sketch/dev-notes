@@ -384,6 +384,8 @@ final class SettingsManager: ObservableObject {
 
     /// 是否启用动态封面
     @AppStorage("wellmusic.appleMusic.dynamicCoverEnabled") var dynamicCoverEnabled: Bool = true
+    /// 旧版搜索界面（系统 searchable 搜索栏；默认关 = 新版常驻自绘搜索框）。
+    @AppStorage("wellmusic.search.legacyUI") var searchLegacyUI: Bool = false
 
     /// 播放页背景是否使用 AMLL 同款「四色流体渐变」（原生低分辨率渲染）。
     /// 关闭则退回旧的封面模糊背景。默认开启。

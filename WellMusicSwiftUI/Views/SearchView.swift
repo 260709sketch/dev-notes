@@ -122,11 +122,43 @@ struct SearchView: View {
         "\(model.platform.rawValue)|\(model.type.rawValue)|\(committedQuery)"
     }
 
+    /// 旧版搜索界面开关（设置 → 界面；默认关 = 新版常驻自绘搜索框）。
+    @AppStorage("wellmusic.search.legacyUI") private var legacySearchUI = false
+
     var body: some View {
+        Group {
+            if legacySearchUI {
+                // 旧版：系统 searchable 搜索栏（iOS 26 下进页折叠，点击展开）
+                mainScroll
+                    .searchable(text: $searchText, prompt: "想听点什么？")
+                    .onSubmit(of: .search) {
+                        committedQuery = searchText
+                    }
+                    .onChange(of: searchText) { newValue in
+                        applyDebounce(newValue)
+                    }
+            } else {
+                mainScroll
+            }
+        }
+        .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
+        // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
+        // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
+        // ⚠️ 不在 task 里 clear()：清空缓存标记会让「从详情页返回」也重新请求。
+        // load() 自带 loadedKey 守卫（同条件直接跳过），条件真变化时由它自己分流。
+        .task(id: taskID) {
+            await model.load(keyword: committedQuery)
+        }
+    }
+
+    /// 主滚动内容（新旧两版共用；新版在顶部带常驻自绘搜索框）。
+    private var mainScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // ★ 2026-10-15 用户：搜索框常驻可见（原先系统搜索栏进页自动折叠）
-                searchBar
+                // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
+                if !legacySearchUI {
+                    searchBar
+                }
 
                 if hasQuery {
                     platformPicker
@@ -147,18 +179,16 @@ struct SearchView: View {
                 }
 
                 // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白。
-                // 数值按**本项目**的底栏几何算：迷你播放器 52 + 间距 8 +
-                // 胶囊栏 64 + 距底 42 = 166，再留一点余量。
                 Color.clear.frame(height: 170)
             }
         }
-        .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
-        // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
-        // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
-        // ⚠️ 不在 task 里 clear()：清空缓存标记会让「从详情页返回」也重新请求。
-        // load() 自带 loadedKey 守卫（同条件直接跳过），条件真变化时由它自己分流。
-        .task(id: taskID) {
-            await model.load(keyword: committedQuery)
+    }
+
+    /// 400ms 防抖（自绘搜索框与系统 searchable 共用）。
+    private func applyDebounce(_ value: String) {
+        Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if searchText == value { committedQuery = value }
         }
     }
 
@@ -177,11 +207,7 @@ struct SearchView: View {
                 .submitLabel(.search)
                 .onSubmit { committedQuery = searchText }
                 .onChange(of: searchText) { newValue in
-                    // 400ms 防抖：输入过程中不逐字打接口
-                    Task {
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        if searchText == newValue { committedQuery = newValue }
-                    }
+                    applyDebounce(newValue)   // 400ms 防抖：输入过程中不逐字打接口
                 }
 
             if !searchText.isEmpty {
