@@ -90,7 +90,7 @@ final class NeteaseMusicAPI {
               let encSecKey = enc["encSecKey"], !encSecKey.isEmpty else {
             throw NetworkClient.NetworkError.noData
         }
-        let form = "params=\(formEncode(paramsValue))&encSecKey=\(formEncode(encSecKey))"
+        let form = "params=\(escapeForm(paramsValue))&encSecKey=\(escapeForm(encSecKey))"
         let resp = try await NetworkClient.shared.postRaw(
             "https://music.163.com/weapi\(suffix)",
             body: Data(form.utf8),
