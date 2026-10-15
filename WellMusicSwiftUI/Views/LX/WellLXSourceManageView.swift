@@ -211,6 +211,85 @@ struct WellLXSourceManageView: View {
             }
         }
     }
+}
+
+// MARK: - 文件选择器（复制模式，无需 security-scoped）
+
+// MARK: - 音源行
+
+private struct WellLXSourceRow: View {
+    let source: WellLXSourceInfo
+    let isActive: Bool
+    let isTesting: Bool
+    let onToggle: () -> Void
+    let onTest: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(source.name).font(.body)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                testBadge
+            }
+            HStack(spacing: 12) {
+                Button(isActive ? "取消优先" : "设为优先", action: onToggle)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button(action: onTest) {
+                    if isTesting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("测试", systemImage: "stethoscope")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if !source.version.isEmpty { parts.append("v\(source.version)") }
+        if !source.author.isEmpty { parts.append(source.author) }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var testBadge: some View {
+        switch source.testStatus {
+        case .working:
+            HStack(spacing: 4) {
+                ForEach(["wy", "tx", "kg"], id: \.self) { platform in
+                    if source.platformTestResults[platform] == true {
+                        platformTag(platform, ok: true)
+                    }
+                }
+                if !source.platformTestResults.values.contains(true) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                }
+            }
+        case .failed:
+            HStack(spacing: 4) {
+                ForEach(["wy", "tx", "kg"], id: \.self) { platform in
+                    if source.platformTestResults[platform] == false {
+                        platformTag(platform, ok: false)
+                    }
+                }
+                if source.platformTestResults.isEmpty {
+                    Image(systemName: "xmark.seal.fill").foregroundStyle(.red)
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
 
     private func platformTag(_ platform: String, ok: Bool) -> some View {
         Text(Self.label(for: platform))
@@ -230,8 +309,6 @@ struct WellLXSourceManageView: View {
         }
     }
 }
-
-// MARK: - 文件选择器（复制模式，无需 security-scoped）
 
 private struct WellScriptDocumentPicker: UIViewControllerRepresentable {
     let onPick: ([URL]) -> Void
