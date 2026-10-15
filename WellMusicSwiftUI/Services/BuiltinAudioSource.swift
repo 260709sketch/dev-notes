@@ -22,17 +22,27 @@ enum BuiltinAudioSource {
         let sourceName: String
     }
 
-    static func resolve(item: MusicItem) async -> Resolved? {
-        await resolveViaGDStudio(item)
+    static func resolve(item: MusicItem, quality: WellAudioQuality = .high) async -> Resolved? {
+        await resolveViaGDStudio(item, quality: quality)
+    }
+
+    /// 音质设置 → GD 音乐 API 的 br 档位：
+    /// 标准 128 / 较高 320 / 无损与 Hi-Res 用 999（GD 的无损档位）。
+    private static func brValue(for quality: WellAudioQuality) -> String {
+        switch quality {
+        case .standard: return "128"
+        case .high: return "320"
+        case .lossless, .hiRes: return "999"
+        }
     }
 
     // MARK: - GD 音乐 API
 
-    private static func resolveViaGDStudio(_ item: MusicItem) async -> Resolved? {
+    private static func resolveViaGDStudio(_ item: MusicItem, quality: WellAudioQuality) async -> Resolved? {
         guard let (source, id) = platformSourceAndId(for: item), !id.isEmpty else { return nil }
         let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
         let url = "https://music-api.gdstudio.xyz/api.php?types=url"
-            + "&source=\(source)&id=\(encodedId)&br=320"
+            + "&source=\(source)&id=\(encodedId)&br=\(brValue(for: quality))"
         guard let resp = try? await NetworkClient.shared.get(url, headers: [
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
         ]),
