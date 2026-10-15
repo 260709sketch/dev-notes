@@ -21,8 +21,12 @@ struct ResolvedPlayback {
 final class MusicURLResolver {
     static let shared = MusicURLResolver()
 
+    /// 「内置音源」开关（设置 → 自定义音源；默认关）。
+    /// 开启后：未导入自定义音源、或全部音源解析失败时，用官方平台通道兜底播放。
+    static let builtinSourceKey = "wellmusic.player.builtinSourceFallback"
+
     /// 解析播放信息（含请求头）。
-    /// 顺序：本地文件 → 已缓存地址 → LX 自定义音源（必须激活）。
+    /// 顺序：本地文件 → 已缓存地址 → LX 自定义音源（有则必用）→ 内置音源（开关开启时兜底）。
     func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
         if let local = item.localFilePath, !local.isEmpty {
             return ResolvedPlayback(url: URL(fileURLWithPath: local).absoluteString,
@@ -38,17 +42,35 @@ final class MusicURLResolver {
                                     fromCustomSource: nil,
                                     isFallbackSource: false)
         }
-        // ★ 强制走 LX 音源：激活且有可用脚本时必须解析成功，否则报错。
-        guard await WellLXSourceStore.shared.hasActiveSource else {
-            throw MusicURLResolverError.lxSourceUnavailable
+        let hasLX = await WellLXSourceStore.shared.hasActiveSource
+        let builtinEnabled = UserDefaults.standard.bool(forKey: Self.builtinSourceKey)
+
+        // ★ 有 LX 音源：优先走 LX（激活且有可用脚本时）。
+        if hasLX,
+           let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) {
+            return ResolvedPlayback(url: lx.url,
+                                    headers: lx.headers,
+                                    fromCustomSource: lx.sourceName,
+                                    isFallbackSource: lx.isFallback)
         }
-        guard let lx = await WellLXSourceStore.shared.resolvePlayback(for: item, quality: quality) else {
-            throw MusicURLResolverError.lxResolveFailed
+        // ★ 内置音源兜底（用户 2026-10-15）：官方平台通道 + 提示。
+        if builtinEnabled {
+            return try await resolveViaBuiltinSource(item: item, quality: quality)
         }
-        return ResolvedPlayback(url: lx.url,
-                                headers: lx.headers,
-                                fromCustomSource: lx.sourceName,
-                                isFallbackSource: lx.isFallback)
+        // 无 LX 且未开内置音源 → 按原语义报错。
+        throw hasLX ? MusicURLResolverError.lxResolveFailed : MusicURLResolverError.lxSourceUnavailable
+    }
+
+    /// 内置音源：官方平台通道（QQ vkey / 网易云 / 酷狗 / 酷我），成功后 Toast 提示。
+    private func resolveViaBuiltinSource(item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
+        let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
+        ToastCenter.shared.show("使用内置音源播放")
+        return ResolvedPlayback(
+            url: url,
+            headers: WellLXPlaybackHeaders.requestHeaders(
+                for: url, platform: WellLXPlaybackHeaders.platformKey(for: item)),
+            fromCustomSource: "内置音源",
+            isFallbackSource: true)
     }
 
     /// 兼容旧签名：仅返回地址。

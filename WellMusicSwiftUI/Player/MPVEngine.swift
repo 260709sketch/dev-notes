@@ -121,6 +121,9 @@ final class MPVEngine: @unchecked Sendable {
         let exclusiveReadable = mpv_get_property(h, "audio-exclusive", MPV_FORMAT_FLAG, &exclusiveFlag) >= 0
         PlayerDiag.log("mpv 就绪：audio-exclusive=\(exclusiveReadable ? (exclusiveFlag != 0 ? "yes" : "no") : "选项不可读")")
 
+        // 引擎初始化时重放最近的均衡器设置（属性随新 handle 重置）。
+        mpv_set_property_string(h, "af", pendingAFChain)
+
         loopRunning = true
         startEventLoop()
     }
@@ -226,16 +229,25 @@ final class MPVEngine: @unchecked Sendable {
         mpv_set_property(h, "volume", MPV_FORMAT_DOUBLE, &d)
     }
 
-    /// 应用均衡器：清空音频滤镜链后按 10 段增益重新挂 lavfi 倍频程滤波器。
-    /// `enabled == false` 或全 0 增益时只清链（不挂任何滤镜）。
-    /// ⚠️ `af` 是全局滤镜链，loadfile 换曲后依然有效，无需每首歌重设。
+    /// 最近一次的均衡器滤镜链（引擎初始化时重放用）。
+    private var pendingAFChain: String = ""
+
+    /// 应用均衡器：把 10 段增益合成一条 lavfi 滤镜链，用 `af` **属性**一次性设置。
+    ///
+    /// ⚠️ 用属性而不是 `af add/clr` 命令：属性设置是原子操作，不依赖 mpv
+    /// 命令子参数解析（`af clr` 带空参数在某些版本会直接失败，导致整链没生效 ——
+    /// 「调节了没效果」的根因）。`af` 是全局属性，loadfile 换曲后依然有效。
     func applyEqualizer(enabled: Bool, gains: [Double]) {
-        command("af", ["clr", ""])
-        guard enabled else { return }
-        for (freq, gain) in zip(WellEqualizer.bandFrequencies, gains) where abs(gain) > 0.01 {
-            let spec = String(format: "lavfi=equalizer=f=%.0f:t=q:w=1:g=%.1f", freq, gain)
-            command("af", ["add", spec])
+        var chain = ""
+        if enabled {
+            let parts = zip(WellEqualizer.bandFrequencies, gains)
+                .filter { abs($0.1) > 0.01 }
+                .map { String(format: "lavfi=equalizer=f=%.0f:t=q:w=1:g=%.1f", $0.0, $0.1) }
+            chain = parts.joined(separator: ",")
         }
+        pendingAFChain = chain
+        guard let h = handle else { return }
+        mpv_set_property_string(h, "af", chain)
     }
 
     func shutdown() {

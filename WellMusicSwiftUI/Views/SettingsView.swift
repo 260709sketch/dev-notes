@@ -80,7 +80,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("自定义音源") {
+                Section {
                     HStack {
                         Text("当前音源")
                         Spacer()
@@ -88,6 +88,20 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+                    // ★ 2026-10-15 用户：内置音源（默认关）。
+                    //   开启后：未导入自定义音源、或全部音源解析失败时，
+                    //   用官方平台通道兜底播放并提示「使用内置音源播放」。
+                    Toggle("内置音源", isOn: Binding(
+                        get: { UserDefaults.standard.bool(forKey: MusicURLResolver.builtinSourceKey) },
+                        set: { UserDefaults.standard.set($0, forKey: MusicURLResolver.builtinSourceKey) }
+                    ))
+                } header: {
+                    Text("自定义音源")
+                } footer: {
+                    Text("开启「内置音源」后，未导入自定义音源时将使用内置音源（官方平台通道）播放。")
+                        .font(.system(size: 12))
+                }
+                Section {
                     NavigationLink {
                         WellLXSourceManageView()
                     } label: {

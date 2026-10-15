@@ -12,7 +12,8 @@ struct WellStorageView: View {
 
     @State private var exportingURL: URL?
     @State private var showingExporter = false
-    @State private var showingImporter = false
+    /// 自建文档选择器（UIDocumentPicker asCopy；fileImporter 在部分场景点击无响应）
+    @State private var showingImportPicker = false
     @State private var pendingRestore: [String: Any]?
     @State private var alertMessage = ""
     @State private var showingAlert = false
@@ -29,7 +30,7 @@ struct WellStorageView: View {
                     Label("导出数据备份", systemImage: "square.and.arrow.up")
                 }
                 Button {
-                    showingImporter = true
+                    showingImportPicker = true
                 } label: {
                     Label("从备份文件恢复", systemImage: "square.and.arrow.down")
                 }
@@ -77,10 +78,15 @@ struct WellStorageView: View {
                 ShareSheetView(items: [url])
             }
         }
-        .fileImporter(isPresented: $showingImporter,
-                      allowedContentTypes: [.json],
-                      allowsMultipleSelection: false) { result in
-            handleImport(result)
+        .fullScreenCover(isPresented: $showingImportPicker) {
+            WellBackupDocumentPicker(
+                onPick: { url in
+                    showingImportPicker = false
+                    handleImport(url)
+                },
+                onCancel: { showingImportPicker = false }
+            )
+            .ignoresSafeArea()
         }
         .alert("提示", isPresented: $showingAlert) {
             if pendingRestore != nil {
@@ -145,26 +151,19 @@ struct WellStorageView: View {
 
     // MARK: - 恢复
 
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url),
-                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let defaultsPayload = root["defaults"] as? [String: Any] else {
-                alertMessage = "备份文件解析失败"
-                showingAlert = true
-                return
-            }
-            pendingRestore = defaultsPayload
-            alertMessage = "将恢复 \(defaultsPayload.count) 项数据并覆盖当前内容，确认继续？（重启 App 后生效）"
+    private func handleImport(_ url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let defaultsPayload = root["defaults"] as? [String: Any] else {
+            alertMessage = "备份文件解析失败"
             showingAlert = true
-        case .failure(let error):
-            alertMessage = "选择文件失败：\(error.localizedDescription)"
-            showingAlert = true
+            return
         }
+        pendingRestore = defaultsPayload
+        alertMessage = "将恢复 \(defaultsPayload.count) 项数据并覆盖当前内容，确认继续？（重启 App 后生效）"
+        showingAlert = true
     }
 
     private func performRestore() {
@@ -229,6 +228,42 @@ struct WellStorageView: View {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
+    }
+}
+
+/// 备份文件选择器：`UIDocumentPickerViewController`（asCopy: true）。
+/// `asCopy` 会把文件复制到 App 沙盒再回调，规避 iCloud / 第三方文件提供商
+/// 的权限确认导致「点击文件没反应」。
+struct WellBackupDocumentPicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.json, .item],
+            asCopy: true
+        )
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let parent: WellBackupDocumentPicker
+        init(_ parent: WellBackupDocumentPicker) { self.parent = parent }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            parent.onPick(url)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.onCancel()
+        }
     }
 }
 

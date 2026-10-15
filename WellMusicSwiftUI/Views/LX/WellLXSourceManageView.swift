@@ -30,9 +30,9 @@ struct WellLXSourceManageView: View {
         .task { await store.bootstrapIfNeeded() }
         .fullScreenCover(isPresented: $showFilePicker) {
             WellScriptDocumentPicker(
-                onPick: { url in
+                onPick: { urls in
                     showFilePicker = false
-                    handlePickedFile(url)
+                    handlePickedFiles(urls)
                 },
                 onCancel: { showFilePicker = false }
             )
@@ -189,100 +189,26 @@ struct WellLXSourceManageView: View {
         }
     }
 
-    private func handlePickedFile(_ url: URL) {
-        do {
-            let script = try String(contentsOf: url, encoding: .utf8)
-            guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                importError = "文件内容为空"
-                return
-            }
-            importError = nil
-            Task {
+    /// 多选导入（2026-10-15 用户：一次可导入多个音源脚本）。
+    private func handlePickedFiles(_ urls: [URL]) {
+        importError = nil
+        Task {
+            var failures: [String] = []
+            for url in urls {
                 do {
-                    try await store.importScript(script)
+                    let script = try String(contentsOf: url, encoding: .utf8)
+                    guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        failures.append("\(url.lastPathComponent)：内容为空")
+                        continue
+                    }
+                    _ = try await store.importScript(script)
                 } catch {
-                    importError = "导入失败：\(error.localizedDescription)"
+                    failures.append("\(url.lastPathComponent)：\(error.localizedDescription)")
                 }
             }
-        } catch {
-            importError = "无法读取文件：\(error.localizedDescription)"
-        }
-    }
-}
-
-// MARK: - 音源行
-
-private struct WellLXSourceRow: View {
-    let source: WellLXSourceInfo
-    let isActive: Bool
-    let isTesting: Bool
-    let onToggle: () -> Void
-    let onTest: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(source.name).font(.body)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                testBadge
+            if !failures.isEmpty {
+                importError = "部分导入失败：\(failures.joined(separator: "；"))"
             }
-            HStack(spacing: 12) {
-                Button(isActive ? "取消优先" : "设为优先", action: onToggle)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button(action: onTest) {
-                    if isTesting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("测试", systemImage: "stethoscope")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var subtitle: String {
-        var parts: [String] = []
-        if !source.version.isEmpty { parts.append("v\(source.version)") }
-        if !source.author.isEmpty { parts.append(source.author) }
-        return parts.joined(separator: " · ")
-    }
-
-    @ViewBuilder
-    private var testBadge: some View {
-        switch source.testStatus {
-        case .working:
-            HStack(spacing: 4) {
-                ForEach(["wy", "tx", "kg"], id: \.self) { platform in
-                    if source.platformTestResults[platform] == true {
-                        platformTag(platform, ok: true)
-                    }
-                }
-                if !source.platformTestResults.values.contains(true) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                }
-            }
-        case .failed:
-            HStack(spacing: 4) {
-                ForEach(["wy", "tx", "kg"], id: \.self) { platform in
-                    if source.platformTestResults[platform] == false {
-                        platformTag(platform, ok: false)
-                    }
-                }
-                if source.platformTestResults.isEmpty {
-                    Image(systemName: "xmark.seal.fill").foregroundStyle(.red)
-                }
-            }
-        default:
-            EmptyView()
         }
     }
 
@@ -308,7 +234,7 @@ private struct WellLXSourceRow: View {
 // MARK: - 文件选择器（复制模式，无需 security-scoped）
 
 private struct WellScriptDocumentPicker: UIViewControllerRepresentable {
-    let onPick: (URL) -> Void
+    let onPick: ([URL]) -> Void
     let onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -319,7 +245,8 @@ private struct WellScriptDocumentPicker: UIViewControllerRepresentable {
             asCopy: true
         )
         picker.delegate = context.coordinator
-        picker.allowsMultipleSelection = false
+        // 多选导入：一次可挑多个音源脚本
+        picker.allowsMultipleSelection = true
         return picker
     }
 
@@ -330,8 +257,8 @@ private struct WellScriptDocumentPicker: UIViewControllerRepresentable {
         init(_ parent: WellScriptDocumentPicker) { self.parent = parent }
 
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { return }
-            parent.onPick(url)
+            guard !urls.isEmpty else { return }
+            parent.onPick(urls)
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {

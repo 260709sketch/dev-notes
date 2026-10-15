@@ -53,7 +53,9 @@ final class SearchService {
             }
         case .qq:
             if let list = try? await QQMusicAPI.shared.search(keyword: key, limit: limit, page: page) {
-                return (list, list.count >= 30)
+                // ⚠️ 不能用固定 30 判「还有更多」：分页 limit 是 10 时永远判不出，
+                //    表现为「只有十几首、下滑不刷新」（QQ 单页上限 30，取 min 兼容）。
+                return (list, list.count >= min(limit, 30))
             }
         case .kugou:
             if let list = try? await KugouMusicAPI.shared.search(keyword: key, limit: limit, page: page) {
