@@ -214,33 +214,31 @@ struct WellPlaylistDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
         case .fullWidth:
-            // ★ 2026-10-15 用户：全屏铺满的封面要顶到导航栏/状态栏下面（原先被
-            //   ScrollView 的 contentInset 压在导航栏下方，四周漏系统底色）。
-            //   做法：把封面向上抵消顶部安全区，并允许它延伸到顶部边缘。
-            GeometryReader { geo in
-                WellRemoteImage(url: headerCoverURL, displaySize: 720)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(1, contentMode: .fit)
-                    .clipped()
-                    .offset(y: -geo.safeAreaInsets.top)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
-                                .init(color: .clear, location: 0),
-                                .init(color: .black, location: 0.06),
-                                // 主体全清晰；底部过渡带加宽 + 中间半透明档，
-                                // 大封面「溶」进主色底而不是一刀切（2026-10-15 用户：
-                                // 「模糊过渡更加自然」）
-                                .init(color: .black, location: 0.80),
-                                .init(color: .black.opacity(0.55), location: 0.92),
-                                .init(color: .clear, location: 1.0),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom)
-                    )
-            }
-            .ignoresSafeArea(edges: .top)
+            // ★ 2026-10-15 用户：全屏铺满的封面要顶到导航栏/状态栏下面。
+            //   ⚠️ 上一版用 GeometryReader + offset 负安全区——在 LazyVStack 里
+            //   GeometryReader 高度塌陷、封面被移出懒加载视口**直接不渲染**
+            //   （用户实测：全屏铺满页面完全没有封面）。改回固定偏移：
+            //   上移顶部安全区高度（Self.safeAreaTopInset），布局稳定。
+            WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fit)
+                .clipped()
+                .offset(y: -(Self.safeAreaTopInset))
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.06),
+                            // 主体全清晰；底部过渡带加宽 + 中间半透明档，
+                            // 大封面「溶」进主色底而不是一刀切
+                            .init(color: .black, location: 0.80),
+                            .init(color: .black.opacity(0.55), location: 0.92),
+                            .init(color: .clear, location: 1.0),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                )
         }
     }
 
