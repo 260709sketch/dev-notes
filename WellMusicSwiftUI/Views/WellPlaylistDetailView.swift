@@ -105,6 +105,8 @@ struct WellPlaylistDetailView: View {
         ZStack(alignment: .top) {
             backdropLayer
 
+            // ⚠️ ScrollView 自身铺主色底：overscroll（下拉回弹）与封面渐隐带
+            //    后方都不再漏系统白/黑（2026-10-15 用户：全屏铺满上滑漏泄）。
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     heroCover
@@ -119,6 +121,7 @@ struct WellPlaylistDetailView: View {
                     Color.clear.frame(height: 170)
                 }
             }
+            .background(coverBackdropColor ?? Color(uiColor: .systemBackground))
             // ★ 深色封面自动识别：封面偏暗时整页文字转白（用户 2026-10-14 要求）。
             //   只强制 content 的配色方案，不影响系统导航栏。
             .environment(\.colorScheme, coverIsDark == true ? .dark : systemScheme)
@@ -205,23 +208,33 @@ struct WellPlaylistDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
         case .fullWidth:
-            WellRemoteImage(url: headerCoverURL, displaySize: 720)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fit)
-                .clipped()
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.06),
-                            // 主体保持全清晰；最底部一小段收进主色底，底沿无硬线
-                            .init(color: .black, location: 0.86),
-                            .init(color: .clear, location: 1.0),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom)
-                )
+            // ★ 2026-10-15 用户：全屏铺满的封面要顶到导航栏/状态栏下面（原先被
+            //   ScrollView 的 contentInset 压在导航栏下方，四周漏系统底色）。
+            //   做法：把封面向上抵消顶部安全区，并允许它延伸到顶部边缘。
+            GeometryReader { geo in
+                WellRemoteImage(url: headerCoverURL, displaySize: 720)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(1, contentMode: .fit)
+                    .clipped()
+                    .offset(y: -geo.safeAreaInsets.top)
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                // 顶部一点点收起：下滑回弹/上推时封面顶沿柔和收进主色底
+                                .init(color: .clear, location: 0),
+                                .init(color: .black, location: 0.06),
+                                // 主体全清晰；底部过渡带加宽 + 中间半透明档，
+                                // 大封面「溶」进主色底而不是一刀切（2026-10-15 用户：
+                                // 「模糊过渡更加自然」）
+                                .init(color: .black, location: 0.80),
+                                .init(color: .black.opacity(0.55), location: 0.92),
+                                .init(color: .clear, location: 1.0),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom)
+                    )
+            }
+            .ignoresSafeArea(edges: .top)
         }
     }
 
@@ -316,34 +329,27 @@ struct WellPlaylistDetailView: View {
 
     // MARK: - 简介（两行截断 + 「更多」展开，Apple Music 同款）
 
+    // MARK: - 简介（点击文本展开 / 再点收起）
+
     @ViewBuilder
     private var descriptionBlock: some View {
         if let desc = playlistDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
            !desc.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                Button {
+            // ★ 2026-10-15 用户：移除「更多」字样，改为点击简介本身展开 / 收起。
+            Text(desc.replacingOccurrences(of: "\n", with: " "))
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(showFullDescription ? nil : 2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showFullDescription.toggle()
                     }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(desc.replacingOccurrences(of: "\n", with: " "))
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(showFullDescription ? nil : 2)
-                            .multilineTextAlignment(.leading)
-                        if !showFullDescription {
-                            Text("更多")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
         }
     }
 
@@ -410,16 +416,16 @@ struct WellPlaylistDetailView: View {
         } else {
             LazyVStack(spacing: 0) {
                 ForEach(Array(displayedTracks.enumerated()), id: \.element.id) { index, item in
-                    Button {
-                        PlayerCore.shared.play(queue: orderedTracks,
-                                               startIndex: playbackIndex(for: item))
-                    } label: {
-                        appleMusicSongRow(index: index, item: item)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 6)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    appleMusicSongRow(index: index, item: item)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            PlayerCore.shared.play(queue: orderedTracks,
+                                                   startIndex: playbackIndex(for: item))
+                        }
+                        // ★ 2026-10-15 用户：长按歌曲弹出菜单（与 Kumone 同款能力）
+                        .contextMenu { songContextMenu(item) }
                 }
             }
         }
@@ -458,9 +464,89 @@ struct WellPlaylistDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            // ★ 2026-10-15 用户：网易云歌曲被收藏后，时长旁出现小五角星；
+            //   点星 = 取消收藏（本地 + 云端同步，见 AppState.toggleFavorite）。
+            if item.source == .netease, appState.isFavorite(item) {
+                Button {
+                    WellHaptics.tap()
+                    appState.toggleFavorite(item)
+                } label: {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.accent)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
             Text(item.durationText)
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// 歌曲行长按菜单（播放 / 收藏 / 查看专辑 / 查看歌手 / 分享）。
+    @ViewBuilder
+    private func songContextMenu(_ item: MusicItem) -> some View {
+        Button {
+            PlayerCore.shared.play(queue: orderedTracks, startIndex: playbackIndex(for: item))
+        } label: {
+            Label("播放", systemImage: "play.fill")
+        }
+
+        let isFav = appState.isFavorite(item)
+        Button {
+            appState.toggleFavorite(item)
+        } label: {
+            Label(isFav ? "取消收藏" : "收藏", systemImage: isFav ? "star.slash" : "star")
+        }
+
+        // 查看专辑（有平台专辑 id 才给跳，避免进错页）
+        if let albumId = item.platformAlbumId, !albumId.isEmpty {
+            Button {
+                NowPlayingNavigator.shared.request(NowPlayingDestination(
+                    kind: .album,
+                    platformId: albumId,
+                    name: item.album ?? "",
+                    coverURL: item.albumCoverURL,
+                    platform: item.source,
+                    artistName: item.artist ?? ""))
+            } label: {
+                Label("查看专辑", systemImage: "square.stack")
+            }
+        }
+
+        // 查看歌手（取第一个歌手名）
+        if let artist = item.artist, !artist.isEmpty {
+            Button {
+                NowPlayingNavigator.shared.request(NowPlayingDestination(
+                    kind: .artist,
+                    platformId: item.platformId ?? "",
+                    name: artist,
+                    coverURL: nil,
+                    platform: item.source,
+                    artistName: ""))
+            } label: {
+                Label("查看歌手", systemImage: "person")
+            }
+        }
+
+        if let link = shareLink(for: item) {
+            ShareLink(item: link) {
+                Label("分享歌曲", systemImage: "square.and.arrow.up")
+            }
+        }
+    }
+
+    /// 歌曲的平台分享链接（QQ/酷狗/网易云真实链接）。
+    private func shareLink(for item: MusicItem) -> String? {
+        let songId = item.platformId ?? ""
+        guard !songId.isEmpty else { return nil }
+        switch item.source {
+        case .qq: return "https://y.qq.com/n/ryqq/songDetail/\(songId)"
+        case .kugou: return "https://www.kugou.com/song/#hash=\(songId)"
+        default: return "https://music.163.com/#/song?id=\(songId)"
         }
     }
 
@@ -522,8 +608,9 @@ struct WellPlaylistDetailView: View {
 
         // ★ 2026-10-15 用户：「浅色模式如果是深色背景…自动渲染白色」——
         //   按**最终渲染色**（adjusted）判定：浅色模式下渲染出来偏深（明度 < 0.35）
-        //   一律改白底（整页文字转深色），不再限制封面样式；深色模式不走这条路。
-        if systemScheme == .light, Self.luminance(of: adjusted) < 0.35 {
+        //   改白底（整页文字转深色）。⚠️ 仅对「居中留白」样式生效：
+        //   全屏铺满的深色艺术背景是设计本体（用户明确「本不应该修改全屏铺满的」）。
+        if coverStyle == .centered, systemScheme == .light, Self.luminance(of: adjusted) < 0.35 {
             withAnimation(.easeInOut(duration: 0.25)) {
                 coverBackdropColor = Color(uiColor: .systemBackground)
             }

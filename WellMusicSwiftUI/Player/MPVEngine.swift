@@ -226,6 +226,18 @@ final class MPVEngine: @unchecked Sendable {
         mpv_set_property(h, "volume", MPV_FORMAT_DOUBLE, &d)
     }
 
+    /// 应用均衡器：清空音频滤镜链后按 10 段增益重新挂 lavfi 倍频程滤波器。
+    /// `enabled == false` 或全 0 增益时只清链（不挂任何滤镜）。
+    /// ⚠️ `af` 是全局滤镜链，loadfile 换曲后依然有效，无需每首歌重设。
+    func applyEqualizer(enabled: Bool, gains: [Double]) {
+        command("af", ["clr", ""])
+        guard enabled else { return }
+        for (freq, gain) in zip(WellEqualizer.bandFrequencies, gains) where abs(gain) > 0.01 {
+            let spec = String(format: "lavfi=equalizer=f=%.0f:t=q:w=1:g=%.1f", freq, gain)
+            command("af", ["add", spec])
+        }
+    }
+
     func shutdown() {
         loopRunning = false
         if let h = handle {

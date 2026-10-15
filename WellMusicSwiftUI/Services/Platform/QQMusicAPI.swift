@@ -263,7 +263,7 @@ final class QQMusicAPI {
             if let mediaMid = dict["strMediaMid"] as? String, !mediaMid.isEmpty {
                 item.qqMediaMid = mediaMid
             }
-            if !albumMid.isEmpty { item.qqAlbumMid = albumMid }
+            if !albumMid.isEmpty { item.qqAlbumMid = albumMid; item.platformAlbumId = albumMid }
             return item
         }
     }
@@ -299,7 +299,7 @@ final class QQMusicAPI {
             qqSongMid: mid
         )
         if !mediaMid.isEmpty { item.qqMediaMid = mediaMid }
-        if !albumMid.isEmpty { item.qqAlbumMid = albumMid }
+        if !albumMid.isEmpty { item.qqAlbumMid = albumMid; item.platformAlbumId = albumMid }
         return item
     }
 

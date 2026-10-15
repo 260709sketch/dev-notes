@@ -62,9 +62,10 @@ struct Track: Hashable, Codable, Identifiable {
         let albumId = abs("\(musicItem.keyOf)_album".hashValue) % (Int.max / 2)
         let album = Album(
             id: albumId,
-            name: musicItem.album ?? "未知专辑",
+            // 空专辑名留空串：播放页副标题会过滤空段（显示「歌手」而不是「未知专辑」）
+            name: musicItem.album ?? "",
             picUrl: musicItem.albumCoverURL,
-            albumMid: musicItem.qqAlbumMid
+            albumMid: musicItem.platformAlbumId ?? musicItem.qqAlbumMid
         )
 
         return Track(

@@ -354,6 +354,8 @@ struct AppleMusicPlayerView: View {
     }
 
     /// 当前曲目的平台分享链接（分享入口用）。
+    /// ⚠️ 必须用 `platformSongId`（平台侧真实 id）：`t.id` 是本地稳定哈希，
+    /// 拼出来的网易云链接会指向不存在的歌。
     private var trackShareLink: String? {
         guard let t = track else { return nil }
         switch t.sourcePlatform {
@@ -362,7 +364,7 @@ struct AppleMusicPlayerView: View {
         case "kg":
             return "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
         default:
-            return "https://music.163.com/#/song?id=\(t.id)"
+            return "https://music.163.com/#/song?id=\(t.platformSongId ?? "\(t.id)")"
         }
     }
 
@@ -554,14 +556,10 @@ struct AppleMusicPlayerView: View {
                         }
                         .buttonStyle(GlassPressButtonStyle(scale: 0.88))
 
-                        Button {
+                        PlayPauseButton(isPlaying: player.isPlaying, size: ScreenAdapter.h(32)) {
                             player.togglePlayPause()
-                        } label: {
-                            PlayPauseMorphIcon(isPlaying: player.isPlaying, size: ScreenAdapter.h(32))
-                                .frame(width: ScreenAdapter.h(64), height: ScreenAdapter.h(64))
-                                .foregroundStyle(primaryColor)
                         }
-                        .buttonStyle(GlassPressButtonStyle(scale: 0.9))
+                        .foregroundStyle(primaryColor)
 
                         Button {
                             player.next()
@@ -1087,7 +1085,7 @@ struct AppleMusicPlayerView: View {
             //
             // ★ 需求 17：点击小封面返回大封面状态（收起歌词页）。
             Color.clear
-                .frame(width: ScreenAdapter.h(64), height: ScreenAdapter.h(64))
+                .frame(width: ScreenAdapter.h(54), height: ScreenAdapter.h(54))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     // ★ 用户明确要求：歌词页点击小封面返回不要震动（2026-10-14）。
@@ -1155,14 +1153,11 @@ struct AppleMusicPlayerView: View {
                 .buttonStyle(.plain)
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.previous)))
 
-                Button {
+                PlayPauseButton(isPlaying: player.isPlaying, size: ScreenAdapter.h(38)) {
                     player.togglePlayPause()
-                } label: {
-                    PlayPauseMorphIcon(isPlaying: player.isPlaying, size: ScreenAdapter.h(38))
-                        .frame(width: ScreenAdapter.h(80), height: ScreenAdapter.h(80))
-                        .foregroundStyle(primaryColor)
                 }
-                .buttonStyle(GlassPressButtonStyle(scale: 0.92))
+                .frame(width: ScreenAdapter.h(80), height: ScreenAdapter.h(80))
+                .foregroundStyle(primaryColor)
                 .modifier(AppleMusicLayoutTransform(entry: layoutEntry(.play)))
 
                 Button {

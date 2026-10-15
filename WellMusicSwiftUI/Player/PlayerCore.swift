@@ -485,6 +485,11 @@ final class PlayerCore: NSObject, ObservableObject {
         engine.setVolume(percent: Double(volume) * 100)
     }
 
+    /// 应用均衡器（转发给 MPV 音频滤镜链）。
+    func applyEqualizer(enabled: Bool, gains: [Double]) {
+        engine.applyEqualizer(enabled: enabled, gains: gains)
+    }
+
     func next() {
         guard !queue.isEmpty else { return }
         let mode = AppState.shared.playMode

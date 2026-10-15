@@ -118,10 +118,19 @@ final class AppState: ObservableObject {
     }
 
     func toggleFavorite(_ track: MusicItem) {
-        if isFavorite(track) {
-            favoriteTracks.removeAll { MusicItem.isSame($0, track) }
-        } else {
+        let willLike = !isFavorite(track)
+        if willLike {
             favoriteTracks.insert(track, at: 0)
+        } else {
+            favoriteTracks.removeAll { MusicItem.isSame($0, track) }
+        }
+        // ★ 2026-10-15 用户：网易云歌曲的收藏/取消收藏同步到云端「我喜欢的音乐」。
+        //   本地列表已即时更新（不等网络）；云端失败只丢一次同步，不影响本地。
+        if track.source == .netease, let id = track.neteaseId, !id.isEmpty,
+           NeteaseSession.shared.isLoggedIn {
+            Task {
+                try? await NeteaseMusicAPI.shared.likeTrack(id: id, like: willLike)
+            }
         }
     }
 

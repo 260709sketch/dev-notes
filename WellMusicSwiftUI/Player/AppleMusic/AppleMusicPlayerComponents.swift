@@ -53,7 +53,8 @@ struct PlayPauseMorphIcon: View {
             Image(systemName: "play.fill")
                 .font(.system(size: size, weight: .semibold))
                 .opacity(1 - progress)
-                .scaleEffect(1 - progress * 0.18)
+                // 隐藏态缩到 0.6（RN 版同款数值：180ms withTiming 交叉过渡）
+                .scaleEffect(1 - progress * 0.4)
                 .offset(x: progress * 5)
             HStack(spacing: max(3, size * 0.18)) {
                 RoundedRectangle(cornerRadius: max(1.5, size * 0.08), style: .continuous)
@@ -62,11 +63,43 @@ struct PlayPauseMorphIcon: View {
                     .frame(width: max(4, size * 0.24), height: size * 0.86)
             }
             .opacity(progress)
-            .scaleEffect(0.82 + progress * 0.18)
+            .scaleEffect(0.6 + progress * 0.4)
             .offset(x: (1 - progress) * -5)
         }
         .frame(width: size + 6, height: size + 6)
-        .animation(.spring(response: 0.28, dampingFraction: 0.78), value: isPlaying)
+        .animation(.easeOut(duration: 0.18), value: isPlaying)
+    }
+}
+
+/// 播放/暂停按钮（RN 版同款效果：点击时白色半透明圆闪一下 + 图标 morph）。
+///
+/// RN 版 `triggerPlayPress`：playPressAnim 1 → withTiming(0, 350ms, quad)，
+/// 背后一层 `rgba(255,255,255,0.32)` 的 76pt 圆。这里照搬该效果。
+struct PlayPauseButton: View {
+    let isPlaying: Bool
+    var size: CGFloat = 32
+    var action: () -> Void
+
+    @State private var pulse = false
+
+    var body: some View {
+        Button {
+            action()
+            pulse = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                withAnimation(.easeOut(duration: 0.32)) { pulse = false }
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(0.32))
+                    .frame(width: size * 2, height: size * 2)
+                    .opacity(pulse ? 1 : 0)
+                PlayPauseMorphIcon(isPlaying: isPlaying, size: size)
+                    .frame(width: size * 2, height: size * 2)
+            }
+        }
+        .buttonStyle(GlassPressButtonStyle(scale: 0.9))
     }
 }
 
@@ -1280,6 +1313,10 @@ struct PlayerVolumeControl: View {
     @EnvironmentObject private var settings: SettingsManager
     @State private var isDragging = false
     @State private var dragValue: Double = 0
+    /// 上次向播放内核下发音量的时刻（节流闸门）。
+    /// ⚠️ 每帧都下发会掉帧：volume 的 didSet 里走 MPV 命令 + UserDefaults 写入 +
+    ///    AVAudioSession 查询，拖动时每帧执行直接卡。节流到 ~80ms 一次。
+    @State private var lastApplyAt: TimeInterval = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -1308,7 +1345,12 @@ struct PlayerVolumeControl: View {
                             isDragging = true
                             let val = Double(min(max(value.location.x / width, 0), 1))
                             dragValue = val
-                            player.volume = Float(val)
+                            // UI 值每帧更新（跟手），下发内核走节流
+                            let now = Date().timeIntervalSince1970
+                            if now - lastApplyAt > 0.08 {
+                                lastApplyAt = now
+                                player.volume = Float(val)
+                            }
                         }
                         .onEnded { value in
                             let val = Double(min(max(value.location.x / width, 0), 1))

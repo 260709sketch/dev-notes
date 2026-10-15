@@ -394,6 +394,21 @@ final class NeteaseMusicAPI {
         var msg: String?
     }
 
+    /// 红心 / 取消红心一首歌（同步网易云「我喜欢的音乐」）。
+    ///
+    /// 通道：eapi `/api/radio/like`（alg=itembased，与桌面/移动客户端同款）。
+    /// ⚠️ query 串必须拼在 path 里一起进 eapi 加密体，params 里只放表单字段。
+    func likeTrack(id: String, like: Bool) async throws {
+        let params: [String: Any] = ["trackId": id, "like": like]
+        let resp: CodeResponse = try await Self.eapiRequest(
+            "/api/radio/like?alg=itembased&trackId=\(id)&time=3",
+            params: params,
+            type: CodeResponse.self)
+        guard (resp.code ?? -1) == 200 else {
+            throw NetworkClient.NetworkError.badStatus(resp.code ?? -1)
+        }
+    }
+
     private struct LoginResponse: Decodable {
         var code: Int?
         var message: String?
@@ -1038,7 +1053,7 @@ final class NeteaseMusicAPI {
     private func favoritedAlbumsEapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
         let params: [String: Any] = ["limit": min(limit, 100), "offset": offset, "total": true]
         let resp: AlbumSublistResponse = try await Self.eapiRequest(
-            "/api/album/sublist", params: params, type: AlbumSublistResponse.self)
+            "/album/sublist", params: params, type: AlbumSublistResponse.self)
         let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
         return Array(entries.compactMap(Self.mapSublistAlbum).prefix(limit))
     }
@@ -1296,10 +1311,11 @@ final class NeteaseMusicAPI {
             title: name,
             artist: artistNames?.isEmpty == false ? artistNames : "未知歌手",
             album: song.al?.name,
-            albumCoverURL: song.al?.picUrl,
+            albumCoverURL: neteaseCover(song.al?.picUrl, size: 500),
             duration: TimeInterval(song.dt ?? 0) / 1000,
             isVip: (song.fee ?? 0) == 1 || (song.fee ?? 0) == 4,
-            neteaseId: "\(id)"
+            neteaseId: "\(id)",
+            platformAlbumId: song.al?.id.map { "\($0)" }
         )
     }
 

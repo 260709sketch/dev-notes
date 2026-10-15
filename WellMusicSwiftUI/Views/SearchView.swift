@@ -166,8 +166,9 @@ struct SearchView: View {
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
         // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
         // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
+        // ⚠️ 不在 task 里 clear()：清空缓存标记会让「从详情页返回」也重新请求。
+        // load() 自带 loadedKey 守卫（同条件直接跳过），条件真变化时由它自己分流。
         .task(id: taskID) {
-            model.clear()
             await model.load(keyword: committedQuery)
         }
     }
@@ -344,9 +345,12 @@ struct SearchView: View {
     private func playlistCards(_ items: some Collection<WellPlaylistSummary>) -> some View {
         ForEach(Array(items)) { playlist in
             NavigationLink {
-                WellSearchDetailView(
-                    source: .playlist(id: playlist.id, platform: .netease, name: playlist.name),
-                    coverURL: playlist.coverURL)
+                // ★ 2026-10-15 用户：搜索页歌单详情改用「我的歌单」同款版式
+                //   （WellMyPlaylistDetailView：小封面 + 播放全部 + 歌曲行）。
+                WellMyPlaylistDetailView(
+                    source: .netease(id: playlist.id, name: playlist.name,
+                                     coverURL: playlist.coverURL,
+                                     creatorName: playlist.creatorName))
             } label: {
                 WellSearchCoverCard(coverURL: playlist.coverURL, title: playlist.name,
                                     subtitle: playlist.creatorName, playCount: playlist.playCount)

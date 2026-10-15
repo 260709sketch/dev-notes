@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// 「我的歌单」排序方式（设置项：`wellmusic.profile.playlistSort`）。
+enum WellPlaylistSort: String, CaseIterable, Identifiable {
+    case manual = "默认"
+    case name = "名称"
+    case trackCount = "歌曲数"
+    var id: String { rawValue }
+}
+
+/// 我的页横滑歌单的统一条目（本地自建 + 网易云账号歌单合并后排）。
+struct ProfilePlaylistItem: Identifiable {
+    let id: String
+    let name: String
+    let coverURL: String?
+    let subtitle: String
+    let source: WellMyPlaylistSource
+}
+
 /// 我的 Tab —— 四分组布局（用户 2026-10-15 截图 IMG_3974 样式）。
 ///
 /// 分组顺序（用户原话）：
@@ -22,6 +39,34 @@ struct ProfileView: View {
     @State private var favoriteAlbums: [WellAlbumSummary] = []
     /// 首屏异步数据（账号歌单 / 收藏专辑）是否仍在加载
     @State private var isLoadingContent = true
+    /// 歌单排序方式（与「我的歌单」页共用同一设置项）
+    @AppStorage("wellmusic.profile.playlistSort") private var playlistSortRaw: String = WellPlaylistSort.manual.rawValue
+
+    private var playlistSort: WellPlaylistSort {
+        WellPlaylistSort(rawValue: playlistSortRaw) ?? .manual
+    }
+
+    /// 合并后的歌单条目（本地 + 网易云，按排序方式输出）。
+    private var mergedPlaylists: [ProfilePlaylistItem] {
+        var items: [ProfilePlaylistItem] = []
+        for pl in appState.playlists {
+            items.append(ProfilePlaylistItem(
+                id: "local_\(pl.id.uuidString)", name: pl.name, coverURL: pl.coverURL,
+                subtitle: "\(pl.tracks.count) 首", source: .local(pl)))
+        }
+        for pl in neteasePlaylists {
+            items.append(ProfilePlaylistItem(
+                id: "ne_\(pl.id)", name: pl.name, coverURL: pl.coverURL,
+                subtitle: "\(pl.trackCount) 首 · 网易云",
+                source: .netease(id: pl.id, name: pl.name, coverURL: pl.coverURL, creatorName: "网易云音乐")))
+        }
+        switch playlistSort {
+        case .manual: return items
+        case .name: return items.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .trackCount:
+            return items.sorted { Int($0.subtitle.filter { $0.isNumber }) ?? 0 > Int($1.subtitle.filter { $0.isNumber }) ?? 0 }
+        }
+    }
 
     /// ⚠️ 性能铁律：不订阅 PlayerCore（20Hz 广播），只在点击时取单例发起播放。
     private var player: PlayerCore { PlayerCore.shared }
@@ -50,6 +95,11 @@ struct ProfileView: View {
             .navigationTitle("我的")
             .navigationBarTitleDisplayMode(.large)
             .task { await loadContent() }
+            // ★ 2026-10-15 用户：登录/退出网易云后，收藏专辑与账号歌单要跟着刷新
+            //   （原先只在进页 task 拉一次，登录后回来还是空 = 「不同步」的观感来源）。
+            .onChange(of: session.isLoggedIn) { _ in
+                Task { await loadContent() }
+            }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
@@ -109,7 +159,7 @@ struct ProfileView: View {
             Divider().padding(.leading, 54)
             entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
             Divider().padding(.leading, 54)
-            entryRow(icon: "heart.text.square", title: "我喜欢") { NeteaseLikedSongsView() }
+            entryRow(icon: "heart.text.square", title: "我喜欢的音乐") { NeteaseLikedSongsView() }
             Divider().padding(.leading, 54)
             // ★ 2026-10-15 用户：设置卡片融合到「听歌排行」分组里（原独立卡片）
             settingsEntryRow
@@ -181,34 +231,24 @@ struct ProfileView: View {
                 emptyRow("还没有歌单")
             } else {
                 WellShelf(title: "", rowHeight: 178, showsHeader: false) {
-                    ForEach(appState.playlists) { pl in
+                    ForEach(mergedPlaylists) { item in
                         NavigationLink {
-                            WellMyPlaylistDetailView(source: .local(pl))
+                            WellMyPlaylistDetailView(source: item.source)
                         } label: {
-                            playlistCard(name: pl.name, coverURL: pl.coverURL,
-                                         subtitle: "\(pl.tracks.count) 首")
+                            playlistCard(name: item.name, coverURL: item.coverURL,
+                                         subtitle: item.subtitle)
                         }
                         .buttonStyle(.plain)
                         // ★ 2026-10-15 用户：长按删除歌单（仅本地自建；网易云账号歌单不可删）
                         .contextMenu {
-                            Button(role: .destructive) {
-                                appState.playlists.removeAll { $0.id == pl.id }
-                            } label: {
-                                Label("删除歌单", systemImage: "trash")
+                            if case .local(let pl) = item.source {
+                                Button(role: .destructive) {
+                                    appState.playlists.removeAll { $0.id == pl.id }
+                                } label: {
+                                    Label("删除歌单", systemImage: "trash")
+                                }
                             }
                         }
-                    }
-                    ForEach(neteasePlaylists) { pl in
-                        NavigationLink {
-                            WellMyPlaylistDetailView(
-                                source: .netease(id: pl.id, name: pl.name,
-                                                 coverURL: pl.coverURL,
-                                                 creatorName: "网易云音乐"))
-                        } label: {
-                            playlistCard(name: pl.name, coverURL: pl.coverURL,
-                                         subtitle: "\(pl.trackCount) 首 · 网易云")
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -447,7 +487,7 @@ struct MyPlaylistsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(appState.playlists) { pl in
+                    ForEach(sortedLocalPlaylists) { pl in
                         NavigationLink {
                             WellMyPlaylistDetailView(source: .local(pl))
                         } label: {
@@ -456,7 +496,10 @@ struct MyPlaylistsView: View {
                         }
                     }
                     .onDelete { offsets in
-                        appState.playlists.remove(atOffsets: offsets)
+                        // 排序后删除要把 offsets 映射回原数组下标
+                        let sorted = sortedLocalPlaylists
+                        let idsToDelete = offsets.map { sorted[$0].id }
+                        appState.playlists.removeAll { idsToDelete.contains($0.id) }
                     }
                 }
             }
@@ -473,7 +516,7 @@ struct MyPlaylistsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(neteasePlaylists) { pl in
+                        ForEach(sortedNeteasePlaylists) { pl in
                             NavigationLink {
                                 WellMyPlaylistDetailView(
                                     source: .netease(id: pl.id, name: pl.name,
@@ -490,8 +533,49 @@ struct MyPlaylistsView: View {
         }
         .navigationTitle("我的歌单")
         .task { await loadNeteasePlaylists() }
+        // ★ 2026-10-15 用户：右上角新增「歌单排序」（与我的页第二分组共用同一排序设置）。
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Picker("排序方式", selection: $sortRaw) {
+                        ForEach(WellPlaylistSort.allCases) { sort in
+                            Text(sort.rawValue).tag(sort.rawValue)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+            }
+        }
         // ★ 2026-10-15 用户：原右上角「导入歌单 / 新建歌单」两个入口已合二为一，
         //   迁移到「设置 → 账号 → 导入歌单」（页内提供导入 + 新建），此处不再重复。
+    }
+
+    /// 排序方式（与「我的」页共用设置项 `wellmusic.profile.playlistSort`）。
+    @AppStorage("wellmusic.profile.playlistSort") private var sortRaw: String = WellPlaylistSort.manual.rawValue
+
+    private var sort: WellPlaylistSort { WellPlaylistSort(rawValue: sortRaw) ?? .manual }
+
+    /// 本地歌单（按排序方式）。
+    private var sortedLocalPlaylists: [Playlist] {
+        switch sort {
+        case .manual: return appState.playlists
+        case .name:
+            return appState.playlists.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .trackCount:
+            return appState.playlists.sorted { $0.tracks.count > $1.tracks.count }
+        }
+    }
+
+    /// 网易云账号歌单（按排序方式）。
+    private var sortedNeteasePlaylists: [NeteaseMusicAPI.UserPlaylistItem] {
+        switch sort {
+        case .manual: return neteasePlaylists
+        case .name:
+            return neteasePlaylists.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .trackCount:
+            return neteasePlaylists.sorted { $0.trackCount > $1.trackCount }
+        }
     }
 
     private func row(name: String, coverURL: String?, subtitle: String) -> some View {
@@ -560,7 +644,7 @@ struct NeteaseLikedSongsView: View {
             } else if failed {
                 tipView("暂时拿不到", "网络开小差了，退出页面再进试试")
             } else if tracks.isEmpty {
-                tipView("还没有喜欢的歌曲", "在网易云里给歌曲点红心后会出现在这里")
+                tipView("还没有喜欢的音乐", "在网易云里给歌曲点红心后会出现在这里")
             } else {
                 // 复用「我的歌单」截图版式（小封面 + 红「播放全部」+ 歌曲列表）。
                 // 标题由 WellMyPlaylistDetailView 统一留空（歌单页样式不含导航栏标题）。
@@ -707,18 +791,17 @@ struct NeteasePlayRecordView: View {
                 } label: {
                     HStack(spacing: 12) {
                         Text("\(index + 1)")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(index < 3 ? AppTheme.accent : Color.secondary)
-                            .frame(width: 26)
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 28)
 
                         ArtworkView(url: record.song.albumCoverURL,
-                                    size: 46,
+                                    size: 48,
                                     cornerRadius: 6)
 
-                        VStack(alignment: .leading, spacing: 3) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(record.song.title)
-                                .font(.system(size: 15.5, weight: .medium))
+                                .font(.system(size: 17, weight: .medium))
                                 .lineLimit(1)
                             Text(record.song.artist ?? "未知艺术家")
                                 .font(.system(size: 12.5))

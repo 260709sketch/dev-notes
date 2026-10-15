@@ -73,7 +73,8 @@ final class KugouMusicAPI {
             ?? (dict["SongName"] as? String) ?? (dict["name"] as? String)
             ?? (dict["title"] as? String) ?? Self.titleFromFilename(dict["filename"] as? String)
         let albumName = (dict["album_name"] as? String) ?? (dict["albumname"] as? String)
-            ?? (dict["AlbumName"] as? String) ?? (dict["album"] as? String) ?? "未知专辑"
+            ?? (dict["AlbumName"] as? String) ?? (dict["Album"] as? String)
+            ?? (dict["album"] as? String) ?? ""
         var artist = (dict["artist_name"] as? String) ?? (dict["singername"] as? String)
             ?? (dict["SingerName"] as? String) ?? (dict["author"] as? String) ?? ""
         if artist.isEmpty, let fallbackSinger, !fallbackSinger.isEmpty, fallbackSinger != "未知歌手" {
@@ -109,7 +110,8 @@ final class KugouMusicAPI {
             album: albumName,
             albumCoverURL: Self.coverURL(from: dict, albumId: albumId),
             duration: duration,
-            kugouHash: hash
+            kugouHash: hash,
+            platformAlbumId: albumId.isEmpty ? nil : albumId
         )
     }
 

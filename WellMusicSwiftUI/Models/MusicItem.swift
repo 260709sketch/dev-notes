@@ -52,6 +52,9 @@ struct MusicItem: Identifiable, Codable, Hashable {
     var neteaseId: String?
     var kugouHash: String?
     var kuwoRid: String?
+    /// 所属专辑的平台 id（网易云数字 id / 酷狗 AlbumID / QQ albummid）。
+    /// 播放页跳专辑详情用它 —— 缺失时会退化成哈希假 id，导致进错专辑。
+    var platformAlbumId: String?
 
     /// 通用 id：不同平台用各自主 id
     var platformId: String? {
@@ -84,6 +87,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
          neteaseId: String? = nil,
          kugouHash: String? = nil,
          kuwoRid: String? = nil,
+         platformAlbumId: String? = nil,
          playURL: String? = nil,
          localFilePath: String? = nil) {
         self.source = source
@@ -99,6 +103,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
         self.neteaseId = neteaseId
         self.kugouHash = kugouHash
         self.kuwoRid = kuwoRid
+        self.platformAlbumId = platformAlbumId
         self.playURL = playURL
         self.localFilePath = localFilePath
     }

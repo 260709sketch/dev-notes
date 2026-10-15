@@ -40,7 +40,6 @@ struct DiscoverView: View {
                     dailySection
                     recommendedSection
                     newAlbumsSection
-                    toplistsSection
                     artistsSection
                 }
 
@@ -70,21 +69,20 @@ struct DiscoverView: View {
         isLoading = true
         errorMessage = nil
 
+        // ★ 2026-10-15 用户：发现页移除排行榜（不再请求 toplists，少一次网络往返）
         async let dailyTask = try? NeteaseMusicAPI.shared.dailyRecommendSongs()
         async let recsTask = try? NeteaseMusicAPI.shared.personalizedPlaylists(limit: 30)
         async let albumsTask = try? NeteaseMusicAPI.shared.newAlbums(limit: 20)
-        async let topsTask = try? NeteaseMusicAPI.shared.toplists()
         async let artistsTask = loadArtists()
 
-        let (daily, recs, albums, tops, arts) = await (dailyTask, recsTask, albumsTask, topsTask, artistsTask)
+        let (daily, recs, albums, arts) = await (dailyTask, recsTask, albumsTask, artistsTask)
         dailySongs = daily ?? []
         recommendedPlaylists = recs ?? []
         newAlbums = albums ?? []
-        toplists = tops ?? []
         artists = arts ?? []
         isLoading = false
 
-        if dailySongs.isEmpty && recommendedPlaylists.isEmpty && newAlbums.isEmpty && toplists.isEmpty && artists.isEmpty {
+        if dailySongs.isEmpty && recommendedPlaylists.isEmpty && newAlbums.isEmpty && artists.isEmpty {
             errorMessage = "内容加载失败，请下拉重试"
         }
     }

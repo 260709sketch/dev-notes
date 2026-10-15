@@ -62,6 +62,17 @@ struct SettingsView: View {
                     Toggle("启动恢复上次播放", isOn: $settings.restoreLastPlayback)
                     // 预加载下一首（2026-10-14 用户要求提供开关）
                     Toggle("预加载下一首", isOn: $settings.preloadNextEnabled)
+                    // 动态封面开关（2026-10-15 用户：可自选是否打开；
+                    // 未登录网易云时自动隐藏 —— 动态封面数据来自账号收藏）
+                    if NeteaseSession.shared.isLoggedIn {
+                        Toggle("动态封面", isOn: $settings.dynamicCoverEnabled)
+                    }
+                    // 均衡器入口（2026-10-15 用户）
+                    NavigationLink {
+                        WellEqualizerView()
+                    } label: {
+                        Label("均衡器", systemImage: "slider.vertical.3")
+                    }
                 }
 
                 Section("自定义音源") {
