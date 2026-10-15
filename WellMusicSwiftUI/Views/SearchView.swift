@@ -552,7 +552,12 @@ struct WellMVPlayerView: View {
                     Spacer()
                     Button {
                         player?.pause()
-                        dismiss()
+                        // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
+                        //    onDisappear 里再改会晚一拍 —— 「离开后一直横屏」的根因）
+                        restorePortrait()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            dismiss()
+                        }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 14, weight: .bold))
@@ -570,8 +575,7 @@ struct WellMVPlayerView: View {
         .statusBarHidden()
         .task {
             // ★ 2026-10-15 用户：MV 自动横屏（放开 App 方向锁 + 请求横屏）
-            WellMusicAppDelegate.orientationLock = .landscape
-            Self.requestOrientation(.landscape)
+            enterLandscape()
             // 播放 MV 时暂停后台音乐
             PlayerCore.shared.pause()
             // mvURL 返回 String?，try? 会再包一层 → ?? nil 展平
@@ -587,17 +591,37 @@ struct WellMVPlayerView: View {
         .onDisappear {
             player?.pause()
             player = nil
-            // 退出 MV 页恢复全局竖屏
-            WellMusicAppDelegate.orientationLock = .portrait
-            Self.requestOrientation(.portrait)
+            restorePortrait()   // 双保险（点 X 之外的所有关闭路径）
         }
     }
 
-    /// 请求指定方向（iOS 16+ 的 UIWindowScene API）。
-    private static func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+    // MARK: 方向控制
+
+    private func enterLandscape() {
+        WellMusicAppDelegate.orientationLock = .landscape
+        Self.applyOrientation(.landscape)
+    }
+
+    private func restorePortrait() {
+        WellMusicAppDelegate.orientationLock = .portrait
+        Self.applyOrientation(.portrait)
+    }
+
+    /// 应用方向：请求几何更新 + 通知系统重新评估支持方向。
+    /// ⚠️ 只改 `orientationLock` 不够：iOS 16+ 需要显式 requestGeometryUpdate；
+    ///    同时给当前顶层控制器 setNeedsUpdateOfSupportedInterfaceOrientations，
+    ///    让 fullScreenCover 呈现层也按新方向重新评估（否则一直横屏）。
+    private static func applyOrientation(_ mask: UIInterfaceOrientationMask) {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
         scene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        if #available(iOS 16.0, *) {
+            let root = scene?.keyWindow?.rootViewController
+            root?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            var top = root
+            while let presented = top?.presentedViewController { top = presented }
+            top?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
     }
 }
 
