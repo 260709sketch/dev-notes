@@ -251,8 +251,8 @@ struct ProfileView: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
                 Group {
-                    if let coverURL, !coverURL.isEmpty {
-                        WellAsyncImage(url: coverURL) {
+                    if let coverURL, !coverURL.isEmpty, let cover = URL(string: coverURL) {
+                        WellAsyncImage(url: cover) {
                             ZStack {
                                 LinearGradient(colors: [Color(white: 0.25), Color(white: 0.12)],
                                                startPoint: .top, endPoint: .bottom)
