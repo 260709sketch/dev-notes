@@ -595,7 +595,7 @@ final class NeteaseMusicAPI {
 
     /// 我的云盘歌曲列表（weapi `/api/v1/cloud/get`）。
     ///
-    /// ⚠️ 真实响应结构（2026-10-15 对齐 Kumone 已知可用实现）：`data[]` 条目里
+    /// ⚠️ 真实响应结构（2026-10-15 实测）：`data[]` 条目里
     /// **没有 `song` 字段**，完整曲目在 `simpleSong`；未匹配到曲库的上传歌只有
     /// 条目级扁平字段 `songId / songName / artist`，或整包嵌在 `privateCloud` 里。
     /// **播放 id 一律取条目自己的 `songId`**（lx 音源与官方通道都用它当 songmid）——
@@ -630,7 +630,7 @@ final class NeteaseMusicAPI {
                 title: name,
                 artist: artist,
                 album: song?.al?.name,
-                albumCoverURL: neteaseCover(song?.al?.picUrl, size: 500),
+                albumCoverURL: Self.neteaseCover(song?.al?.picUrl, size: 500),
                 duration: TimeInterval(song?.dt ?? 0) / 1000,
                 isVip: (song?.fee ?? 0) == 1 || (song?.fee ?? 0) == 4,
                 neteaseId: "\(rawId)",
@@ -649,7 +649,7 @@ final class NeteaseMusicAPI {
         }
 
         /// 自定义解码：`count` 等配额字段可能是数字也可能是数字字符串
-        /// （Kumone 踩过：字面量类型不稳定会让**整条响应**解码失败 → 列表凭空消失）。
+        /// （字面量类型不稳定会让**整条响应**解码失败 → 列表凭空消失）。
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             code = try? c.decode(Int.self, forKey: .code)
@@ -674,7 +674,7 @@ final class NeteaseMusicAPI {
         }
     }
 
-    /// 我喜欢的音乐（Kumone 同款链路）：红心 id 列表（weapi `song/like/get`）
+    /// 我喜欢的音乐：红心 id 列表（weapi `/api/song/like/get`）
     /// + 分块详情（明文 `api/song/detail`）。
     func likedSongs(uid: String, limit: Int = 2000) async throws -> [MusicItem] {
         let resp: LikelistResponse = try await Self.weapiRequest(
@@ -1314,7 +1314,7 @@ final class NeteaseMusicAPI {
 
     /// `/api/album/sublist` 响应。
     ///
-    /// ⚠️ 2026-10-15 定案（对齐 Kumone 已知可用实现）：**`data` 直接是专辑数组**
+    /// ⚠️ 2026-10-15 定案（接口实测）：**`data` 直接是专辑数组**
     /// （`{code, count, data: [album…]}`）。历史版本把 `data` 建模成包裹对象，
     /// 数组灌进结构体 → 整个响应解码失败 → weapi/明文/eapi 三通道**全部**倒在
     /// 解码上（表现为「修了几遍还是拿不到收藏专辑」）。现在 `data` 双形态兼容：
@@ -1388,8 +1388,8 @@ final class NeteaseMusicAPI {
 
     /// 收藏的专辑（`api/album/sublist`，需登录 Cookie）。
     ///
-    /// ⚠️ 2026-10-15：真实响应是 `{code, count, data: [album…]}`（`data` 直接是数组，
-    /// 对齐 Kumone 已知可用实现）。此前把 `data` 建模成包裹对象，导致**整条响应
+    /// ⚠️ 2026-10-15：真实响应是 `{code, count, data: [album…]}`（`data` 直接是数组）。
+    /// 此前把 `data` 建模成包裹对象，导致**整条响应
     /// 解码失败**、三通道全空 —— 这就是「修了几遍还是拿不到」的根因。
     /// 响应结构见 `AlbumSublistResponse`（数组/包裹双形态兼容 + 字段容错）。
     ///
