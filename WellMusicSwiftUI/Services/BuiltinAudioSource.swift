@@ -43,6 +43,18 @@ enum BuiltinAudioSource {
         let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
         let url = "https://music-api.gdstudio.xyz/api.php?types=url"
             + "&source=\(source)&id=\(encodedId)&br=\(brValue(for: quality))"
+
+        // ⚠️ GD 服务瞬时 503 较常见（限流）：重试一次、间隔 0.6s，显著提升命中率。
+        for attempt in 0..<2 {
+            if let resolved = await fetchGDStudio(url) { return resolved }
+            if attempt == 0 {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+        }
+        return nil
+    }
+
+    private static func fetchGDStudio(_ url: String) async -> Resolved? {
         guard let resp = try? await NetworkClient.shared.get(url, headers: [
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
         ]),

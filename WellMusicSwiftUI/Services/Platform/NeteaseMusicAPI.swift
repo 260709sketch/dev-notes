@@ -1268,33 +1268,33 @@ final class NeteaseMusicAPI {
         // 通道 1：weapi（登录态首选，与客户端一致）
         do {
             let albums = try await favoritedAlbumsWeapi(limit: limit, offset: offset)
-            debugParts.append("weapi://(albums.count)")
+            debugParts.append("weapi:" + String(albums.count))
             if !albums.isEmpty {
                 Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
                 return albums
             }
         } catch {
-            debugParts.append("weapi://(Self.shortDebug(error))")
+            debugParts.append("weapi:" + Self.shortDebug(error))
         }
         // 通道 2：明文分页
         do {
             let albums = try await favoritedAlbumsPlain(limit: limit, offset: offset)
-            debugParts.append("plain://(albums.count)")
+            debugParts.append("plain:" + String(albums.count))
             if !albums.isEmpty {
                 Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
                 return albums
             }
         } catch {
-            debugParts.append("plain://(Self.shortDebug(error))")
+            debugParts.append("plain:" + Self.shortDebug(error))
         }
         // 通道 3：eapi
         do {
             let albums = try await favoritedAlbumsEapi(limit: limit, offset: offset)
-            debugParts.append("eapi://(albums.count)")
+            debugParts.append("eapi:" + String(albums.count))
             Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
             return albums
         } catch {
-            debugParts.append("eapi://(Self.shortDebug(error))")
+            debugParts.append("eapi:" + Self.shortDebug(error))
             Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
             throw error
         }
@@ -1307,12 +1307,26 @@ final class NeteaseMusicAPI {
     }
 
     private func favoritedAlbumsWeapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
-        let resp: AlbumSublistResponse = try await Self.weapiRequest(
-            "/api/album/sublist",
-            params: ["limit": limit, "offset": offset, "total": true],
-            type: AlbumSublistResponse.self)
-        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
-        return entries.compactMap(Self.mapSublistAlbum)
+        // ⚠️ 该接口单页上限 100：直接把 500 传进去可能被服务端拒绝（返回空）。
+        //    改为按 100 分页循环拼满（最多 20 页 / 2000 张，防极端值）。
+        var all: [WellAlbumSummary] = []
+        var current = offset
+        var pages = 0
+        while all.count < limit, pages < 20 {
+            let pageSize = min(100, limit - all.count)
+            let resp: AlbumSublistResponse = try await Self.weapiRequest(
+                "/api/album/sublist",
+                params: ["limit": pageSize, "offset": current, "total": true],
+                type: AlbumSublistResponse.self)
+            let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+            let page = entries.compactMap(Self.mapSublistAlbum)
+            if page.isEmpty { break }
+            all.append(contentsOf: page)
+            current += page.count
+            pages += 1
+            if page.count < pageSize { break }
+        }
+        return all
     }
 
     private func favoritedAlbumsPlain(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {

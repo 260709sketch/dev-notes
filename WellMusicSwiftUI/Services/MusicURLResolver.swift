@@ -87,8 +87,9 @@ final class MusicURLResolver {
                 fromCustomSource: unlocked.sourceName,
                 isFallbackSource: true)
         }
+        // 解析源失败 → 官方通道（可能仅试听）：提示区分，便于用户理解「30 秒」的来源
         let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
-        await ToastCenter.shared.show("使用内置音源播放")
+        await ToastCenter.shared.show("内置音源解析失败，已用官方音源")
         return ResolvedPlayback(
             url: url,
             headers: WellLXPlaybackHeaders.requestHeaders(
