@@ -285,6 +285,7 @@ struct SearchView: View {
         case .artists: return model.result.artists.isEmpty
         case .albums: return model.result.albums.isEmpty
         case .playlists: return model.result.playlists.isEmpty
+        case .mvs: return model.result.mvs.isEmpty
         }
     }
 
