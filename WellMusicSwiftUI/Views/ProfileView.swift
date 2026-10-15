@@ -675,6 +675,14 @@ struct NeteaseLikedSongsView: View {
             isLoading = false
             return
         }
+        // 通道 1：红心 id 列表 + 分块详情（登录态稳定，优先）
+        if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
+            tracks = songs
+            coverURL = songs.first?.albumCoverURL
+            isLoading = false
+            return
+        }
+        // 通道 2：歌单详情（原通道兜底）
         do {
             let imported = try await NeteaseMusicAPI.shared.playlistForImport(id: "\(uid)")
             tracks = imported.tracks

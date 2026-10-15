@@ -25,12 +25,16 @@ struct NowPlayingDestination: Hashable {
 }
 
 extension MusicSource {
-    /// 桥接层的 `sourcePlatform` 短码（"tx"/"kg"/"kw"）→ 统一枚举。
+    /// 桥接层 `sourcePlatform` → 统一枚举。
+    ///
+    /// ⚠️ 必须同时认两套写法：桥接填充用的是 `MusicSource.rawValue`（"qq"/"kugou"/…），
+    /// 而历史注释/参考是短码（"tx"/"kg"/…）。只认短码时所有平台都会落到
+    /// `default` → 网易云（表现为「点专辑进错平台」「分享链接全是网易云」）。
     static func fromPlatformTag(_ tag: String?) -> MusicSource {
         switch tag {
-        case "tx": return .qq
-        case "kg": return .kugou
-        case "kw": return .kuwo
+        case "tx", "qq": return .qq
+        case "kg", "kugou": return .kugou
+        case "kw", "kuwo": return .kuwo
         case "lx": return .lx
         case "wy", "netease": return .netease
         default: return .netease

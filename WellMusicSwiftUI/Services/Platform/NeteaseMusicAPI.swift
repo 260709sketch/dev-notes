@@ -69,6 +69,91 @@ final class NeteaseMusicAPI {
         return decoded
     }
 
+    // MARK: 通道（weapi / 加密请求，登录态接口首选）
+
+    /// weapi POST（`https://music.163.com/weapi/…`）。
+    ///
+    /// - path 一律以 `/api/` 开头：内部去掉 `/api` 前缀拼到 `/weapi` 之后（与客户端一致）。
+    /// - 加密：`NeteaseWeapi.weapi`（AES-CBC 双层 + **密钥反转后的无填充 RSA**）。
+    /// - Cookie = 设备指纹（首次自动生成并持久化）+ 登录票据；payload 的 `csrf_token`
+    ///   与 Cookie 里的 `__csrf` 保持一致。
+    private static func weapiRequest<T: Decodable>(_ path: String,
+                                                   params: [String: Any],
+                                                   type: T.Type) async throws -> T {
+        let suffix = path.hasPrefix("/api") ? String(path.dropFirst(4)) : path
+        var payload = params
+        if payload["csrf_token"] == nil {
+            payload["csrf_token"] = NeteaseSession.shared.cookie(named: "__csrf") ?? ""
+        }
+        let enc = NeteaseWeapi.weapi(payload)
+        guard let paramsValue = enc["params"], !paramsValue.isEmpty,
+              let encSecKey = enc["encSecKey"], !encSecKey.isEmpty else {
+            throw NetworkClient.NetworkError.noData
+        }
+        let form = "params=\(formEncode(paramsValue))&encSecKey=\(formEncode(encSecKey))"
+        let resp = try await NetworkClient.shared.postRaw(
+            "https://music.163.com/weapi\(suffix)",
+            body: Data(form.utf8),
+            contentType: "application/x-www-form-urlencoded",
+            headers: [
+                "Referer": "https://music.163.com/",
+                "Origin": "https://music.163.com",
+                "Cookie": neteaseWebCookieHeader(),
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            ]
+        )
+        if let setCookie = headerValue(resp.headers, "Set-Cookie") {
+            NeteaseSession.shared.absorb(setCookieHeaders: [setCookie])
+        }
+        guard (200..<300).contains(resp.statusCode) else {
+            throw NetworkClient.NetworkError.badStatus(resp.statusCode)
+        }
+        guard let decoded = NetworkClient.decode(type, from: resp.data) else {
+            throw NetworkClient.NetworkError.noData
+        }
+        return decoded
+    }
+
+    /// weapi 请求的完整 Cookie：设备指纹（持久化）+ 登录票据。
+    /// ⚠️ 设备 cookie 缺失时服务端可能直接忽略登录态请求（返回空数据）。
+    private static func neteaseWebCookieHeader() -> String {
+        let defaults = UserDefaults.standard
+        func deviceValue(_ key: String, generate: () -> String) -> String {
+            if let value = defaults.string(forKey: key), !value.isEmpty { return value }
+            let value = generate()
+            defaults.set(value, forKey: key)
+            return value
+        }
+        let nuid = deviceValue("netease.device.nuid") { randomHex(length: 32) }
+        let deviceId = deviceValue("netease.device.deviceId") { randomHex(length: 26) }
+        let wnMcid = deviceValue("netease.device.wnmcid") {
+            let random = String((0..<6).compactMap { _ in "abcdefghijklmnopqrstuvwxyz".randomElement() })
+            return "\(random).\(Int(Date().timeIntervalSince1970 * 1000)).01.0"
+        }
+        let ts = String(Int(Date().timeIntervalSince1970 * 1000))
+        var parts = [
+            "__remember_me=true",
+            "ntes_kaola_ad=1",
+            "_ntes_nuid=\(nuid)",
+            "_ntes_nnid=\(nuid),\(ts)",
+            "WNMCID=\(wnMcid)",
+            "WEVNSM=1.0.0",
+            "deviceId=\(deviceId)",
+            "os=pc",
+            "channel=netease",
+            "appver=3.1.17.204416",
+            "NMTID=\(randomHex(length: 16))",
+        ]
+        let sessionCookie = NeteaseSession.shared.cookieHeader
+        if !sessionCookie.isEmpty { parts.append(sessionCookie) }
+        return parts.joined(separator: "; ")
+    }
+
+    private static func randomHex(length: Int) -> String {
+        let chars = "0123456789abcdef"
+        return String((0..<length).compactMap { _ in chars.randomElement() })
+    }
+
     // MARK: 通道（eapi / interface.music.163.com）
 
     /// eapi POST（`interface.music.163.com/eapi<path>`，params=hex 表单）。
@@ -395,13 +480,49 @@ final class NeteaseMusicAPI {
         var msg: String?
     }
 
+    /// 我喜欢的音乐（Kumone 同款链路）：红心 id 列表（weapi `song/like/get`）
+    /// + 分块详情（明文 `api/song/detail`）。
+    func likedSongs(uid: String, limit: Int = 2000) async throws -> [MusicItem] {
+        let resp: LikelistResponse = try await Self.weapiRequest(
+            "/api/song/like/get", params: ["uid": uid], type: LikelistResponse.self)
+        let ids = (resp.ids ?? []).prefix(limit).map(String.init)
+        guard !ids.isEmpty else { return [] }
+        var out: [MusicItem] = []
+        var index = 0
+        while index < ids.count {
+            let chunk = Array(ids[index..<min(index + 500, ids.count)])
+            if let songs = try? await songDetails(ids: chunk) {
+                out.append(contentsOf: songs)
+            }
+            index += 500
+        }
+        return out
+    }
+
+    /// 歌曲详情（明文 `api/song/detail`，`ids` 形如 `[1,2,3]`）。
+    func songDetails(ids: [String]) async throws -> [MusicItem] {
+        guard !ids.isEmpty else { return [] }
+        var comps = URLComponents(string: "https://music.163.com/api/song/detail")!
+        comps.queryItems = [
+            URLQueryItem(name: "ids", value: "[\(ids.joined(separator: ","))]"),
+            URLQueryItem(name: "csrf_token", value: ""),
+        ]
+        let data = try await rawGet(comps.url!.absoluteString)
+        let resp = try JSONDecoder().decode(SongsDetailResponse.self, from: data)
+        return (resp.songs ?? []).compactMap(Self.mapSong)
+    }
+
+    private struct LikelistResponse: Decodable {
+        var ids: [Int]?
+    }
+
     /// 红心 / 取消红心一首歌（同步网易云「我喜欢的音乐」）。
     ///
-    /// 通道：eapi `/api/radio/like`（alg=itembased，与桌面/移动客户端同款）。
-    /// ⚠️ query 串必须拼在 path 里一起进 eapi 加密体，params 里只放表单字段。
+    /// 通道：weapi `/api/radio/like`（alg=itembased，与桌面客户端一致）。
+    /// ⚠️ query 串拼在 path 里一起进加密体，params 里只放表单字段。
     func likeTrack(id: String, like: Bool) async throws {
         let params: [String: Any] = ["trackId": id, "like": like]
-        let resp: CodeResponse = try await Self.eapiRequest(
+        let resp: CodeResponse = try await Self.weapiRequest(
             "/api/radio/like?alg=itembased&trackId=\(id)&time=3",
             params: params,
             type: CodeResponse.self)
@@ -1027,10 +1148,25 @@ final class NeteaseMusicAPI {
     /// ⚠️ 明文通道单页只稳定返回 25 条，limit 传大值会被截断 —— 内部按 25/页循环拉齐；
     /// 明文整体失败时回退 eapi 通道（登录态强绑定接口，与听歌排行同一套通道）。
     func favoritedAlbums(limit: Int = 500, offset: Int = 0) async throws -> [WellAlbumSummary] {
+        // 通道 1：weapi（登录态首选，与客户端一致）
+        if let albums = try? await favoritedAlbumsWeapi(limit: limit, offset: offset), !albums.isEmpty {
+            return albums
+        }
+        // 通道 2：明文分页
         if let albums = try? await favoritedAlbumsPlain(limit: limit, offset: offset), !albums.isEmpty {
             return albums
         }
+        // 通道 3：eapi
         return try await favoritedAlbumsEapi(limit: limit, offset: offset)
+    }
+
+    private func favoritedAlbumsWeapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
+        let resp: AlbumSublistResponse = try await Self.weapiRequest(
+            "/api/album/sublist",
+            params: ["limit": limit, "offset": offset, "total": true],
+            type: AlbumSublistResponse.self)
+        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+        return entries.compactMap(Self.mapSublistAlbum)
     }
 
     private func favoritedAlbumsPlain(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
@@ -1054,7 +1190,7 @@ final class NeteaseMusicAPI {
     private func favoritedAlbumsEapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
         let params: [String: Any] = ["limit": min(limit, 100), "offset": offset, "total": true]
         let resp: AlbumSublistResponse = try await Self.eapiRequest(
-            "/album/sublist", params: params, type: AlbumSublistResponse.self)
+            "/api/album/sublist", params: params, type: AlbumSublistResponse.self)
         let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
         return Array(entries.compactMap(Self.mapSublistAlbum).prefix(limit))
     }

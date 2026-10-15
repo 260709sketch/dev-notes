@@ -354,17 +354,17 @@ struct AppleMusicPlayerView: View {
     }
 
     /// 当前曲目的平台分享链接（分享入口用）。
-    /// ⚠️ 必须用 `platformSongId`（平台侧真实 id）：`t.id` 是本地稳定哈希，
-    /// 拼出来的网易云链接会指向不存在的歌。
+    /// ⚠️ 平台判断走 `MusicSource.fromPlatformTag`（两套 tag 都认）；
+    /// 用 `platformSongId`（平台侧真实 id）—— `t.id` 是本地稳定哈希，不能用。
     private var trackShareLink: String? {
-        guard let t = track else { return nil }
-        switch t.sourcePlatform {
-        case "tx":
-            return "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
-        case "kg":
-            return "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
+        guard let t = track, let songId = t.platformSongId, !songId.isEmpty else { return nil }
+        switch MusicSource.fromPlatformTag(t.sourcePlatform) {
+        case .qq:
+            return "https://y.qq.com/n/ryqq/songDetail/\(songId)"
+        case .kugou:
+            return "https://www.kugou.com/song/#hash=\(songId)"
         default:
-            return "https://music.163.com/#/song?id=\(t.platformSongId ?? "\(t.id)")"
+            return "https://music.163.com/#/song?id=\(songId)"
         }
     }
 
