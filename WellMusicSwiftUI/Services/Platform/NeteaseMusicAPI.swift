@@ -491,7 +491,7 @@ final class NeteaseMusicAPI {
             return WellMVSummary(
                 id: "\(id)",
                 name: mv.name ?? "",
-                coverURL: neteaseCover(mv.cover, size: 500),
+                coverURL: Self.neteaseCover(mv.cover, size: 500),
                 artistName: mv.artistName,
                 duration: TimeInterval(mv.duration ?? 0) / 1000,
                 playCount: mv.playCount ?? 0,
