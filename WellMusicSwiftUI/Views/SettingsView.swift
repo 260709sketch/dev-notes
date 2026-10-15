@@ -9,6 +9,11 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var lxStore = WellLXSourceStore.shared
+    /// TTML 设置（UserDefaults 直读，开关默认开）
+    @State private var ttmlEnabled: Bool =
+        (UserDefaults.standard.object(forKey: AmllTTMLService.enabledKey) as? Bool) ?? true
+    @State private var ttmlServer: String =
+        UserDefaults.standard.string(forKey: AmllTTMLService.serverKey) ?? ""
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
@@ -95,6 +100,36 @@ struct SettingsView: View {
                     }
                 }
 
+                // ★ 2026-10-15 用户：在线 TTML 歌词（AMLL TTML DB）开关与地址配置
+                Section {
+                    Toggle("启用在线 TTML 歌词", isOn: Binding(
+                        get: { ttmlEnabled },
+                        set: {
+                            ttmlEnabled = $0
+                            UserDefaults.standard.set($0, forKey: AmllTTMLService.enabledKey)
+                        }
+                    ))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("AMLL TTML DB 地址").font(.system(size: 15))
+                        TextField("含 %p 与 %s 的 URL 模板", text: Binding(
+                            get: { ttmlServer },
+                            set: {
+                                ttmlServer = $0
+                                UserDefaults.standard.set($0, forKey: AmllTTMLService.serverKey)
+                            }
+                        ))
+                        .font(.system(size: 13).monospaced())
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    }
+                } header: {
+                    Text("歌词")
+                } footer: {
+                    Text("开启后，播放歌曲时自动从 AMLL TTML DB 获取逐字歌词（优先于平台歌词）。地址模板中的 %p 会被替换为平台目录（网易云 ncm-lyrics / QQ qq-lyrics），%s 替换为歌曲 id；留空使用默认地址。")
+                        .font(.system(size: 12))
+                }
+
                 Section("界面") {
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in
@@ -133,6 +168,14 @@ struct SettingsView: View {
                         //    所以「靠下」的有效行程约 42pt（再往下会被屏幕底边裁掉）；
                         //    「靠上」100pt 完全有效（届时距底 ≈142pt）。
                         Slider(value: $settings.tabBarBottomOffset, in: -100...100, step: 2)
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        WellStorageView()
+                    } label: {
+                        Label("存储与备份", systemImage: "externaldrive")
                     }
                 }
 
