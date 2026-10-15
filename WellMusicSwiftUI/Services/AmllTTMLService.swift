@@ -303,7 +303,10 @@ enum TTMLParser {
                     namespaceURI: String?, qualifiedName qName: String?) {
             if elementName == "span", let text = spanText {
                 if spanIsTranslation {
-                    currentLine?.translation = (currentLine?.translation ?? "") + text
+                    // 先读后写：`currentLine?.translation = (currentLine?.translation ?? "") + text`
+                    // 会把读写叠在同一表达式里，触发「overlapping accesses」编译错误
+                    let existing = currentLine?.translation ?? ""
+                    currentLine?.translation = existing + text
                 } else if !spanIsBackground, !text.isEmpty {
                     let start = spanStart > 0 ? spanStart : (currentLine?.begin ?? 0)
                     let end = spanEnd > 0 ? spanEnd : start + 0.001
