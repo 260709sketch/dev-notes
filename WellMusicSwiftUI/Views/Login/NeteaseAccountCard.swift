@@ -107,9 +107,11 @@ struct NeteaseAccountCard: View {
                     Text(account.nickname)
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
-                    if let badge = vipBadge(vipType: account.vipType) {
-                        badge
-                    }
+                    // ⚠️ vipBadge 是 @ViewBuilder 函数、返回非 Optional 的 some View
+                    //   （无 VIP 时产出 EmptyView）—— 直接调用，别用 if let 绑定
+                    //   （2026-10-16 CI：「Initializer for conditional binding must
+                    //   have Optional type, not 'some View'」）。
+                    vipBadge(vipType: account.vipType)
                 }
                 Text("网易云音乐已登录")
                     .font(.system(size: 12))
