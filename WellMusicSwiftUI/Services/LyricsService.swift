@@ -1,4 +1,5 @@
 import Foundation
+import Compression
 
 /// 歌词服务：按「歌词来源」优先取词 + 逐行/逐字解析 + 单曲缓存（防重复拉取）
 @MainActor
@@ -115,7 +116,11 @@ final class LyricsService {
         // QQ 的 LRC 是两位小数（百分秒）且带 [offset:]，必须走 `parseLRCWithMeta`。
         let parsedLRC = LyricParser.parseLRCWithMeta(lrcText)
         guard !parsedLRC.lines.isEmpty else { return nil }
-        let lrc = parsedLRC.lines
+        var lrc = parsedLRC.lines
+        // 翻译：同接口的 `trans` 字段（有翻译的歌曲才有；明文 LRC，与 lyric 时间轴一致）
+        if let transText = json["trans"] as? String, !transText.isEmpty {
+            LyricParser.mergeTranslation(&lrc, translation: transText, offsetMs: parsedLRC.offsetMs)
+        }
         var word: [WordLyricLine]?
         // 逐字：QQ 的逐字是 **QRC**（hex 加密，3DES+zlib），走
         // `GetPlayLyricInfo qrc=1` 拉取（无需登录）。旧接口的 `yrc` 字段永远缺席。
@@ -154,34 +159,70 @@ final class LyricsService {
         return LyricResult(lrc: lrc, wordLyric: word, source: .netease)
     }
 
-    // MARK: 酷狗（lyrics.kugou search + download）
+    // MARK: 酷狗（lyrics.kugou search + download，支持 KRC 逐字）
 
     private func fetchKugou(item: MusicItem) async throws -> LyricResult? {
         guard let hash = item.kugouHash ?? item.platformId else { return nil }
         let keyword = "\(item.title) \(item.artist ?? "")"
-        let searchURL = "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&" +
-            "keyword=\(kugouEncode(keyword))&duration=\(Int(item.duration))"
-        let searchResp = try await NetworkClient.shared.get(searchURL, headers: [
-            "Referer": "https://www.kugou.com/",
-        ])
-        guard let searchJSON = NetworkClient.jsonObject(searchResp.data),
-              let candidates = searchJSON["candidates"] as? [[String: Any]],
-              let first = candidates.first,
-              let lrcID = first["id"] as? String,
-              let accessKey = first["accesskey"] as? String else {
+        // 搜索通道：hash 优先（精确到音频文件），失败再退回关键词。
+        var candidate: (id: String, accessKey: String)?
+        let hashURL = "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&" +
+            "hash=\(hash.uppercased())&duration=\(Int(item.duration * 1000))"
+        if let searchJSON = await lyricSearchJSON(hashURL),
+           let first = (searchJSON["candidates"] as? [[String: Any]])?.first,
+           let lrcID = first["id"] as? String,
+           let accessKey = first["accesskey"] as? String {
+            candidate = (lrcID, accessKey)
+        } else {
+            let kwURL = "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&" +
+                "keyword=\(kugouEncode(keyword))&duration=\(Int(item.duration * 1000))"
+            if let searchJSON = await lyricSearchJSON(kwURL),
+               let first = (searchJSON["candidates"] as? [[String: Any]])?.first,
+               let lrcID = first["id"] as? String,
+               let accessKey = first["accesskey"] as? String {
+                candidate = (lrcID, accessKey)
+            }
+        }
+        guard let candidate else {
             // 兜底：play/getdata 接口直接带歌词
             return try? await fetchKugouFromGetdata(hash: hash, keyword: keyword)
         }
-        let downURL = "https://lyrics.kugou.com/download?ver=1&client=pc&" +
-            "id=\(lrcID)&accesskey=\(kugouEncode(accessKey))&fmt=lrc&charset=utf8"
-        let downResp = try await NetworkClient.shared.get(downURL, headers: ["Referer": "https://www.kugou.com/"])
-        guard let downJSON = NetworkClient.jsonObject(downResp.data),
-              let content = downJSON["content"] as? String else {
-            return try? await fetchKugouFromGetdata(hash: hash, keyword: keyword)
+
+        // ① KRC（逐字）：fmt=krc → base64 → 逐字节解密 → zlib 解压 → 解析
+        let krcURL = "https://lyrics.kugou.com/download?ver=1&client=pc&" +
+            "id=\(candidate.id)&accesskey=\(kugouEncode(candidate.accessKey))&fmt=krc&charset=utf8"
+        if let krcResp = try? await NetworkClient.shared.get(krcURL, headers: ["Referer": "https://www.kugou.com/"]),
+           let krcJSON = NetworkClient.jsonObject(krcResp.data),
+           let krcContent = krcJSON["content"] as? String,
+           let krcText = LyricParser.decodeKRC(base64: krcContent) {
+            let word = LyricParser.parseKRC(krcText)
+            let lrc = LyricParser.krcToLRC(krcText)
+            if !lrc.isEmpty || !word.isEmpty {
+                return LyricResult(lrc: lrc, wordLyric: word.isEmpty ? nil : word, source: .kugou)
+            }
         }
-        let lrc = LyricParser.parseLRC(content)
-        guard !lrc.isEmpty else { return nil }
-        return LyricResult(lrc: lrc, wordLyric: nil, source: .kugou)
+
+        // ② LRC（逐行）：KRC 不可用时退回
+        let downURL = "https://lyrics.kugou.com/download?ver=1&client=pc&" +
+            "id=\(candidate.id)&accesskey=\(kugouEncode(candidate.accessKey))&fmt=lrc&charset=utf8"
+        if let downResp = try? await NetworkClient.shared.get(downURL, headers: ["Referer": "https://www.kugou.com/"]),
+           let downJSON = NetworkClient.jsonObject(downResp.data),
+           let content = downJSON["content"] as? String {
+            let lrc = LyricParser.parseLRC(content)
+            if !lrc.isEmpty {
+                return LyricResult(lrc: lrc, wordLyric: nil, source: .kugou)
+            }
+        }
+        // ③ 最后兜底：play/getdata
+        return try? await fetchKugouFromGetdata(hash: hash, keyword: keyword)
+    }
+
+    /// 酷狗歌词搜索（返回原始 JSON；网络失败返回 nil）。
+    private func lyricSearchJSON(_ url: String) async -> [String: Any]? {
+        guard let resp = try? await NetworkClient.shared.get(url, headers: ["Referer": "https://www.kugou.com/"]) else {
+            return nil
+        }
+        return NetworkClient.jsonObject(resp.data)
     }
 
     /// 酷狗 getdata 兜底（该接口返回 JSON 歌词行）
@@ -397,5 +438,105 @@ enum LyricParser {
 
     static func parseKuwoLRC(_ text: String) -> [LrcLine] {
         parseLRC(text)
+    }
+
+    // MARK: 酷狗 KRC（逐字；解密 + 解压 + 解析）
+
+    /// KRC 解密的固定 16 字节密钥。
+    private static let krcKey: [UInt8] = [
+        0x40, 0x47, 0x61, 0x77, 0x5E, 0x32, 0x74, 0x47,
+        0x51, 0x36, 0x31, 0x2D, 0xCE, 0xD2, 0x6E, 0x69,
+    ]
+
+    /// 解密并解压 KRC 文档（base64 → 跳过 4 字节魔数 → 逐字节 XOR → zlib inflate）。
+    /// 失败返回 nil。
+    static func decodeKRC(base64 content: String) -> String? {
+        guard let data = Data(base64Encoded: content, options: .ignoreUnknownCharacters),
+              data.count > 6 else { return nil }
+        var body = [UInt8](data.dropFirst(4))
+        for i in body.indices { body[i] ^= krcKey[i % krcKey.count] }
+        // zlib 头（0x78 0x9C）：苹果的 COMPRESSION_ZLIB 是 raw DEFLATE，需跳过 2 字节头
+        if body.count > 2, body[0] == 0x78, body[1] == 0x9C {
+            if let text = inflate(Array(body.dropFirst(2))) { return text }
+        }
+        return inflate(body)
+    }
+
+    private static func inflate(_ bytes: [UInt8]) -> String? {
+        guard !bytes.isEmpty else { return nil }
+        let cap = max(bytes.count * 10, 128 * 1024)
+        var dst = [UInt8](repeating: 0, count: cap)
+        let n = compression_decode_buffer(&dst, cap, bytes, bytes.count, nil, COMPRESSION_ZLIB)
+        guard n > 0 else { return nil }
+        return String(data: Data(dst.prefix(n)), encoding: .utf8)
+    }
+
+    /// 解析 KRC 逐字行：`[行起始ms,行时长ms]<字偏移ms,字时长ms,0>字...`
+    /// （与网易云 YRC 同构，仅括号不同；字绝对时间 = 行起始 + 字偏移）。
+    static func parseKRC(_ text: String) -> [WordLyricLine] {
+        var result: [WordLyricLine] = []
+        guard let lineRE = try? NSRegularExpression(pattern: #"^\[(\d+),(\d+)\]"#),
+              let wordRE = try? NSRegularExpression(pattern: #"<(\d+),(\d+),\d+>([^<]*)"#)
+        else { return [] }
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            let ns = line as NSString
+            let full = NSRange(location: 0, length: ns.length)
+
+            guard let head = lineRE.firstMatch(in: line, range: full),
+                  head.numberOfRanges >= 3 else { continue }
+            let lineStartMs = Double(ns.substring(with: head.range(at: 1))) ?? 0
+            let lineDurationMs = Double(ns.substring(with: head.range(at: 2))) ?? 0
+
+            var words: [WordLyricLine.Word] = []
+            var composed = ""
+            for m in wordRE.matches(in: line, range: full) {
+                guard m.numberOfRanges >= 4 else { continue }
+                let offsetMs = Double(ns.substring(with: m.range(at: 1))) ?? 0
+                let durationMs = Double(ns.substring(with: m.range(at: 2))) ?? 0
+                let piece = ns.substring(with: m.range(at: 3))
+                guard !piece.isEmpty else { continue }
+                let start = (lineStartMs + offsetMs) / 1000
+                let end = (lineStartMs + offsetMs + max(durationMs, 1)) / 1000
+                words.append(WordLyricLine.Word(char: piece, start: start, end: end))
+                composed += piece
+            }
+            guard !words.isEmpty, !composed.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            // 过滤制作人员行（行时长 0 且所有字零宽）
+            if lineDurationMs <= 0, words.allSatisfy({ ($0.end - $0.start) <= 0.001 }) { continue }
+
+            result.append(WordLyricLine(
+                start: lineStartMs / 1000,
+                end: words.last?.end ?? lineStartMs / 1000,
+                words: words
+            ))
+        }
+        return result.sorted { $0.start < $1.start }
+    }
+
+    /// 从 KRC 文档生成逐行 LRC（无逐字能力场景下的行级回退；文本取每行拼接结果）。
+    static func krcToLRC(_ text: String) -> [LrcLine] {
+        var lines: [LrcLine] = []
+        guard let lineRE = try? NSRegularExpression(pattern: #"^\[(\d+),(\d+)\]"#),
+              let wordRE = try? NSRegularExpression(pattern: #"<(\d+),(\d+),\d+>([^<]*)"#)
+        else { return [] }
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            let ns = line as NSString
+            let full = NSRange(location: 0, length: ns.length)
+            guard let head = lineRE.firstMatch(in: line, range: full), head.numberOfRanges >= 3 else { continue }
+            let lineStartMs = Double(ns.substring(with: head.range(at: 1))) ?? 0
+            var composed = ""
+            for m in wordRE.matches(in: line, range: full) where m.numberOfRanges >= 4 {
+                composed += ns.substring(with: m.range(at: 3))
+            }
+            let trimmed = composed.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            lines.append(LrcLine(time: lineStartMs / 1000, text: trimmed))
+        }
+        return lines.sorted { $0.time < $1.time }
     }
 }

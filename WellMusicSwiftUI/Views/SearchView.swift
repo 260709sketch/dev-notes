@@ -35,9 +35,9 @@ final class WellSearchViewModel: ObservableObject {
         songsPage = 1
         currentKeyword = key
         if type == .songs {
-            // 单曲 Tab 走分页通道（首页）
+            // 单曲 Tab 走分页通道（每页 10 首；触底自动补齐）
             let (songs, hasMore) = await SearchService.shared
-                .songsPage(key, platform: platform, limit: 50, page: 1)
+                .songsPage(key, platform: platform, limit: 10, page: 1)
             guard tag == "\(platform.rawValue)|\(type.rawValue)|\(key)" else { return }
             result = WellSearchResult()
             result.songs = songs
@@ -53,14 +53,14 @@ final class WellSearchViewModel: ObservableObject {
         isLoading = false
     }
 
-    /// 单曲 Tab 触底加载下一页（滚动到列表末尾自动触发）。
+    /// 单曲 Tab 触底加载下一页（每次补 10 首，滚动到列表尾部自动触发）。
     func loadMoreSongs() async {
         let tag = "\(platform.rawValue)|\(type.rawValue)|\(currentKeyword)"
         guard type == .songs, songsHasMore, !isLoadingMore, tag == loadedKey else { return }
         isLoadingMore = true
         let nextPage = songsPage + 1
         let (songs, hasMore) = await SearchService.shared
-            .songsPage(currentKeyword, platform: platform, limit: 50, page: nextPage)
+            .songsPage(currentKeyword, platform: platform, limit: 10, page: nextPage)
         // 请求期间条件变了就丢弃
         guard type == .songs,
               "\(platform.rawValue)|\(type.rawValue)|\(currentKeyword)" == loadedKey else {
@@ -69,11 +69,16 @@ final class WellSearchViewModel: ObservableObject {
         }
         // 按平台 id 去重后追加
         var seen = Set(result.songs.map { "\($0.source.rawValue)|\($0.platformId ?? $0.title)" })
+        var added = 0
         for song in songs {
             let k = "\(song.source.rawValue)|\(song.platformId ?? song.title)"
-            if seen.insert(k).inserted { result.songs.append(song) }
+            if seen.insert(k).inserted {
+                result.songs.append(song)
+                added += 1
+            }
         }
-        songsHasMore = hasMore
+        // 空页/全重复 → 直接认定没有更多，避免哨兵连环空载
+        songsHasMore = hasMore && added > 0
         songsPage = nextPage
         isLoadingMore = false
     }
@@ -228,17 +233,16 @@ struct SearchView: View {
         case .all:
             allContent
         case .songs:
-            // 单曲 Tab：触底自动加载下一页（QQ 搜索单曲单页上限 30，用户 2026-10-15）
-            VStack(spacing: 0) {
-                songList(model.result.songs)
-                    .padding(.horizontal, WellSearchLayout.contentInset - 10)
-                if model.songsHasMore {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .onAppear { Task { await model.loadMoreSongs() } }
-                }
-            }
+            // 单曲 Tab：首屏 20 首，触底自动补 10 首（哨兵在列表 LazyVStack 内，
+            // 翻页见 ViewModel.loadMoreSongs）
+            WellSearchSongList(tracks: model.result.songs,
+                               onPlay: { index in
+                                   player.play(queue: model.result.songs, startIndex: index)
+                               },
+                               onReachEnd: {
+                                   Task { await model.loadMoreSongs() }
+                               })
+                .padding(.horizontal, WellSearchLayout.contentInset - 10)
         case .artists:
             WellSearchCardGrid { artistCards(model.result.artists) }
                 .padding(.horizontal, WellSearchLayout.contentInset)
@@ -305,7 +309,8 @@ struct SearchView: View {
         ForEach(Array(items)) { artist in
             NavigationLink {
                 WellArtistHomeView(artistId: artist.id, artistName: artist.name,
-                                   coverURL: artist.picURL, platform: artist.platform)
+                                   coverURL: artist.picURL, platform: artist.platform,
+                                   artistMid: artist.mid)
             } label: {
                 WellSearchArtistCard(artist: artist)
             }

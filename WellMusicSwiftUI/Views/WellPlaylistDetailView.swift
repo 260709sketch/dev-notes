@@ -111,7 +111,10 @@ struct WellPlaylistDetailView: View {
                     titleBlock
                     controlsRow
                     descriptionBlock
-                    searchRow
+                    // ★ 2026-10-15 用户：专辑详情暂时移除搜索框（歌单保留）
+                    if !isAlbumSource {
+                        searchRow
+                    }
                     songsSection
                     Color.clear.frame(height: 170)
                 }
@@ -422,11 +425,26 @@ struct WellPlaylistDetailView: View {
         }
     }
 
+    /// 专辑来源（「进入专辑后」）标记：专辑页移除搜索行，且歌曲行按官方样式渲染。
+    private var isAlbumSource: Bool {
+        if case .album = source { return true }
+        return false
+    }
+
     private func appleMusicSongRow(index: Int, item: MusicItem) -> some View {
         HStack(spacing: 12) {
-            WellRemoteImage(url: item.albumCoverURL, displaySize: 44)
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // ★ 2026-10-15 用户：专辑页歌曲列表对齐官方（Apple Music）——
+            //   专辑页整页都是同一张专辑，行内封面冗余：序号 + 歌名/歌手 + 时长，无封面。
+            if isAlbumSource {
+                Text("\(index + 1)")
+                    .font(.system(size: 15).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, alignment: .leading)
+            } else {
+                WellRemoteImage(url: item.albumCoverURL, displaySize: 44)
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
@@ -500,13 +518,12 @@ struct WellPlaylistDetailView: View {
         guard let url = WellArtworkURL.resolved(raw, pixelSize: WellArtworkURL.pixelSize(forPoints: 64)) else { return }
         guard let image = await WellImageCache.shared.image(for: url) else { return }
         let boosted = Self.saturated(image.dominantColor(), factor: 1.25)
-        let adjusted = Self.lightnessAdjusted(boosted)
+        let adjusted = Self.lightnessAdjusted(boosted, dark: systemScheme == .dark)
 
-        // ★ 2026-10-14：**仅当封面取色本身是黑/深色**（`boosted` 明度 < 0.25）
-        //   且「居中留白 + 浅色模式」时，背景才统一改白色。
-        //   原因：黑封面压暗后得到近黑底，在浅色模式下很突兀；改白底后整页文字转深色。
-        //   其余任何颜色一律走下面原提取色逻辑（用户原话：「其他的别动」）。
-        if coverStyle == .centered, systemScheme == .light, Self.luminance(of: boosted) < 0.25 {
+        // ★ 2026-10-15 用户：「浅色模式如果是深色背景…自动渲染白色」——
+        //   按**最终渲染色**（adjusted）判定：浅色模式下渲染出来偏深（明度 < 0.35）
+        //   一律改白底（整页文字转深色），不再限制封面样式；深色模式不走这条路。
+        if systemScheme == .light, Self.luminance(of: adjusted) < 0.35 {
             withAnimation(.easeInOut(duration: 0.25)) {
                 coverBackdropColor = Color(uiColor: .systemBackground)
             }
@@ -527,17 +544,21 @@ struct WellPlaylistDetailView: View {
         return UIColor(hue: h, saturation: min(s * factor, 1), brightness: b, alpha: 1)
     }
 
-    /// 明度自适应（2026-10-14 第二轮实拍标定）：
-    /// * 平均明度 > 0.62 → 亮封面：往白掺 35%（对齐《Lover》浅粉底 (231,218,228)）；
-    /// * 其余一律**压暗到 42%**（对齐参考实拍：绿封面 0.375→0.15 = ×0.40、
-    ///   Whole Lotta Red 黑白封面 0.53→0.22 深炭灰、深色人像 0.28→0.12 近黑）。
-    ///   ⚠️ 早期「0.40~0.62 原样」的中间区间会把黑白封面渲染成灰底 —— 深色
-    ///   封面渐隐进灰底非常难看（用户 2026-10-14 截图反馈），故取消该区间。
-    private static func lightnessAdjusted(_ color: UIColor) -> UIColor {
+    /// 明度自适应（2026-10-14 第二轮实拍标定；2026-10-15 补深色模式分支）：
+    /// * 浅色模式：亮封面（明度 > 0.62）往白掺 35%（对齐《Lover》浅粉底 (231,218,228)）；
+    ///   其余压暗到 42%（黑白封面渲染成深炭灰，而非难看的灰底；渲染色仍偏深时由
+    ///   `extractCoverBackdrop` 的白底判定兜底）。
+    /// * 深色模式（用户 2026-10-15：「高亮背景自动压暗」）：亮封面同样**压暗**
+    ///   （亮底在深色模式下刺眼），乘 0.55；其余按 0.42 压暗。
+    private static func lightnessAdjusted(_ color: UIColor, dark: Bool) -> UIColor {
         let lum = luminance(of: color)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
         if lum > 0.62 {
+            if dark {
+                let scale: CGFloat = 0.55
+                return UIColor(red: r * scale, green: g * scale, blue: b * scale, alpha: 1)
+            }
             let t: CGFloat = 0.35
             return UIColor(red: r + (1 - r) * t, green: g + (1 - g) * t, blue: b + (1 - b) * t, alpha: 1)
         }

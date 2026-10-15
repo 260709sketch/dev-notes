@@ -276,6 +276,25 @@ final class NeteaseMusicAPI {
         var more: Bool?
     }
 
+    /// `api/playlist/highquality/list`（精品歌单）响应
+    private struct HighQualityResponse: Decodable {
+        var playlists: [PlaylistItem]?
+        var more: Bool?
+        var lasttime: Int?
+    }
+
+    /// 网易云图片 URL 归一化：剥掉原始查询参数，统一拼 `?param=WxH` 重取。
+    ///
+    /// ⚠️ 列表接口返回的 `coverImgUrl` 尾部常带 `thumbnail=140y140` 这类小图参数，
+    /// 直接用会明显模糊；服务端支持用 `param` 覆盖并重取任意尺寸。
+    /// 非网易云图床的 URL 原样返回。
+    static func neteaseCover(_ url: String?, size: Int = 512) -> String? {
+        guard let url, !url.isEmpty else { return nil }
+        guard url.contains("music.126.net") else { return url }
+        let base = url.components(separatedBy: "?").first ?? url
+        return "\(base)?param=\(size)y\(size)"
+    }
+
     /// `api/discovery/simiSong`（相似歌曲）响应
     private struct SimiSongResponse: Decodable {
         var code: Int?
@@ -449,7 +468,7 @@ final class NeteaseMusicAPI {
             out.albums = albums.compactMap { al in
                 guard let id = al.id, let name = al.name else { return nil }
                 return WellAlbumSummary(
-                    id: "\(id)", name: name, picURL: al.picUrl,
+                    id: "\(id)", name: name, picURL: Self.neteaseCover(al.picUrl, size: 500),
                     artistName: al.artist?.name ?? "未知歌手", platform: .netease, albumMid: nil)
             }
             hasMore = albums.count >= limit
@@ -458,7 +477,7 @@ final class NeteaseMusicAPI {
             out.playlists = playlists.compactMap { pl in
                 guard let id = pl.id, let name = pl.name else { return nil }
                 return WellPlaylistSummary(
-                    id: "\(id)", name: name, coverURL: pl.coverImgUrl,
+                    id: "\(id)", name: name, coverURL: Self.neteaseCover(pl.coverImgUrl, size: 512),
                     playCount: Int(pl.playCount ?? 0), trackCount: pl.trackCount ?? 0,
                     creatorName: pl.creator?.nickname)
             }
@@ -840,6 +859,22 @@ final class NeteaseMusicAPI {
         return (resp.playlists ?? []).compactMap(Self.mapPlaylist)
     }
 
+    /// 精品歌单（`api/playlist/highquality/list`，明文实测可用）。
+    /// `before` 是上一页返回的 `lasttime`（首页传 0），用于翻页。
+    func highQualityPlaylists(cat: String = "全部", limit: Int = 50, before: Int = 0)
+        async throws -> (playlists: [WellPlaylistSummary], more: Bool, lasttime: Int?) {
+        var comps = URLComponents(string: "https://music.163.com/api/playlist/highquality/list")!
+        comps.queryItems = [
+            URLQueryItem(name: "cat", value: cat),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "lasttime", value: "\(before)"),
+            URLQueryItem(name: "total", value: "true"),
+        ]
+        let data = try await rawGet(comps.url!.absoluteString)
+        let resp = try JSONDecoder().decode(HighQualityResponse.self, from: data)
+        return ((resp.playlists ?? []).compactMap(Self.mapPlaylist), resp.more ?? false, resp.lasttime)
+    }
+
     /// 相似歌曲（心动模式兜底：`api/discovery/simiSong`，明文可用）。
     func simiSongs(songId: String, limit: Int = 30) async throws -> [MusicItem] {
         let params: [String: Any] = ["songid": songId, "limit": limit, "csrf_token": ""]
@@ -857,7 +892,7 @@ final class NeteaseMusicAPI {
             return WellToplistSummary(
                 id: String(id),
                 name: item.name ?? "排行榜",
-                coverURL: item.coverImgUrl,
+                coverURL: Self.neteaseCover(item.coverImgUrl, size: 500),
                 updateFrequency: item.updateFrequency
             )
         }
@@ -972,27 +1007,57 @@ final class NeteaseMusicAPI {
     /// ⚠️ 这个接口的 payload 层级在不同账号下不一致：有时 `albums` 直接挂在根上，
     /// 有时藏在 `data.albums` / `data.list` / `data.data` 里。四个位置都试一遍 ——
     /// 只认一个位置的话，换个账号就整页空白（与 `recentSongs` 的双通道兜底同理）。
-    func favoritedAlbums(limit: Int = 100, offset: Int = 0) async throws -> [WellAlbumSummary] {
-        let params: [String: Any] = ["limit": limit, "offset": offset, "total": true, "csrf_token": ""]
-        let resp: AlbumSublistResponse = try await Self.apiRequest(
-            "api/album/sublist", params: params, type: AlbumSublistResponse.self)
-        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
-        return entries.compactMap { entry in
-            guard let id = entry.id else { return nil }
-            let artistName = entry.artist?.name
-                ?? entry.artists?.compactMap(\.name).joined(separator: " / ")
-                ?? ""
-            return WellAlbumSummary(
-                id: String(id),
-                name: entry.name ?? "",
-                picURL: entry.picUrl,
-                artistName: artistName,
-                platform: .netease,
-                albumMid: nil,
-                albumType: nil,
-                publishTime: entry.publishTime
-            )
+    ///
+    /// ⚠️ 明文通道单页只稳定返回 25 条，limit 传大值会被截断 —— 内部按 25/页循环拉齐；
+    /// 明文整体失败时回退 eapi 通道（登录态强绑定接口，与听歌排行同一套通道）。
+    func favoritedAlbums(limit: Int = 500, offset: Int = 0) async throws -> [WellAlbumSummary] {
+        if let albums = try? await favoritedAlbumsPlain(limit: limit, offset: offset), !albums.isEmpty {
+            return albums
         }
+        return try await favoritedAlbumsEapi(limit: limit, offset: offset)
+    }
+
+    private func favoritedAlbumsPlain(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
+        var out: [WellAlbumSummary] = []
+        let pageSize = 25
+        var current = offset
+        while out.count < limit {
+            let params: [String: Any] = ["limit": pageSize, "offset": current, "total": true, "csrf_token": ""]
+            let resp: AlbumSublistResponse = try await Self.apiRequest(
+                "api/album/sublist", params: params, type: AlbumSublistResponse.self)
+            let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+            if entries.isEmpty { break }
+            out.append(contentsOf: entries.compactMap(Self.mapSublistAlbum))
+            if entries.count < pageSize { break }
+            current += pageSize
+            if current >= offset + limit { break }
+        }
+        return Array(out.prefix(limit))
+    }
+
+    private func favoritedAlbumsEapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {
+        let params: [String: Any] = ["limit": min(limit, 100), "offset": offset, "total": true]
+        let resp: AlbumSublistResponse = try await Self.eapiRequest(
+            "/api/album/sublist", params: params, type: AlbumSublistResponse.self)
+        let entries = resp.albums ?? resp.data?.albums ?? resp.data?.list ?? resp.data?.data ?? []
+        return Array(entries.compactMap(Self.mapSublistAlbum).prefix(limit))
+    }
+
+    private static func mapSublistAlbum(_ entry: AlbumSublistResponse.Entry) -> WellAlbumSummary? {
+        guard let id = entry.id else { return nil }
+        let artistName = entry.artist?.name
+            ?? entry.artists?.compactMap(\.name).joined(separator: " / ")
+            ?? ""
+        return WellAlbumSummary(
+            id: String(id),
+            name: entry.name ?? "",
+            picURL: neteaseCover(entry.picUrl, size: 500),
+            artistName: artistName,
+            platform: .netease,
+            albumMid: nil,
+            albumType: nil,
+            publishTime: entry.publishTime
+        )
     }
 
     // MARK: 每日推荐 / 私人漫游 / 心动模式
@@ -1252,7 +1317,8 @@ final class NeteaseMusicAPI {
             id: String(id),
             name: item.name ?? "歌单",
             // 个性化推荐只给 picUrl，搜索/歌单接口给 coverImgUrl —— 两个都接住。
-            coverURL: item.coverImgUrl ?? item.picUrl,
+            // 封面统一重取大尺寸（原始 URL 常带 thumbnail=140y140 小图参数）。
+            coverURL: neteaseCover(item.coverImgUrl ?? item.picUrl, size: 512),
             playCount: Int(item.playCount ?? 0),
             trackCount: item.trackCount ?? 0,
             creatorName: item.creator?.nickname
@@ -1264,7 +1330,7 @@ final class NeteaseMusicAPI {
         return WellAlbumSummary(
             id: String(id),
             name: item.name ?? "专辑",
-            picURL: item.picUrl,
+            picURL: neteaseCover(item.picUrl, size: 500),
             artistName: item.artist?.name ?? "未知歌手",
             platform: .netease,
             albumMid: nil

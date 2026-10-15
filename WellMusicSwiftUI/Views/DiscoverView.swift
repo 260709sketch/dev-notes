@@ -391,7 +391,8 @@ struct DiscoverView: View {
                 ForEach(Array(artists.enumerated()), id: \.element.id) { index, artist in
                     NavigationLink {
                         WellArtistHomeView(artistId: artist.id, artistName: artist.name,
-                                           coverURL: artist.picURL)
+                                           coverURL: artist.picURL, platform: artist.platform,
+                                           artistMid: artist.mid)
                     } label: {
                         WellArtistCard(artist: artist)
                     }

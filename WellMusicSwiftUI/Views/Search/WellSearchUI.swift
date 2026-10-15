@@ -236,6 +236,10 @@ struct WellSearchSongRow: View {
 struct WellSearchSongList: View {
     let tracks: [MusicItem]
     let onPlay: (Int) -> Void
+    /// 触底回调：列表尾部哨兵进入渲染窗口时调用（搜索页单曲「下滑自动补齐」用）。
+    /// ⚠️ 哨兵带 `id(tracks.count)`：每补一页重建一次，若仍在视口内会继续补齐
+    /// （直到内容超过一屏自然滚出视口，或调用方判定没有更多）。
+    var onReachEnd: (() -> Void)?
 
     var body: some View {
         LazyVStack(spacing: 1) {
@@ -246,6 +250,12 @@ struct WellSearchSongList: View {
                     WellSearchSongRow(item: item)
                 }
                 .buttonStyle(.plain)
+            }
+            if let onReachEnd {
+                Color.clear
+                    .frame(height: 1)
+                    .id(tracks.count)
+                    .onAppear { onReachEnd() }
             }
         }
     }

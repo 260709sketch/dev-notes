@@ -127,7 +127,7 @@ struct ProfileView: View {
             HStack(spacing: 12) {
                 Image(systemName: "gearshape")
                     .font(.system(size: 17))
-                    .foregroundStyle(AppTheme.accent)
+                    .foregroundStyle(.blue)
                     .frame(width: 26)
                 Text("设置").font(.system(size: 16)).foregroundStyle(.primary)
                 Spacer()
@@ -154,7 +154,7 @@ struct ProfileView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .font(.system(size: 17))
-                    .foregroundStyle(AppTheme.accent)
+                    .foregroundStyle(.blue)
                     .frame(width: 26)
                 Text(title).font(.system(size: 16))
                 Spacer()
@@ -607,7 +607,6 @@ struct NeteaseLikedSongsView: View {
 
 struct NeteasePlayRecordView: View {
     private var player: PlayerCore { PlayerCore.shared }
-    @Environment(\.colorScheme) private var colorScheme
 
     private enum Period: Int, CaseIterable, Identifiable {
         case week = 1   // 网易云约定：1 = 最近一周
@@ -628,90 +627,119 @@ struct NeteasePlayRecordView: View {
     @State private var isLoading = true
     @State private var failed = false
 
+    /// 播放全部胶囊渐变（红）
+    private static let playAllGradient = [
+        Color(red: 1.00, green: 0.42, blue: 0.42),
+        Color(red: 0.84, green: 0.19, blue: 0.19),
+    ]
+
     var body: some View {
-        Group {
-            if isLoading {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if failed {
-                VStack(spacing: 10) {
-                    Text("暂时拿不到听歌排行").foregroundStyle(.secondary)
-                    Button("重试") { Task { await load() } }
-                        .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if items.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "chart.bar")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.secondary)
-                    Text("这段日子里还没有听歌记录").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                // ★ 2026-10-14 用户：改成网易云「听歌排行」那种版式 ——
-                //   序号（前 3 名主题色）+ 歌曲封面 + 歌名/歌手 + 右侧播放次数，
-                //   并去掉原来 TrackRow 自带的 chevron 箭头。
-                List {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, record in
-                        Button {
-                            player.play(queue: items.map(\.song), startIndex: index)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text("\(index + 1)")
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundStyle(index < 3 ? AppTheme.accent : Color.secondary)
-                                    .frame(width: 26)
-
-                                ArtworkView(url: record.song.albumCoverURL,
-                                            size: 46,
-                                            cornerRadius: 6)
-
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(record.song.title)
-                                        .font(.system(size: 15.5, weight: .medium))
-                                        .lineLimit(1)
-                                    Text(record.song.artist ?? "未知艺术家")
-                                        .font(.system(size: 12.5))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer(minLength: 8)
-
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text("\(record.playCount)")
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .monospacedDigit()
-                                    Text("次")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .foregroundStyle(AppTheme.accent)
-                            }
-                            .contentShape(Rectangle())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // 顶部行：统计范围分段 + 播放全部
+                HStack {
+                    Picker("", selection: $period) {
+                        ForEach(Period.allCases) { p in
+                            Text(p.title).tag(p)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 200)
+
+                    Spacer()
+
+                    Button {
+                        guard !items.isEmpty else { return }
+                        player.play(queue: items.map(\.song), startIndex: 0)
+                    } label: {
+                        Label("播放全部", systemImage: "play.fill")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                LinearGradient(colors: Self.playAllGradient,
+                                               startPoint: .top, endPoint: .bottom),
+                                in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(items.isEmpty)
                 }
-                .listStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
+                if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 300)
+                } else if failed {
+                    VStack(spacing: 10) {
+                        Text("暂时拿不到听歌排行").foregroundStyle(.secondary)
+                        Button("重试") { Task { await load() } }
+                            .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 300)
+                } else if items.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "chart.bar")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text("这段日子里还没有听歌记录").foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 300)
+                } else {
+                    recordList
+                }
+
+                Color.clear.frame(height: 170)
             }
         }
         .navigationTitle("听歌排行")
-        .navigationBarTitleDisplayMode(.inline)
-        .safeAreaInset(edge: .top) {
-            Picker("统计范围", selection: $period) {
-                ForEach(Period.allCases) { p in
-                    Text(p.title).tag(p)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            // plain List 系统底色是 systemBackground（浅白/深黑），Picker 遮底用同色才连续
-            .background(colorScheme == .dark ? Color.black : Color(uiColor: .systemBackground))
-        }
         .task(id: period) { await load() }
+    }
+
+    /// 排行列表（序号 + 封面 + 歌名/歌手 + 播放次数）。
+    private var recordList: some View {
+        LazyVStack(spacing: 1) {
+            ForEach(Array(items.prefix(100).enumerated()), id: \.element.id) { index, record in
+                Button {
+                    player.play(queue: items.map(\.song), startIndex: index)
+                } label: {
+                    HStack(spacing: 12) {
+                        Text("\(index + 1)")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(index < 3 ? AppTheme.accent : Color.secondary)
+                            .frame(width: 26)
+
+                        ArtworkView(url: record.song.albumCoverURL,
+                                    size: 46,
+                                    cornerRadius: 6)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(record.song.title)
+                                .font(.system(size: 15.5, weight: .medium))
+                                .lineLimit(1)
+                            Text(record.song.artist ?? "未知艺术家")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Text("\(record.playCount) 次")
+                            .font(.system(size: 13, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func load() async {
@@ -817,13 +845,13 @@ struct LocalFavoriteSongsView: View {
                 // 本地收藏没有歌单封面 → 用**首曲封面**当 header 封面
                 // （与 `WellPlaylistDetailView.dailyMode` 每日推荐同一约定）。
                 WellMyPlaylistDetailView(
-                    source: .tracks(name: "收藏歌曲",
+                    source: .tracks(name: "喜欢的歌曲",
                                     coverURL: appState.favoriteTracks.first?.albumCoverURL,
                                     creatorName: nil,
                                     tracks: appState.favoriteTracks))
             }
         }
-        .navigationTitle(appState.favoriteTracks.isEmpty ? "收藏歌曲" : "")
+        .navigationTitle(appState.favoriteTracks.isEmpty ? "喜欢的歌曲" : "")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

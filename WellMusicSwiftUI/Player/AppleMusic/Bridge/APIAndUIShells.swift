@@ -394,7 +394,6 @@ struct NowPlayingTrackDestinationLinks: View {
                     Text(track.album.name)
                         .font(font)
                         .foregroundStyle(color)
-                        .underline()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("打开专辑：\(track.album.name)")

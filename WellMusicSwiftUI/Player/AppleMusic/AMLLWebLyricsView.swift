@@ -341,7 +341,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 这是硬件/系统缓冲，**换任何播放内核都一样**；iOS 用
         /// `AVAudioSession.outputLatency` 把实测值给了我们，所以不必让用户手动猜。
         private var lyricTimeShift: TimeInterval {
-            UserDefaults.standard.double(forKey: "wellmusic.lyricOffset")
+            // 生效偏移（调整过的歌用专属值，否则全局）+ 输出延迟补偿
+            PlayerService.shared.effectiveLyricOffset
                 - PlayerService.shared.liveLatency
         }
 

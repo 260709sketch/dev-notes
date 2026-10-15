@@ -297,9 +297,13 @@ final class WellLXEngine {
         case "kg":
             info["hash"] = item.kugouHash ?? songmid
         case "tx":
-            info["strMediaMid"] = songmid
+            // ⚠️ strMediaMid 是音频文件名用的**媒体 mid**（部分歌曲 ≠ songmid）。
+            //    音源脚本按它拼 vkey 请求，填成 songmid 时一批歌会整体取链失败
+            //    （表现为「这些歌在别的软件能放，这里放不了」）。
+            let mediaMid = (item.qqMediaMid?.isEmpty == false ? item.qqMediaMid : nil) ?? songmid
+            info["strMediaMid"] = mediaMid
             info["songmid"] = songmid
-            info["albumMid"] = ""
+            info["albumMid"] = item.qqAlbumMid ?? ""
             info["songId"] = songmid
             info["vid"] = ""
         case "mg":

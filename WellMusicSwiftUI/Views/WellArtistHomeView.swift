@@ -16,6 +16,9 @@ struct WellArtistHomeView: View {
     /// ★★ 2026-10-14：歌手所属平台。原先本页**只查网易云**，从播放页点歌手名
     /// 跳进来（QQ / 酷狗歌）必然全空 —— 见 `load()` 里的根因说明。
     var platform: MusicSource = .netease
+    /// 平台歌手 mid（QQ / 酷狗的歌手接口需要）。调用方已知就直接传，
+    /// 省掉进页后「按歌手名再搜一次解析身份」的网络往返（2026-10-15 提速）。
+    var artistMid: String? = nil
 
     @State private var resolvedName: String = ""
     @State private var resolvedCover: String?
@@ -288,10 +291,11 @@ struct WellArtistHomeView: View {
         //    再按平台取热门歌曲与专辑。解析不到时才退回传进来的 id。
         let sp = searchPlatform
         var realId = artistId
-        var realMid: String?
+        var realMid: String? = artistMid
         var resolvedAvatar: String?
 
-        if let sp, !artistName.isEmpty {
+        // mid 缺失才按歌手名搜索解析身份（调用方已带 mid 时直接跳过，省一轮网络往返）
+        if realMid == nil, let sp, !artistName.isEmpty {
             let found = await SearchService.shared
                 .search(keyword: artistName, platform: sp, type: .artists, limit: 10).artists
             let exact = found.first { $0.name.caseInsensitiveCompare(artistName) == .orderedSame }
@@ -302,8 +306,10 @@ struct WellArtistHomeView: View {
             }
         }
 
-        let songsResult = await loadTopSongs(id: realId, mid: realMid)
-        let albumsResult = await loadAlbums(id: realId, mid: realMid)
+        // 热门歌曲与专辑**并行**拉取（原先串行 = 等待时间翻倍）
+        async let songsTask = loadTopSongs(id: realId, mid: realMid)
+        async let albumsTask = loadAlbums(id: realId, mid: realMid)
+        let (songsResult, albumsResult) = await (songsTask, albumsTask)
 
         hotSongs = songsResult.songs
         albums = albumsResult.albums

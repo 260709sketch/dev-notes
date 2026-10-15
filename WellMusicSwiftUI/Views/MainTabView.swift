@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 主框架：四大 Tab（原生 iOS 26 液态玻璃 / 自定义胶囊栏）+ 屏下 MiniPlayer + 全屏播放页
 ///
@@ -89,7 +90,7 @@ struct MainTabView: View {
                 // navigationDestination 两个分支共用同一份实现。
                 NavigationStack(path: $radioPath) { pageContent(for: .radio) }
             }
-            Tab("精选", systemImage: "sparkles.rectangle.stack.fill", value: WellTab.square) {
+            Tab("精选", systemImage: MainTabView.squareTabSymbol, value: WellTab.square) {
                 NavigationStack(path: $squarePath) { pageContent(for: .square) }
             }
             Tab(value: WellTab.search, role: .search) {
@@ -230,9 +231,18 @@ struct MainTabView: View {
 }
 
 extension MainTabView {
+    /// 精选 Tab 图标：优先「方框内音符」（Apple Music 资料库样式），
+    /// 逐个运行时探测符号名，取第一个当前系统存在的；全不存在退化为 music.note。
+    static let squareTabSymbol: String = {
+        for name in ["music.note.square.stack.fill", "music.note.square.stack", "music.note.list", "music.note"] {
+            if UIImage(systemName: name) != nil { return name }
+        }
+        return "music.note"
+    }()
+
     static let glassTabItems: [WellTabBar.Item] = [
         .init(tab: .radio, title: "发现", icon: "house"),
-        .init(tab: .square, title: "精选", icon: "sparkles.rectangle.stack"),
+        .init(tab: .square, title: "精选", icon: squareTabSymbol),
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]
@@ -374,8 +384,6 @@ struct MiniPlayerView: View {
     private let capsuleHeight: CGFloat = 52
     /// 封面边长（实机量得 96px @3x = 32pt）
     private let artworkSize: CGFloat = 32
-    /// 控制图标字号（用户 2026-10-14：三钮统一 17pt）
-    private let controlIconSize: CGFloat = 17
     /// 单个控制钮命中框边长（三钮等大）
     private let controlHitSize: CGFloat = 34
 
@@ -402,7 +410,7 @@ struct MiniPlayerView: View {
                 Button {
                     PlayerCore.shared.previous()
                 } label: {
-                    controlIcon("backward.fill")
+                    controlIcon("backward.fill", size: 15)
                 }
                 Button {
                     PlayerCore.shared.togglePlayPause()
@@ -412,7 +420,7 @@ struct MiniPlayerView: View {
                 Button {
                     PlayerCore.shared.next()
                 } label: {
-                    controlIcon("forward.fill")
+                    controlIcon("forward.fill", size: 15)
                 }
             }
             .padding(.trailing, 10)
@@ -443,10 +451,11 @@ struct MiniPlayerView: View {
         }
     }
 
-    /// 三个控制钮统一样式（同一字号 + 同一命中框 ⇒ 视觉大小完全一致）。
-    private func controlIcon(_ name: String) -> some View {
+    /// 三个控制钮统一样式（同一命中框；图标字号分档 ——
+    /// backward/forward 的填充色块视觉重量远大于 pause 两竖条，同字号会显大，故降一档）。
+    private func controlIcon(_ name: String, size: CGFloat = 17) -> some View {
         Image(systemName: name)
-            .font(.system(size: controlIconSize, weight: .semibold))
+            .font(.system(size: size, weight: .semibold))
             .frame(width: controlHitSize, height: controlHitSize)
             .contentShape(Rectangle())
     }

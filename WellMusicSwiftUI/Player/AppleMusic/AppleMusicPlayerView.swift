@@ -65,7 +65,11 @@ struct AppleMusicPlayerView: View {
     @State private var showPlayerAdjustSheet = false
     @State private var showVolumePopover = false
     @State private var appleLayoutPart: AppleMusicLayoutPart = .cover
-    @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
+    /// 生效歌词偏移（秒）：调整过当前这首歌 = 该曲专属值；否则 = 全局值。
+    /// 按曲记忆的写入与回落规则见 `AppState.effectiveLyricOffset` / `LyricOffsetSheet.apply`。
+    private var lyricOffset: Double {
+        player.effectiveLyricOffset
+    }
     @AppStorage("wellmusic.showSongVIPBadge") private var showSongVIPBadge = true
     @AppStorage("wellmusic.player.swipeSwitchSong") private var swipeSwitchSong = true
 
@@ -338,23 +342,20 @@ struct AppleMusicPlayerView: View {
             // 睡眠定时
             SleepTimerMenu(timer: player.sleepTimer, onCustom: { showCustomSleepTimerAlert() })
 
-            // 复制链接
-            Button {
-                if let t = track {
-                    let link: String
-                    switch t.sourcePlatform {
-                    case "tx":
-                        link = "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
-                    case "kg":
-                        link = "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
-                    default:
-                        link = "https://music.163.com/#/song?id=\(t.id)"
-                    }
-                    Platform.copyToPasteboard(string: link)
-                    ToastCenter.shared.show("链接已复制")
+            // 分享歌曲（点击弹出系统分享，自带平台分享链接）
+            if let t = track {
+                let link: String
+                switch t.sourcePlatform {
+                case "tx":
+                    link = "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
+                case "kg":
+                    link = "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
+                default:
+                    link = "https://music.163.com/#/song?id=\(t.id)"
                 }
-            } label: {
-                Label("复制链接", systemImage: "link")
+                ShareLink(item: link) {
+                    Label("分享歌曲", systemImage: "square.and.arrow.up")
+                }
             }
         } label: {
             compactActionButton(icon: "ellipsis") {}
@@ -547,7 +548,7 @@ struct AppleMusicPlayerView: View {
                             Image(systemName: "backward.fill")
                                 .font(.system(size: ScreenAdapter.h(26), weight: .semibold))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(GlassPressButtonStyle(scale: 0.88))
 
                         Button {
                             player.togglePlayPause()
@@ -556,7 +557,7 @@ struct AppleMusicPlayerView: View {
                                 .frame(width: ScreenAdapter.h(64), height: ScreenAdapter.h(64))
                                 .foregroundStyle(primaryColor)
                         }
-                        .buttonStyle(GlassPressButtonStyle(scale: 0.92))
+                        .buttonStyle(GlassPressButtonStyle(scale: 0.9))
 
                         Button {
                             player.next()
@@ -564,7 +565,7 @@ struct AppleMusicPlayerView: View {
                             Image(systemName: "forward.fill")
                                 .font(.system(size: ScreenAdapter.h(26), weight: .semibold))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(GlassPressButtonStyle(scale: 0.88))
                     }
                     .foregroundStyle(primaryColor)
 
@@ -579,7 +580,7 @@ struct AppleMusicPlayerView: View {
                     // 底部按钮
                     HStack(spacing: ScreenAdapter.w(40)) {
                         playerToolbarButton(icon: "quote.bubble", active: showLyrics) {
-                            guard !lyrics.isEmpty else { return }
+                            // 无歌词也能进歌词界面（页内有「暂无歌词」空态占位）
                             showLyrics.toggle()
                         }
                         playerToolbarButton(icon: "text.bubble", active: showComments) {
@@ -1082,7 +1083,7 @@ struct AppleMusicPlayerView: View {
             //
             // ★ 需求 17：点击小封面返回大封面状态（收起歌词页）。
             Color.clear
-                .frame(width: ScreenAdapter.h(48), height: ScreenAdapter.h(48))
+                .frame(width: ScreenAdapter.h(64), height: ScreenAdapter.h(64))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     // ★ 用户明确要求：歌词页点击小封面返回不要震动（2026-10-14）。
@@ -1183,7 +1184,7 @@ struct AppleMusicPlayerView: View {
 
             HStack(spacing: ScreenAdapter.h(60)) {
                 playerToolbarButton(icon: "quote.bubble", active: showLyrics) {
-                    guard !lyrics.isEmpty else { return }
+                    // 无歌词也能进歌词界面（页内有「暂无歌词」空态占位）
                     showLyrics.toggle()
                 }
                 playerToolbarButton(icon: "text.bubble", active: showComments) {
@@ -1213,7 +1214,7 @@ struct AppleMusicPlayerView: View {
                 .frame(width: ScreenAdapter.h(58), height: ScreenAdapter.h(58))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GlassPressButtonStyle(scale: 0.88))
     }
 
     private func compactActionButton(icon: String, active: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {

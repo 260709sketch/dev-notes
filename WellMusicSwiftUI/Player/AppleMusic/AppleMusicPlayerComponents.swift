@@ -902,7 +902,8 @@ struct LyricOffsetSheet: View {
         .onAppear {
             guard !didLoad else { return }
             didLoad = true
-            draft = clamped(appState.lyricOffset)
+            // 初值 = 生效偏移（该曲调整过显示专属值，否则显示全局值）
+            draft = clamped(PlayerService.shared.effectiveLyricOffset)
         }
     }
 
@@ -1023,10 +1024,18 @@ struct LyricOffsetSheet: View {
 
     // MARK: - 逻辑
 
-    /// 双写：AppState 驱动原生歌词页，SettingsManager 驱动 AMLL 网页歌词
+    /// 应用偏移值。
+    ///
+    /// ⚠️ 语义（2026-10-15 用户要求「调整过的歌曲自动记忆保存」）：调整按**当前歌曲**记忆 ——
+    /// 有正在播放的歌就存该曲专属值（下次播放这首歌自动应用）；没有则写全局值。
+    /// 未调整过的歌不受影响（回落全局值，见 `AppState.effectiveLyricOffset`）。
     private func apply(_ value: Double) {
         let next = clamped(value)
-        appState.lyricOffset = next
+        if let key = PlayerService.shared.currentSongOffsetKey {
+            AppState.shared.setSongLyricOffset(next, forKey: key)
+        } else {
+            appState.lyricOffset = next
+        }
         settings.lyricOffset = next
     }
 
@@ -1169,9 +1178,8 @@ struct PlayerSeekBar: View {
                 let width = max(geometry.size.width, 1)
                 let progress = CGFloat(min(max(time / total, 0), 1))
                 let filledWidth = width * progress
+                // 拖动中轨道变粗（长按效果）
                 let trackH: CGFloat = showBubble ? 15 : 7
-                // 气泡水平方向夹在轨道内，避免贴边溢出
-                let bubbleX = max(-width / 2 + 31, min(width / 2 - 31, filledWidth - width / 2))
 
                 ZStack(alignment: .leading) {
                     Capsule()
@@ -1205,18 +1213,6 @@ struct PlayerSeekBar: View {
                             showBubble = false
                         }
                 )
-                .overlay(alignment: .top) {
-                    if showBubble {
-                        Text(playerTimeText(time))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.black.opacity(0.5), in: Capsule())
-                            .offset(x: bubbleX, y: -30)
-                            .transition(.scale(scale: 0.9).combined(with: .opacity))
-                    }
-                }
             }
             .frame(height: 30)
 
@@ -1278,7 +1274,7 @@ struct PlayerLikeButton: View {
 
 // MARK: - 音量条
 
-/// 常驻横向音量条：左右为喇叭图标，中间可拖拽。
+/// 常驻横向音量条：左右为喇叭图标，中间可拖拽（拖动中轨道变粗，与进度条同款长按效果）。
 struct PlayerVolumeControl: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
@@ -1295,13 +1291,14 @@ struct PlayerVolumeControl: View {
             GeometryReader { geo in
                 let width = max(geo.size.width, 1)
                 let fraction = isDragging ? dragValue : Double(player.volume)
+                let trackH: CGFloat = isDragging ? 15 : 7
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(.white.opacity(0.18))
-                        .frame(height: 7)
+                        .frame(height: trackH)
                     Capsule()
                         .fill(.white.opacity(0.55))
-                        .frame(width: width * CGFloat(min(max(fraction, 0), 1)), height: 7)
+                        .frame(width: width * CGFloat(min(max(fraction, 0), 1)), height: trackH)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
@@ -1329,6 +1326,7 @@ struct PlayerVolumeControl: View {
                 .frame(width: 16, height: 20)
         }
         .frame(height: 20)
+        .animation(.spring(response: 0.22, dampingFraction: 0.8), value: isDragging)
     }
 }
 

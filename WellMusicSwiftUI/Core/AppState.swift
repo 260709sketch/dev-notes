@@ -44,6 +44,11 @@ final class AppState: ObservableObject {
     @Published var playHistory: [MusicItem] = [] {
         didSet { persistJSON(playHistory, key: "favorites.history") }
     }
+    /// 按歌曲保存的歌词偏移（秒）。key = "平台|平台内id"，只在用户调整过该曲时存在。
+    /// 未调整过的歌不受影响（回落全局 `lyricOffset`）。
+    @Published var songLyricOffsets: [String: Double] = [:] {
+        didSet { persistJSON(songLyricOffsets, key: "lyrics.songOffsets") }
+    }
     /// 自建歌单
     @Published var playlists: [Playlist] = [] {
         didSet { persistJSON(playlists, key: "playlists.all") }
@@ -91,6 +96,7 @@ final class AppState: ObservableObject {
         favoritePlaylists = loadJSON([RemotePlaylist].self, key: "favorites.playlists") ?? []
         playHistory = loadJSON([MusicItem].self, key: "favorites.history") ?? []
         playlists = loadJSON([Playlist].self, key: "playlists.all") ?? []
+        songLyricOffsets = loadJSON([String: Double].self, key: "lyrics.songOffsets") ?? []
     }
 
     // MARK: 持久化工具
@@ -124,5 +130,24 @@ final class AppState: ObservableObject {
         playHistory.removeAll { MusicItem.isSame($0, track) }
         playHistory.insert(track, at: 0)
         if playHistory.count > 500 { playHistory = Array(playHistory.prefix(500)) }
+    }
+
+    // MARK: 歌词偏移（按曲记忆）
+
+    /// 按曲偏移的 key（与播放桥 `PlayerService.currentSongOffsetKey` 同构）。
+    static func songOffsetKey(sourcePlatform: String?, platformId: String?) -> String? {
+        guard let platformId, !platformId.isEmpty else { return nil }
+        return "\(sourcePlatform ?? "")|\(platformId)"
+    }
+
+    /// 生效歌词偏移：调整过的歌用专属值，未调整过的回落全局值。
+    func effectiveLyricOffset(forKey key: String?) -> Double {
+        if let key, let value = songLyricOffsets[key] { return value }
+        return lyricOffset
+    }
+
+    /// 保存某首歌的专属歌词偏移（调整时调用）。
+    func setSongLyricOffset(_ value: Double, forKey key: String) {
+        songLyricOffsets[key] = value
     }
 }

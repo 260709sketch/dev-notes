@@ -264,6 +264,19 @@ final class PlayerService: ObservableObject {
     /// 实时输出延迟（歌词对齐计算用；不发布，避免周期性重算播放页）。
     private(set) var liveLatency: TimeInterval = 0
 
+    // MARK: - 歌词偏移（按曲记忆）
+
+    /// 当前歌曲的歌词偏移 key（"平台|平台内id"）。
+    var currentSongOffsetKey: String? {
+        guard let t = currentTrack else { return nil }
+        return AppState.songOffsetKey(sourcePlatform: t.sourcePlatform, platformId: t.platformSongId)
+    }
+
+    /// 生效歌词偏移：调整过的歌 = 专属值；未调整过 = 全局值。
+    var effectiveLyricOffset: Double {
+        AppState.shared.effectiveLyricOffset(forKey: currentSongOffsetKey)
+    }
+
     /// 上次实测输出延迟的时刻（限频闸门，见 `refreshOutputLatency`）。
     private var lastLatencyMeasureAt: TimeInterval = 0
     /// 输出路由变化观察者（插拔耳机 / 连蓝牙 / 切 AirPlay → 立刻重测）
