@@ -20,46 +20,37 @@ final class KugouMusicAPI {
 
     /// 搜索歌曲。
     ///
-    /// 主通道对齐 RN 版：`complexsearch.kugou.com/v2/search/song`（返回 JSONP，
-    /// 需剥掉 `callback(...)` 外壳）。该接口对 UA/Referer 敏感，缺 Referer 会返回空。
-    /// 主通道失败时回退旧的 `mobilecdn.kugou.com` 接口。
+    /// 主通道：`songsearch.kugou.com/song_search_v2`（https 可用，需 `platform=AndroidFilter`
+    /// + 桌面 Chrome UA，参考 Kumone KugouAPI.searchSongs）。
+    /// 回退：`mobilecdn.kugou.com/api/v3/search/song` —— ⚠️ mobilecdn 系接口**必须用 http**，
+    /// https 会返回空响应（curl 实测 + 参考源码注释双确认），这是此前酷狗搜索全挂的根因。
     func search(keyword: String, limit: Int = 30) async throws -> [MusicItem] {
-        if let results = try? await complexSearch(keyword, limit: limit), !results.isEmpty {
+        if let results = await songSearchV2(keyword, limit: limit), !results.isEmpty {
             return results
         }
         return try await mobilecdnSearch(keyword, limit: limit)
     }
 
-    /// RN 同款：complexsearch JSONP 接口。
-    private func complexSearch(_ keyword: String, limit: Int) async throws -> [MusicItem] {
-        let clientTime = Int(Date().timeIntervalSince1970 * 1000)
-        let url = "https://complexsearch.kugou.com/v2/search/song?" +
-            "callback=callback&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)" +
-            "&bitrate=0&isfuzzy=0&inputtype=0&platform=WebFilter&userid=-1&clientver=2000" +
-            "&iscorrection=1&privilege_filter=0&filter=10&token=&appid=1014" +
-            "&clienttime=\(clientTime)&mid=1&uuid=1&dfid=2&signature="
-        let resp = try await NetworkClient.shared.get(url, headers: [
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    /// 主通道：song_search_v2（lx-music 同款）。
+    private func songSearchV2(_ keyword: String, limit: Int) async -> [MusicItem]? {
+        let url = "https://songsearch.kugou.com/song_search_v2?" +
+            "platform=AndroidFilter&iscorrection=1&keyword=\(kugouEncode(keyword))&hifiquality=0" +
+            "&pagesize=\(limit)&PrivilegeFilter=0&page=1"
+        guard let resp = try? await NetworkClient.shared.get(url, headers: [
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": "https://www.kugou.com/",
-        ])
-        guard var text = resp.string else { return [] }
-        // 剥 JSONP 外壳：callback({...}) → {...}
-        if let range = text.range(of: "callback("), text.hasSuffix(")") {
-            text = String(text[range.upperBound...].dropLast())
-        }
-        guard let data = text.data(using: .utf8),
-              let json = NetworkClient.jsonObject(data),
-              (json["status"] as? Int) == 1,
-              let body = json["data"] as? [String: Any],
-              let lists = body["lists"] as? [[String: Any]] else {
-            return []
+        ]),
+              let json = NetworkClient.jsonObject(resp.data),
+              let data = json["data"] as? [String: Any],
+              let lists = data["lists"] as? [[String: Any]] else {
+            return nil
         }
         return lists.compactMap { parseSong($0) }
     }
 
-    /// 备用：mobilecdn v3 接口。
+    /// 备用：mobilecdn v3 接口（必须 http）。
     private func mobilecdnSearch(_ keyword: String, limit: Int) async throws -> [MusicItem] {
-        let url = "https://mobilecdn.kugou.com/api/v3/search/song?" +
+        let url = "http://mobilecdn.kugou.com/api/v3/search/song?" +
             "format=json&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)" +
             "&showtype=1&plat=2&version=8990"
         let resp = try await NetworkClient.shared.get(url, headers: headers)
@@ -78,9 +69,9 @@ final class KugouMusicAPI {
             ?? (dict["file_hash"] as? String) ?? ""
         guard !hash.isEmpty else { return nil }
 
-        let title = (dict["songname"] as? String) ?? (dict["SongName"] as? String)
-            ?? (dict["name"] as? String) ?? (dict["title"] as? String)
-            ?? Self.titleFromFilename(dict["filename"] as? String)
+        let title = (dict["OriSongName"] as? String) ?? (dict["songname"] as? String)
+            ?? (dict["SongName"] as? String) ?? (dict["name"] as? String)
+            ?? (dict["title"] as? String) ?? Self.titleFromFilename(dict["filename"] as? String)
         let albumName = (dict["album_name"] as? String) ?? (dict["albumname"] as? String)
             ?? (dict["AlbumName"] as? String) ?? (dict["album"] as? String) ?? "未知专辑"
         var artist = (dict["artist_name"] as? String) ?? (dict["singername"] as? String)
@@ -122,9 +113,10 @@ final class KugouMusicAPI {
         )
     }
 
-    /// 封面回退链：imgUrl → album_pic → cover → imgurl → trans_param.union_cover → 按 albumId 拼图床。
+    /// 封面回退链：Image/AlbumImage/Img（song_search_v2 键名）→ imgUrl → album_pic → cover
+    /// → imgurl → trans_param.union_cover → 按 albumId 拼图床。
     private static func coverURL(from dict: [String: Any], albumId: String) -> String? {
-        for key in ["imgUrl", "album_pic", "cover", "imgurl", "singer_pic"] {
+        for key in ["Image", "image", "AlbumImage", "Img", "img", "imgUrl", "album_pic", "cover", "imgurl", "singer_pic"] {
             if let raw = dict[key] as? String, !raw.isEmpty, let normalized = raw.kugouNormalizedImage {
                 return normalized
             }
@@ -196,7 +188,7 @@ final class KugouMusicAPI {
     }
 
     private func fetchSingerList(keyword: String, limit: Int) async -> [WellArtistSummary] {
-        let url = "https://mobilecdn.kugou.com/api/v3/search/singer?" +
+        let url = "http://mobilecdn.kugou.com/api/v3/search/singer?" +
             "format=json&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)"
         guard let resp = try? await NetworkClient.shared.get(url, headers: headers),
               let json = NetworkClient.jsonObject(resp.data) else { return [] }
@@ -281,7 +273,7 @@ final class KugouMusicAPI {
     }
 
     private static func artistAvatar(singerId: String, headers: [String: String]) async -> String? {
-        let url = "https://mobilecdn.kugou.com/api/v3/singer/info?singerid=\(singerId)"
+        let url = "http://mobilecdn.kugou.com/api/v3/singer/info?singerid=\(singerId)"
         guard let resp = try? await NetworkClient.shared.get(url, headers: headers),
               let json = NetworkClient.jsonObject(resp.data),
               let info = json["data"] as? [String: Any],
@@ -292,7 +284,7 @@ final class KugouMusicAPI {
     // MARK: - 搜索专辑
 
     func searchAlbums(keyword: String, limit: Int = 30) async throws -> [WellAlbumSummary] {
-        let url = "https://mobilecdn.kugou.com/api/v3/search/album?" +
+        let url = "http://mobilecdn.kugou.com/api/v3/search/album?" +
             "format=json&keyword=\(kugouEncode(keyword))&page=1&pagesize=\(limit)"
         let resp = try await NetworkClient.shared.get(url, headers: headers)
         guard let json = NetworkClient.jsonObject(resp.data),
@@ -325,7 +317,7 @@ final class KugouMusicAPI {
         // 1) 基本信息
         var singerName = ""
         var avatar: String?
-        let infoURL = "https://mobilecdn.kugou.com/api/v3/singer/info?singerid=\(id)"
+        let infoURL = "http://mobilecdn.kugou.com/api/v3/singer/info?singerid=\(id)"
         if let resp = try? await NetworkClient.shared.get(infoURL, headers: headers),
            let json = NetworkClient.jsonObject(resp.data),
            let info = json["data"] as? [String: Any] {
@@ -337,7 +329,7 @@ final class KugouMusicAPI {
         }
 
         // 2) 热门歌曲
-        let songURL = "https://mobilecdn.kugou.com/api/v3/singer/song?singerid=\(id)&page=1&pagesize=50"
+        let songURL = "http://mobilecdn.kugou.com/api/v3/singer/song?singerid=\(id)&page=1&pagesize=50"
         var songs: [MusicItem] = []
         if let resp = try? await NetworkClient.shared.get(songURL, headers: headers),
            let json = NetworkClient.jsonObject(resp.data),
@@ -351,7 +343,7 @@ final class KugouMusicAPI {
     /// 歌手歌曲分页（展开全部懒加载用）。
     func singerSongs(singerId: String, page: Int = 1, limit: Int = 30) async throws -> (list: [MusicItem], total: Int) {
         let id = singerId.replacingOccurrences(of: "kugou_", with: "")
-        let url = "https://mobilecdn.kugou.com/api/v3/singer/song?singerid=\(id)&page=\(page)&pagesize=\(limit)"
+        let url = "http://mobilecdn.kugou.com/api/v3/singer/song?singerid=\(id)&page=\(page)&pagesize=\(limit)"
         guard let resp = try? await NetworkClient.shared.get(url, headers: headers),
               let json = NetworkClient.jsonObject(resp.data),
               let data = json["data"] as? [String: Any],
@@ -363,6 +355,59 @@ final class KugouMusicAPI {
         return (list, (data["total"] as? Int) ?? 0)
     }
 
+    /// 歌手专辑（v5 接口，参考 Kumone KugouAPI.artistAlbums：循环分页拉全量，含 EP/单曲）。
+    func artistAlbums(singerId: String, page: Int = 1, limit: Int = 30) async throws -> (list: [WellAlbumSummary], total: Int, hasMore: Bool) {
+        let id = singerId.replacingOccurrences(of: "kugou_", with: "")
+        let singerName = (try? await singerDetail(singerId: id).name) ?? ""
+
+        var allAlbums: [WellAlbumSummary] = []
+        var total = 0
+        var currentPage = page
+        let pageSize = 30
+
+        while true {
+            let url = "http://mobiles.kugou.com/api/v5/singer/album?singerid=\(id)&page=\(currentPage)&pagesize=\(pageSize)"
+            guard let resp = try? await NetworkClient.shared.get(url, headers: headers),
+                  let json = NetworkClient.jsonObject(resp.data),
+                  let data = json["data"] as? [String: Any],
+                  let info = data["info"] as? [[String: Any]] else {
+                break
+            }
+            if total == 0 {
+                total = (data["total"] as? Int) ?? info.count
+            }
+            let pageAlbums = info.compactMap { item -> WellAlbumSummary? in
+                let albumIdText: String? = (item["albumid"] as? String) ?? (item["album_id"] as? String)
+                let albumIdNumber = Self.intValue(item["albumid"]).map { String($0) }
+                    ?? Self.intValue(item["album_id"]).map { String($0) }
+                let albumId = albumIdText ?? albumIdNumber ?? ""
+                let name = (item["albumname"] as? String) ?? (item["album_name"] as? String) ?? ""
+                guard !name.isEmpty, !albumId.isEmpty else { return nil }
+                var pic = (item["imgurl"] as? String)?.kugouNormalizedImage
+                    ?? (item["album_pic"] as? String)?.kugouNormalizedImage
+                if pic == nil { pic = "https://imge.kugou.com/stdmusic/400/album/\(albumId).jpg" }
+                // 专辑类型：按歌曲数量区分（1首=单曲，2-5首=EP），不过滤全部返回
+                var subType = "专辑"
+                if let songCount = Self.intValue(item["songcount"]) {
+                    if songCount == 1 { subType = "单曲" }
+                    else if songCount > 1 && songCount <= 5 { subType = "EP" }
+                }
+                let publishTime = Self.intValue(item["publish_time"]).map { $0 * 1000 }
+                return WellAlbumSummary(
+                    id: albumId, name: name, picURL: pic,
+                    artistName: singerName.isEmpty ? "未知歌手" : singerName,
+                    platform: .kugou, albumMid: albumId,
+                    albumType: subType, publishTime: publishTime)
+            }
+            allAlbums.append(contentsOf: pageAlbums)
+            // 从 page 起最多循环到 10 页（300 张），防止无限循环
+            if info.count < pageSize || currentPage >= page + 9 { break }
+            currentPage += 1
+        }
+        let hasMore = allAlbums.count < total
+        return (allAlbums, total, hasMore)
+    }
+
     // MARK: - 专辑详情（歌曲列表）
 
     /// 获取专辑歌曲列表。返回 `(albumName, cover, songs)`。
@@ -372,7 +417,7 @@ final class KugouMusicAPI {
 
         var albumName = "未知专辑"
         var cover: String?
-        let infoURL = "https://mobilecdn.kugou.com/api/v3/album/info?albumid=\(id)"
+        let infoURL = "http://mobilecdn.kugou.com/api/v3/album/info?albumid=\(id)"
         if let resp = try? await NetworkClient.shared.get(infoURL, headers: headers),
            let json = NetworkClient.jsonObject(resp.data),
            let info = json["data"] as? [String: Any] {
@@ -388,7 +433,7 @@ final class KugouMusicAPI {
             albumArtist = (info["singername"] as? String) ?? albumArtist
         }
 
-        let songURL = "https://mobilecdn.kugou.com/api/v3/album/song?albumid=\(id)&page=1&pagesize=100"
+        let songURL = "http://mobilecdn.kugou.com/api/v3/album/song?albumid=\(id)&page=1&pagesize=100"
         var songs: [MusicItem] = []
         if let resp = try? await NetworkClient.shared.get(songURL, headers: headers),
            let json = NetworkClient.jsonObject(resp.data),

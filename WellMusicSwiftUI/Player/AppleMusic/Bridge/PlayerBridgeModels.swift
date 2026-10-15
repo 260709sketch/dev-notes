@@ -64,7 +64,7 @@ struct Track: Hashable, Codable, Identifiable {
             id: albumId,
             name: musicItem.album ?? "未知专辑",
             picUrl: musicItem.albumCoverURL,
-            albumMid: musicItem.qqSongMid
+            albumMid: musicItem.qqAlbumMid
         )
 
         return Track(

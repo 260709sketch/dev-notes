@@ -139,24 +139,29 @@ struct WellSearchResult {
 // MARK: - 详情来源
 
 /// 点击搜索卡片后要展开的详情目标。
+///
+/// ⚠️ QQ / 酷狗的详情接口要的是**平台原生 mid**（QQ 专辑 `albummid`、QQ 歌手
+/// `singermid`），不是搜索结果里的数字 id —— 传错会把「按名搜索」的兜底结果
+/// 当成详情展示（用户实测：「专辑进入之后不是这张专辑的歌」）。所以这里
+/// 专门带上 `mid`；网易云只有数字 id，`mid` 传 nil 即可。
 enum WellSearchDetailSource: Hashable {
     case playlist(id: String, platform: MusicSource, name: String)
-    case album(id: String, platform: MusicSource, name: String, artist: String)
-    case artist(id: String, platform: MusicSource, name: String)
+    case album(id: String, platform: MusicSource, name: String, artist: String, mid: String?)
+    case artist(id: String, platform: MusicSource, name: String, mid: String?)
 
     var title: String {
         switch self {
         case .playlist(_, _, let name): return name
-        case .album(_, _, let name, _): return name
-        case .artist(_, _, let name): return name
+        case .album(_, _, let name, _, _): return name
+        case .artist(_, _, let name, _): return name
         }
     }
 
     var platform: MusicSource {
         switch self {
         case .playlist(_, let p, _): return p
-        case .album(_, let p, _, _): return p
-        case .artist(_, let p, _): return p
+        case .album(_, let p, _, _, _): return p
+        case .artist(_, let p, _, _): return p
         }
     }
 }

@@ -314,7 +314,8 @@ struct NowPlayingDestinationView: View {
                 source: .album(id: destination.platformId,
                                platform: destination.platform,
                                name: destination.name,
-                               artist: destination.artistName),
+                               artist: destination.artistName,
+                               mid: destination.platformId),
                 coverURL: destination.coverURL,
                 creatorName: destination.artistName)
         }

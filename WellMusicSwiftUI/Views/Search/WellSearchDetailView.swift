@@ -41,7 +41,7 @@ struct WellSearchDetailView: View {
                             ForEach(albums) { album in
                                 NavigationLink {
                                     WellSearchDetailView(
-                                        source: .album(id: album.id, platform: album.platform, name: album.name, artist: album.artistName),
+                                        source: .album(id: album.id, platform: album.platform, name: album.name, artist: album.artistName, mid: album.albumMid),
                                         coverURL: album.picURL)
                                 } label: {
                                     HStack(spacing: 12) {
@@ -115,9 +115,17 @@ struct WellSearchDetailView: View {
         isLoading = true
         tracks = await SearchService.shared.detailTracks(for: source)
 
-        // 歌手主页补充专辑货架（网易云：api/artist/albums 明文可用，内部 offset 翻页拉全量）
-        if case .artist(let artistId, let platform, _) = source, platform == .netease {
-            albums = (try? await NeteaseMusicAPI.shared.artistAlbums(id: artistId))?.albums ?? []
+        // 歌手主页补充专辑货架：网易云走真实接口；QQ / 酷狗各自走歌手专辑接口
+        if case .artist(let artistId, let platform, _, let mid) = source {
+            switch platform {
+            case .qq:
+                let key = (mid?.isEmpty == false) ? (mid ?? artistId) : artistId
+                albums = (try? await QQMusicAPI.shared.artistAlbums(singerMid: key, page: 1, limit: 50))?.list ?? []
+            case .kugou:
+                albums = (try? await KugouMusicAPI.shared.artistAlbums(singerId: artistId, page: 1, limit: 30))?.list ?? []
+            default:
+                albums = (try? await NeteaseMusicAPI.shared.artistAlbums(id: artistId))?.albums ?? []
+            }
         }
 
         isLoading = false

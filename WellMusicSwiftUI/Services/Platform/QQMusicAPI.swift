@@ -150,11 +150,111 @@ final class QQMusicAPI {
         return []
     }
 
+    // MARK: - 无签名通用请求（与参考实现同款）
+
+    /// `musicu.fcg` GET 请求：请求体 JSON 整体 URL 编码进 `data=` 参数。
+    /// 参考实现验证过：搜索歌手 / 专辑、歌手歌曲 / 专辑这类接口**无需 zzc 签名**，
+    /// 走 GET 反而比签名移动端更稳（签名对请求体字节逐字节校验，字段一多容易失配）。
+    private func musicuGET(_ body: [String: Any]) async -> [String: Any]? {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: body),
+              let jsonString = String(data: jsonData, encoding: .utf8),
+              let encoded = jsonString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(Self.musicuAPI)?data=\(encoded)") else { return nil }
+        guard let resp = try? await NetworkClient.shared.get(url.absoluteString, headers: ["Referer": "https://y.qq.com/"]) else { return nil }
+        return NetworkClient.jsonObject(resp.data)
+    }
+
+    /// 桌面版搜索（`DoSearchForQQMusicDesktop`，无签名）。
+    /// 返回原始条目数组；`searchType`：1 = 歌手、2 = 专辑。
+    private func desktopSearchItems(_ keyword: String, searchType: Int, limit: Int, page: Int) async -> [[String: Any]] {
+        let body: [String: Any] = [
+            "comm": ["ct": 19, "cv": 1859, "uin": "0", "format": "json"],
+            "req_1": [
+                "module": "music.search.SearchCgiService",
+                "method": "DoSearchForQQMusicDesktop",
+                "param": [
+                    "query": keyword,
+                    "num_per_page": limit,
+                    "page_num": page,
+                    "search_type": searchType,
+                    "grp": 1,
+                ],
+            ],
+        ]
+        guard let json = await musicuGET(body),
+              let req1 = json["req_1"] as? [String: Any],
+              (req1["code"] as? Int) == 0,
+              let reqData = req1["data"] as? [String: Any],
+              let bodyDict = reqData["body"] as? [String: Any] else { return [] }
+        let key = searchType == 1 ? "singer" : (searchType == 2 ? "album" : "song")
+        guard let bucket = bodyDict[key] as? [String: Any] else { return [] }
+        return bucket["list"] as? [[String: Any]] ?? []
+    }
+
+    /// 老 web 搜索接口（无需签名）：歌曲 t=0 / 专辑 t=8。
+    private func webSearchItems(_ keyword: String, type: Int, limit: Int, key: String) async -> [[String: Any]] {
+        guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&w=\(encoded)&n=\(limit)&p=1&t=\(type)") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+                     forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (json["code"] as? Int) == 0,
+              let dataDict = json["data"] as? [String: Any],
+              let bucket = dataDict[key] as? [String: Any] else { return [] }
+        return bucket["list"] as? [[String: Any]] ?? []
+    }
+
     // MARK: - 搜索歌曲（search_type = 0）
 
     func search(keyword: String, limit: Int = 30) async throws -> [MusicItem] {
-        try await searchItems(keyword, searchType: 0, limit: limit, page: 1, key: "item_song")
+        // 主通道：老 web 接口 search_for_qq_cp（无需签名，实测结果全）。
+        let web = await webSearchSongs(keyword, limit: limit)
+        if !web.isEmpty { return web }
+        // 回退：移动端签名接口
+        return try await searchItems(keyword, searchType: 0, limit: limit, page: 1, key: "item_song")
             .compactMap { parseMobileSong($0) }
+    }
+
+    /// `search_for_qq_cp` 歌曲搜索（t=0，无需签名；与参考实现同款）。
+    private func webSearchSongs(_ keyword: String, limit: Int) async -> [MusicItem] {
+        guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?format=json&w=\(encoded)&n=\(limit)&p=1&t=0") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+                     forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (json["code"] as? Int) == 0,
+              let dataDict = json["data"] as? [String: Any],
+              let songDict = dataDict["song"] as? [String: Any],
+              let list = songDict["list"] as? [[String: Any]] else { return [] }
+        return list.compactMap { dict -> MusicItem? in
+            guard let mid = dict["songmid"] as? String, !mid.isEmpty else { return nil }
+            let title = (dict["songname"] as? String) ?? (dict["name"] as? String) ?? "未知歌曲"
+            let singers = (dict["singer"] as? [[String: Any]])?
+                .compactMap { $0["name"] as? String } ?? []
+            let albumMid = (dict["albummid"] as? String) ?? ""
+            var item = MusicItem(
+                source: .qq,
+                title: title,
+                artist: singers.isEmpty ? nil : singers.joined(separator: "/"),
+                album: dict["albumname"] as? String,
+                albumCoverURL: albumMid.isEmpty ? nil : Self.albumCoverImage(albumMid),
+                duration: TimeInterval((dict["interval"] as? Int) ?? 0),
+                qqSongMid: mid
+            )
+            if let mediaMid = dict["strMediaMid"] as? String, !mediaMid.isEmpty {
+                item.qqMediaMid = mediaMid
+            }
+            if !albumMid.isEmpty { item.qqAlbumMid = albumMid }
+            return item
+        }
     }
 
     // MARK: - 字段解析（移动端 item_song 结构）
@@ -188,6 +288,7 @@ final class QQMusicAPI {
             qqSongMid: mid
         )
         if !mediaMid.isEmpty { item.qqMediaMid = mediaMid }
+        if !albumMid.isEmpty { item.qqAlbumMid = albumMid }
         return item
     }
 
@@ -206,7 +307,7 @@ final class QQMusicAPI {
     }
 
     private func parseMobileAlbum(_ dict: [String: Any]) -> WellAlbumSummary? {
-        let mid = (dict["mid"] as? String) ?? (dict["albummid"] as? String) ?? ""
+        let mid = (dict["mid"] as? String) ?? (dict["albummid"] as? String) ?? (dict["albumMID"] as? String) ?? ""
         let name = (dict["name"] as? String) ?? (dict["albumname"] as? String) ?? ""
         guard !name.isEmpty else { return nil }
         let id = (dict["id"] as? Int) ?? abs(mid.hashValue)
@@ -432,20 +533,55 @@ final class QQMusicAPI {
     // MARK: - 搜索歌手 / 专辑（对外接口）
 
     func searchArtists(keyword: String, limit: Int = 30) async throws -> [WellArtistSummary] {
-        try await searchItems(keyword, searchType: 1, limit: limit, page: 1, key: "item_singer")
-            .compactMap { parseMobileArtist($0) }
+        // 主通道：桌面版无签名接口（实测稳定）
+        var list = await desktopSearchItems(keyword, searchType: 1, limit: limit, page: 1)
+        // 回退 1：移动端签名接口
+        if list.isEmpty {
+            list = await searchItems(keyword, searchType: 1, limit: limit, page: 1, key: "item_singer")
+        }
+        // 回退 2：smartbox 联想（结果少但几乎永不挂）
+        if list.isEmpty {
+            list = await smartboxArtists(keyword, limit: limit)
+        }
+        return list.compactMap { parseMobileArtist($0) }
+    }
+
+    /// smartbox 联想接口兜底（歌手条目在 `data.singer.itemlist`）。
+    private func smartboxArtists(_ keyword: String, limit: Int) async -> [[String: Any]] {
+        guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?format=json&s_from=pc_header&type=1&key=\(encoded)") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        req.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let dataDict = json["data"] as? [String: Any],
+              let singerDict = dataDict["singer"] as? [String: Any],
+              let items = singerDict["itemlist"] as? [[String: Any]] else { return [] }
+        return Array(items.prefix(limit))
     }
 
     func searchAlbums(keyword: String, limit: Int = 30) async throws -> [WellAlbumSummary] {
-        try await searchItems(keyword, searchType: 2, limit: limit, page: 1, key: "item_album")
-            .compactMap { parseMobileAlbum($0) }
+        // 主通道：桌面版无签名接口
+        var list = await desktopSearchItems(keyword, searchType: 2, limit: limit, page: 1)
+        // 回退 1：老 web 接口 client_search_cp（t=8 专辑）
+        if list.isEmpty {
+            list = await webSearchItems(keyword, type: 8, limit: limit, key: "album")
+        }
+        // 回退 2：移动端签名接口
+        if list.isEmpty {
+            list = await searchItems(keyword, searchType: 2, limit: limit, page: 1, key: "item_album")
+        }
+        return list.compactMap { parseMobileAlbum($0) }
     }
 
     // MARK: - 歌手歌曲（展开全部 / 详情页用）
 
     func singerSongs(singerMid: String, begin: Int = 0, num: Int = 30) async throws -> (list: [MusicItem], total: Int, hasMore: Bool) {
-        let payload: OrderedJSON = .object([
-            ("comm", mobileComm()),
+        // 主通道：无签名 musicuGET（参考 Kumone，comm {ct:24, cv:0} 即可）。
+        // 失败再回退签名版（老代码，部分设备签名接口不稳）。
+        let plainBody: OrderedJSON = .object([
+            ("comm", .object([("ct", .int(24)), ("cv", .int(0))])),
             ("req", .object([
                 ("module", .string("musichall.song_list_server")),
                 ("method", .string("GetSingerSongList")),
@@ -457,8 +593,24 @@ final class QQMusicAPI {
                 ])),
             ])),
         ])
-        guard let json = try await signedRequest(payload),
-              let req = json["req"] as? [String: Any],
+        var json: [String: Any]? = await musicuGET(plainBody)
+        if json == nil {
+            let payload: OrderedJSON = .object([
+                ("comm", mobileComm()),
+                ("req", .object([
+                    ("module", .string("musichall.song_list_server")),
+                    ("method", .string("GetSingerSongList")),
+                    ("param", .object([
+                        ("singerMid", .string(singerMid)),
+                        ("begin", .int(begin)),
+                        ("num", .int(num)),
+                        ("order", .int(1)),
+                    ])),
+                ])),
+            ])
+            json = try? await signedRequest(payload)
+        }
+        guard let req = json?["req"] as? [String: Any],
               let data = req["data"] as? [String: Any] else {
             return ([], 0, false)
         }
@@ -469,6 +621,61 @@ final class QQMusicAPI {
             return parseMobileSong(song)
         }
         return (list, total, begin + list.count < total)
+    }
+
+    // MARK: - 歌手专辑（get_singer_album，无签名 musicuGET）
+
+    func artistAlbums(singerMid: String, page: Int = 1, limit: Int = 30) async throws -> (list: [WellAlbumSummary], total: Int, hasMore: Bool) {
+        let body: OrderedJSON = .object([
+            ("comm", .object([("ct", .int(24)), ("cv", .int(0))])),
+            ("singerAlbum", .object([
+                ("method", .string("get_singer_album")),
+                ("param", .object([
+                    ("singermid", .string(singerMid)),
+                    ("order", .string("time")),
+                    ("begin", .int((page - 1) * limit)),
+                    ("num", .int(limit)),
+                    ("exstatus", .int(1)),
+                ])),
+                ("module", .string("music.web_singer_info_svr")),
+            ])),
+        ])
+        guard let json = await musicuGET(body),
+              let singerAlbum = json["singerAlbum"] as? [String: Any],
+              let albumData = singerAlbum["data"] as? [String: Any],
+              let rawList = albumData["list"] as? [[String: Any]] else {
+            return ([], 0, false)
+        }
+        let total = (albumData["total"] as? Int) ?? (albumData["totalNum"] as? Int) ?? rawList.count
+        let list = rawList.compactMap { dict -> WellAlbumSummary? in
+            // get_singer_album 返回字段：albumid/album_mid/album_name/singer_name/pub_time/albumtype/song_count/ftype
+            let albumID = (dict["albumid"] as? Int) ?? abs(((dict["album_mid"] as? String) ?? "").hashValue)
+            let name = (dict["album_name"] as? String) ?? (dict["albumName"] as? String) ?? (dict["name"] as? String) ?? ""
+            guard !name.isEmpty else { return nil }
+            let mid = (dict["album_mid"] as? String) ?? (dict["albumMID"] as? String) ?? (dict["mid"] as? String) ?? ""
+            let pic = mid.isEmpty ? nil : Self.albumCoverImage(mid, size: 480)
+            let singerName = (dict["singer_name"] as? String) ?? (dict["singerName"] as? String) ?? ""
+            // pub_time 是秒级时间戳 → 存毫秒（与网易云对齐）
+            let pubSeconds = (dict["pub_time"] as? Int) ?? (dict["publishTime"] as? Int) ?? 0
+            let albumType = (dict["albumtype"] as? String) ?? (dict["album_type"] as? String) ?? (dict["albumType"] as? String) ?? ""
+            let songCount = (dict["song_count"] as? Int) ?? (dict["songCount"] as? Int) ?? (dict["songcount"] as? Int) ?? (dict["total"] as? Int) ?? (dict["count"] as? Int) ?? (dict["size"] as? Int) ?? 0
+            let ftype = (dict["ftype"] as? Int) ?? 0
+            var subType = "专辑"
+            if albumType.contains("EP") || albumType.contains("单曲") || ftype == 10 {
+                subType = songCount <= 1 ? "单曲" : "EP"
+            } else if songCount == 1 {
+                subType = "单曲"
+            } else if songCount > 1 && songCount <= 5 {
+                subType = "EP"
+            }
+            return WellAlbumSummary(
+                id: "\(albumID)", name: name, picURL: pic,
+                artistName: singerName.isEmpty ? "未知歌手" : singerName,
+                platform: .qq, albumMid: mid.isEmpty ? nil : mid,
+                albumType: subType,
+                publishTime: pubSeconds > 0 ? pubSeconds * 1000 : nil)
+        }
+        return (list, total, list.count < total)
     }
 
     // MARK: - 专辑歌曲（专辑详情展开）

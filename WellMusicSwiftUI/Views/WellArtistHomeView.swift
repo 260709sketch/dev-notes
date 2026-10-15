@@ -204,8 +204,9 @@ struct WellArtistHomeView: View {
                 ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
                     NavigationLink {
                         WellPlaylistDetailView(
-                            source: .album(id: album.id, platform: .netease,
-                                           name: album.name, artist: album.artistName),
+                            source: .album(id: album.id, platform: album.platform,
+                                           name: album.name, artist: album.artistName,
+                                           mid: album.albumMid),
                             coverURL: album.picURL,
                             creatorName: album.artistName)
                     } label: {
@@ -302,7 +303,7 @@ struct WellArtistHomeView: View {
         }
 
         let songsResult = await loadTopSongs(id: realId, mid: realMid)
-        let albumsResult = await loadAlbums(id: realId)
+        let albumsResult = await loadAlbums(id: realId, mid: realMid)
 
         hotSongs = songsResult.songs
         albums = albumsResult.albums
@@ -356,11 +357,23 @@ struct WellArtistHomeView: View {
         return ([], nil)
     }
 
-    /// 按平台取歌手专辑。网易云有真实接口（含平台总数）；QQ / 酷狗退回「按歌手名搜专辑」。
-    private func loadAlbums(id: String) async -> (albums: [WellAlbumSummary], count: Int?) {
+    /// 按平台取歌手专辑。QQ 走 get_singer_album（需 mid）、酷狗走 v5 singer/album（需数字 id）；
+    /// 网易云有真实接口（含平台总数）；失败回退「按歌手名搜专辑」。
+    private func loadAlbums(id: String, mid: String?) async -> (albums: [WellAlbumSummary], count: Int?) {
         switch platform {
-        case .qq, .kugou:
-            break
+        case .qq:
+            let key = (mid?.isEmpty == false) ? (mid ?? id) : id
+            if !key.isEmpty,
+               let result = try? await QQMusicAPI.shared.artistAlbums(singerMid: key, page: 1, limit: 50),
+               !result.list.isEmpty {
+                return (result.list, result.total)
+            }
+        case .kugou:
+            if !id.isEmpty,
+               let result = try? await KugouMusicAPI.shared.artistAlbums(singerId: id, page: 1, limit: 30),
+               !result.list.isEmpty {
+                return (result.list, result.total)
+            }
         default:
             if !id.isEmpty,
                let result = try? await NeteaseMusicAPI.shared.artistAlbums(id: id),

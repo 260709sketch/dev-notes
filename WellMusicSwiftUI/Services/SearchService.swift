@@ -107,18 +107,21 @@ final class SearchService {
             guard platform == .netease else { return [] }
             return (try? await NeteaseMusicAPI.shared.playlistTracks(id: id)) ?? []
 
-        case .album(let id, let platform, let name, let artist):
+        case .album(let id, let platform, let name, let artist, let mid):
             switch platform {
             case .netease:
                 let tracks = (try? await NeteaseMusicAPI.shared.albumTracks(id: id)) ?? []
                 if !tracks.isEmpty { return tracks }
             case .qq:
-                // QQ 专辑：用 albumMid（无 mid 时退回 id）
-                let tracks = (try? await QQMusicAPI.shared.albumSongs(albumMid: id)) ?? []
+                // QQ 专辑详情接口要的是 **albummid**（字母串）；
+                // 传数字 id 会拿不到数据，然后掉进「按专辑名搜歌」的兜底 ——
+                // 展示的就不是这张专辑的歌了（用户实测反馈）。
+                let albumMid = mid ?? id
+                let tracks = (try? await QQMusicAPI.shared.albumSongs(albumMid: albumMid)) ?? []
                 if !tracks.isEmpty { return tracks }
             case .kugou:
                 // 酷狗专辑：真实专辑歌曲接口
-                if let detail = try? await KugouMusicAPI.shared.albumDetail(albumId: id),
+                if let detail = try? await KugouMusicAPI.shared.albumDetail(albumId: mid ?? id),
                    !detail.songs.isEmpty {
                     return detail.songs
                 }
@@ -127,18 +130,19 @@ final class SearchService {
             }
             return await fallbackSearchTracks("\(name) \(artist)", platform: platform)
 
-        case .artist(let id, let platform, let name):
+        case .artist(let id, let platform, let name, let mid):
             switch platform {
             case .netease:
                 let tracks = (try? await NeteaseMusicAPI.shared.artistTopSongs(id: id)) ?? []
                 if !tracks.isEmpty { return tracks }
             case .qq:
-                // QQ 歌手歌曲（musichall.song_list_server）
-                let result = try? await QQMusicAPI.shared.singerSongs(singerMid: id, begin: 0, num: 50)
+                // QQ 歌手歌曲要的是 **singermid**（字母串），不是数字歌手 id
+                let singerMid = mid ?? id
+                let result = try? await QQMusicAPI.shared.singerSongs(singerMid: singerMid, begin: 0, num: 50)
                 if let list = result?.list, !list.isEmpty { return list }
             case .kugou:
                 // 酷狗歌手歌曲
-                if let detail = try? await KugouMusicAPI.shared.singerDetail(singerId: id),
+                if let detail = try? await KugouMusicAPI.shared.singerDetail(singerId: mid ?? id),
                    !detail.songs.isEmpty {
                     return detail.songs
                 }

@@ -269,7 +269,8 @@ struct SearchView: View {
             NavigationLink {
                 WellPlaylistDetailView(
                     source: .album(id: album.id, platform: album.platform,
-                                   name: album.name, artist: album.artistName),
+                                   name: album.name, artist: album.artistName,
+                                   mid: album.albumMid),
                     coverURL: album.picURL,
                     creatorName: album.artistName)
             } label: {
