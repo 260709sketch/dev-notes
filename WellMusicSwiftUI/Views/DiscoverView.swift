@@ -22,6 +22,9 @@ struct DiscoverView: View {
     // ★ 2026-10-15 用户：推荐歌单下方新增「我的歌单」横滑区（网易云登录后显示）
     @ObservedObject private var session = NeteaseSession.shared
     @State private var myPlaylists: [WellPlaylistSummary] = []
+    /// 「我喜欢的音乐 / 最近播放」两张入口卡要读本地收藏数与播放历史封面
+    ///（只读这两个值，**不订阅 PlayerCore**，遵守本页性能铁律）。
+    @EnvironmentObject private var appState: AppState
     @State private var newAlbums: [WellAlbumSummary] = []
     @State private var toplists: [WellToplistSummary] = []
     @State private var artists: [WellArtistSummary] = []
@@ -43,6 +46,7 @@ struct DiscoverView: View {
                     dailySection
                     recommendedSection
                     myPlaylistsSection
+                    myMusicSection
                     newAlbumsSection
                     artistsSection
                 }
@@ -153,6 +157,74 @@ struct DiscoverView: View {
                     .modifier(WellCardEntrance(index: index, itemID: "mypl-\(pl.id)"))
                 }
             }
+        }
+    }
+
+    // MARK: - 我的音乐（我喜欢的音乐 / 最近播放 / 听歌排行 / 我的云盘）
+
+    /// 网易云「我喜欢的音乐」官方默认封面。
+    private static let likedMusicCover = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+
+    /// ★ 2026-10-15 用户：四张个人入口卡从「我的」页挪到发现页，
+    /// 要求与「推荐歌单」一样的左右滑 —— 统一走 `WellShelf` 横向货架 +
+    /// `WellFeatureCard` 156pt 方卡（与 `WellCoverCard` 同尺寸同内衬）。
+    @ViewBuilder
+    private var myMusicSection: some View {
+        WellShelf(title: "我的音乐", rowHeight: 220) {
+            NavigationLink {
+                NeteaseLikedSongsView()
+            } label: {
+                WellFeatureCard(
+                    title: "我喜欢的音乐",
+                    subtitle: "\(appState.favoriteTracks.count) 首",
+                    icon: "heart.fill",
+                    coverURL: Self.likedMusicCover,
+                    gradient: [Color(red: 0.88, green: 0.24, blue: 0.30),
+                               Color(red: 0.65, green: 0.14, blue: 0.22)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 0, itemID: "my-liked"))
+
+            NavigationLink {
+                RecentPlaysView()
+            } label: {
+                WellFeatureCard(
+                    title: "最近播放",
+                    subtitle: "最近听过",
+                    icon: "clock.arrow.circlepath",
+                    coverURL: appState.playHistory.first?.albumCoverURL
+                        ?? appState.favoriteTracks.first?.albumCoverURL,
+                    gradient: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                               Color(red: 0.41, green: 0.28, blue: 0.65)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 1, itemID: "my-recent"))
+
+            NavigationLink {
+                NeteasePlayRecordView()
+            } label: {
+                WellFeatureCard(
+                    title: "听歌排行",
+                    subtitle: "按播放次数",
+                    icon: "chart.bar.fill",
+                    gradient: [Color(red: 0.42, green: 0.16, blue: 0.72),
+                               Color(red: 0.85, green: 0.24, blue: 0.38)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 2, itemID: "my-record"))
+
+            NavigationLink {
+                NeteaseCloudView()
+            } label: {
+                WellFeatureCard(
+                    title: "我的云盘",
+                    subtitle: "网易云云盘",
+                    icon: "cloud.fill",
+                    gradient: [Color(red: 0.16, green: 0.38, blue: 0.62),
+                               Color(red: 0.28, green: 0.62, blue: 0.82)])
+            }
+            .buttonStyle(.plain)
+            .modifier(WellCardEntrance(index: 3, itemID: "my-cloud"))
         }
     }
 

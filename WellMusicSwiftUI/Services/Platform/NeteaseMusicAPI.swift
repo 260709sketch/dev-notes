@@ -594,14 +594,48 @@ final class NeteaseMusicAPI {
     }
 
     /// 我的云盘歌曲列表（weapi `/api/v1/cloud/get`）。
+    ///
+    /// ⚠️ 真实响应结构（2026-10-15 对齐 Kumone 已知可用实现）：`data[]` 条目里
+    /// **没有 `song` 字段**，完整曲目在 `simpleSong`；未匹配到曲库的上传歌只有
+    /// 条目级扁平字段 `songId / songName / artist`，或整包嵌在 `privateCloud` 里。
+    /// **播放 id 一律取条目自己的 `songId`**（lx 音源与官方通道都用它当 songmid）——
+    /// 早先只认 `simpleSong.id`，未匹配上传歌该字段为 0，条目能显示但解析不到
+    /// 播放地址，表现为「云盘歌曲不能播放」。
     func userCloud(limit: Int = 100, offset: Int = 0) async throws -> [MusicItem] {
         let params: [String: Any] = ["limit": limit, "offset": offset]
         let resp: CloudListResponse = try await Self.weapiRequest(
             "/api/v1/cloud/get", params: params, type: CloudListResponse.self)
         return (resp.data ?? []).compactMap { entry in
-            let song = entry.song ?? entry.simpleSong
-            guard let song else { return nil }
-            return Self.mapSong(song)
+            let song = entry.simpleSong
+            let nested = entry.privateCloud
+            let name = song?.name ?? entry.songName ?? nested?.song ?? ""
+            guard !name.isEmpty else { return nil }
+            // id：条目级 songId 优先，其次 privateCloud.songId，最后 simpleSong.id；
+            // 全缺或为 0 的条目解析不出播放地址，直接丢弃（不留「能看点不了」的行）。
+            let rawId = entry.songId ?? nested?.songId ?? song?.id ?? 0
+            guard rawId > 0 else { return nil }
+            let songArtist = song?.ar?.compactMap { $0.name }.joined(separator: "/")
+            let artist: String
+            if let songArtist, !songArtist.isEmpty {
+                artist = songArtist
+            } else if let entryArtist = entry.artist, !entryArtist.isEmpty {
+                artist = entryArtist
+            } else if let nestedArtist = nested?.artist, !nestedArtist.isEmpty {
+                artist = nestedArtist
+            } else {
+                artist = "未知歌手"
+            }
+            return MusicItem(
+                source: .netease,
+                title: name,
+                artist: artist,
+                album: song?.al?.name,
+                albumCoverURL: neteaseCover(song?.al?.picUrl, size: 500),
+                duration: TimeInterval(song?.dt ?? 0) / 1000,
+                isVip: (song?.fee ?? 0) == 1 || (song?.fee ?? 0) == 4,
+                neteaseId: "\(rawId)",
+                platformAlbumId: song?.al?.id.map { "\($0)" }
+            )
         }
     }
 
@@ -609,10 +643,34 @@ final class NeteaseMusicAPI {
         var code: Int?
         var count: Int?
         var data: [Entry]?
+
+        private enum CodingKeys: String, CodingKey {
+            case code, count, data
+        }
+
+        /// 自定义解码：`count` 等配额字段可能是数字也可能是数字字符串
+        /// （Kumone 踩过：字面量类型不稳定会让**整条响应**解码失败 → 列表凭空消失）。
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            code = try? c.decode(Int.self, forKey: .code)
+            count = (try? c.decode(Int.self, forKey: .count))
+                ?? (try? c.decode(String.self, forKey: .count)).flatMap(Int.init)
+            data = try? c.decode([Entry].self, forKey: .data)
+        }
+
         struct Entry: Decodable {
             var songId: Int?
-            var song: Song?
+            var songName: String?
+            var artist: String?
             var simpleSong: Song?
+            var privateCloud: PrivateCloud?
+
+            /// 未匹配曲库的上传歌：歌曲信息整包嵌在这里（`song` 是**字符串**歌名）。
+            struct PrivateCloud: Decodable {
+                var songId: Int?
+                var song: String?
+                var artist: String?
+            }
         }
     }
 
