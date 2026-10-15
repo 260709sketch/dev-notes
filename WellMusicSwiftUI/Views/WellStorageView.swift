@@ -19,6 +19,7 @@ struct WellStorageView: View {
     @State private var showingAlert = false
 
     @State private var artworkCacheSize: String = "计算中…"
+    @State private var audioCacheSize: String = "计算中…"
     @State private var lyricCacheSize: String = "计算中…"
 
     var body: some View {
@@ -42,6 +43,17 @@ struct WellStorageView: View {
             }
 
             Section {
+                HStack {
+                    Text("歌曲缓存")
+                    Spacer()
+                    Text(audioCacheSize).foregroundStyle(.secondary)
+                }
+                Button(role: .destructive) {
+                    AudioCacheManager.shared.clear()
+                    refreshCacheSizes()
+                } label: {
+                    Label("清除歌曲缓存", systemImage: "trash")
+                }
                 HStack {
                     Text("图片缓存")
                     Spacer()
@@ -67,7 +79,7 @@ struct WellStorageView: View {
             } header: {
                 Text("缓存")
             } footer: {
-                Text("图片缓存为封面等网络图片的本地副本；歌词缓存为历史版本遗留的在线歌词副本（已不再使用），可安全清除。")
+                Text("歌曲缓存为播放过的音频本地副本（上限 1.5GB，超出自动淘汰最旧文件）；图片缓存为封面等网络图片的本地副本；歌词缓存为历史版本遗留的在线歌词副本（已不再使用），可安全清除。")
                     .font(.system(size: 12))
             }
         }
@@ -196,6 +208,7 @@ struct WellStorageView: View {
     // MARK: - 缓存
 
     private func refreshCacheSizes() {
+        audioCacheSize = Self.formatBytes(Int(AudioCacheManager.shared.totalSize()))
         artworkCacheSize = Self.formatBytes(Int(WellImageCache.shared.diskUsage()))
         lyricCacheSize = Self.formatBytes(Self.directorySize(Self.lyricCacheDirectory))
     }

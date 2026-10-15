@@ -67,6 +67,11 @@ struct SettingsView: View {
                     if NeteaseSession.shared.isLoggedIn {
                         Toggle("动态封面", isOn: $settings.dynamicCoverEnabled)
                     }
+                    // 歌曲缓存（2026-10-15 用户：与参考项目同款的歌曲缓存）
+                    Toggle("歌曲缓存", isOn: Binding(
+                        get: { (UserDefaults.standard.object(forKey: AudioCacheManager.enabledKey) as? Bool) ?? true },
+                        set: { UserDefaults.standard.set($0, forKey: AudioCacheManager.enabledKey) }
+                    ))
                     // 均衡器入口（2026-10-15 用户）
                     NavigationLink {
                         WellEqualizerView()

@@ -369,7 +369,32 @@ struct ProfileView: View {
             if isLoadingContent && favoriteAlbums.isEmpty {
                 loadingRow
             } else if favoriteAlbums.isEmpty {
-                emptyRow(session.isLoggedIn ? "还没有收藏专辑" : "登录后显示网易云收藏的专辑")
+                if session.isLoggedIn {
+                    // ★ 2026-10-15 用户：登录后拿不到收藏专辑 —— 空态给出**通道诊断**
+                    //   与重试入口，便于定位（截图即可看到是哪条通道失败）。
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Text("加载不到收藏专辑")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                            Button("重试") {
+                                Task { await loadContent() }
+                            }
+                            .font(.system(size: 14, weight: .medium))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(AppTheme.accent)
+                        }
+                        if !NeteaseMusicAPI.lastFavoritedAlbumsDebug.isEmpty {
+                            Text(NeteaseMusicAPI.lastFavoritedAlbumsDebug)
+                                .font(.system(size: 11).monospaced())
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .padding(.horizontal, WellSearchLayout.contentInset)
+                } else {
+                    emptyRow("登录后显示网易云收藏的专辑")
+                }
             } else {
                 // 复用搜索页的自适应两列网格与卡片
                 WellCardGrid {

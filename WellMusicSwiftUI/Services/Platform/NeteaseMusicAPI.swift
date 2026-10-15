@@ -1260,17 +1260,50 @@ final class NeteaseMusicAPI {
     ///
     /// ⚠️ 明文通道单页只稳定返回 25 条，limit 传大值会被截断 —— 内部按 25/页循环拉齐；
     /// 明文整体失败时回退 eapi 通道（登录态强绑定接口，与听歌排行同一套通道）。
+    /// 最近一次「收藏专辑」拉取的通道诊断（排查用；「我的」页空态会显示）。
+    nonisolated(unsafe) static var lastFavoritedAlbumsDebug = ""
+
     func favoritedAlbums(limit: Int = 500, offset: Int = 0) async throws -> [WellAlbumSummary] {
+        var debugParts: [String] = []
         // 通道 1：weapi（登录态首选，与客户端一致）
-        if let albums = try? await favoritedAlbumsWeapi(limit: limit, offset: offset), !albums.isEmpty {
-            return albums
+        do {
+            let albums = try await favoritedAlbumsWeapi(limit: limit, offset: offset)
+            debugParts.append("weapi://(albums.count)")
+            if !albums.isEmpty {
+                Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
+                return albums
+            }
+        } catch {
+            debugParts.append("weapi://(Self.shortDebug(error))")
         }
         // 通道 2：明文分页
-        if let albums = try? await favoritedAlbumsPlain(limit: limit, offset: offset), !albums.isEmpty {
-            return albums
+        do {
+            let albums = try await favoritedAlbumsPlain(limit: limit, offset: offset)
+            debugParts.append("plain://(albums.count)")
+            if !albums.isEmpty {
+                Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
+                return albums
+            }
+        } catch {
+            debugParts.append("plain://(Self.shortDebug(error))")
         }
         // 通道 3：eapi
-        return try await favoritedAlbumsEapi(limit: limit, offset: offset)
+        do {
+            let albums = try await favoritedAlbumsEapi(limit: limit, offset: offset)
+            debugParts.append("eapi://(albums.count)")
+            Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
+            return albums
+        } catch {
+            debugParts.append("eapi://(Self.shortDebug(error))")
+            Self.lastFavoritedAlbumsDebug = debugParts.joined(separator: " · ")
+            throw error
+        }
+    }
+
+    /// 错误 → 短诊断串（只保留类型/状态，便于空态展示）。
+    private static func shortDebug(_ error: Error) -> String {
+        let text = String(describing: error)
+        return String(text.prefix(60))
     }
 
     private func favoritedAlbumsWeapi(limit: Int, offset: Int) async throws -> [WellAlbumSummary] {

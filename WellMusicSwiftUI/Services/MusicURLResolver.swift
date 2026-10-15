@@ -26,10 +26,24 @@ final class MusicURLResolver {
     static let builtinSourceKey = "wellmusic.player.builtinSourceFallback"
 
     /// 解析播放信息（含请求头）。
-    /// 顺序：本地文件 → 已缓存地址 → LX 自定义音源（有则必用）→ 内置音源（开关开启时兜底）。
+    /// 顺序：本地文件 → 歌曲缓存 → 已缓存地址 → LX 自定义音源 → 内置音源（开关开启时兜底）。
+    /// 解析成功后自动触发**后台歌曲缓存**（设置 → 播放 → 歌曲缓存）。
     func resolvePlayback(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
+        let result = try await resolvePlaybackUncached(for: item, quality: quality)
+        await AudioCacheManager.shared.cacheIfNeeded(item: item,
+                                                     remoteURL: result.url,
+                                                     headers: result.headers)
+        return result
+    }
+
+    private func resolvePlaybackUncached(for item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
         if let local = item.localFilePath, !local.isEmpty {
             return ResolvedPlayback(url: URL(fileURLWithPath: local).absoluteString,
+                                    headers: [:], fromCustomSource: nil, isFallbackSource: false)
+        }
+        // ★ 歌曲缓存命中：直接读本地文件（秒开、无需请求头）。
+        if let cachedAudio = await AudioCacheManager.shared.cachedFileURL(for: item) {
+            return ResolvedPlayback(url: cachedAudio.absoluteString,
                                     headers: [:], fromCustomSource: nil, isFallbackSource: false)
         }
         if let cached = item.playURL, !cached.isEmpty, !cached.hasPrefix("__") {
