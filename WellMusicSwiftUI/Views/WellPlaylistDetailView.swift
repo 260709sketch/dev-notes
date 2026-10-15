@@ -214,16 +214,15 @@ struct WellPlaylistDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
         case .fullWidth:
-            // ★ 2026-10-15 用户：全屏铺满的封面要顶到导航栏/状态栏下面。
-            //   ⚠️ 上一版用 GeometryReader + offset 负安全区——在 LazyVStack 里
-            //   GeometryReader 高度塌陷、封面被移出懒加载视口**直接不渲染**
-            //   （用户实测：全屏铺满页面完全没有封面）。改回固定偏移：
-            //   上移顶部安全区高度（Self.safeAreaTopInset），布局稳定。
+            // ⚠️ 2026-10-15 深夜回退说明：「封面顶到导航栏下」曾用 GeometryReader
+            //   与 offset 负安全区两种方式实现，分别在 LazyVStack（塌陷不渲染）与
+            //   本视图无顶部安全区成员（编译失败）上栽跟头。**先保证封面稳定显示**，
+            //   「顶到导航栏下」的效果留待实机验证后再做（备选：safeAreaInset /
+            //   GeometryReader 放 ScrollView 外层）。
             WellRemoteImage(url: headerCoverURL, displaySize: 720)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(1, contentMode: .fit)
                 .clipped()
-                .offset(y: -(Self.safeAreaTopInset))
                 .mask(
                     LinearGradient(
                         stops: [
