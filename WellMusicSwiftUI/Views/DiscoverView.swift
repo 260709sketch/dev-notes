@@ -97,7 +97,7 @@ struct DiscoverView: View {
     /// 网易云用户自己的歌单（发现页横滑区用）。
     private func loadMyPlaylists() async -> [WellPlaylistSummary] {
         guard session.isLoggedIn, let uid = session.account?.userId else { return [] }
-        let items = (try? await NeteaseMusicAPI.shared.userPlaylists(uid: "\(uid)")) ?? []
+        let items = (try? await NeteaseMusicAPI.shared.userPlaylists(uid: uid)) ?? []
         let nickname = session.account?.nickname ?? ""
         return items.map { pl in
             WellPlaylistSummary(
