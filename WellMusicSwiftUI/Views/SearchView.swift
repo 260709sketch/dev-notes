@@ -569,6 +569,9 @@ struct WellMVPlayerView: View {
         }
         .statusBarHidden()
         .task {
+            // ★ 2026-10-15 用户：MV 自动横屏（放开 App 方向锁 + 请求横屏）
+            WellMusicAppDelegate.orientationLock = .landscape
+            Self.requestOrientation(.landscape)
             // 播放 MV 时暂停后台音乐
             PlayerCore.shared.pause()
             // mvURL 返回 String?，try? 会再包一层 → ?? nil 展平
@@ -584,7 +587,17 @@ struct WellMVPlayerView: View {
         .onDisappear {
             player?.pause()
             player = nil
+            // 退出 MV 页恢复全局竖屏
+            WellMusicAppDelegate.orientationLock = .portrait
+            Self.requestOrientation(.portrait)
         }
+    }
+
+    /// 请求指定方向（iOS 16+ 的 UIWindowScene API）。
+    private static func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
     }
 }
 

@@ -145,6 +145,11 @@ struct SettingsView: View {
                 }
 
                 Section("界面") {
+                    // ★ 2026-10-15 用户：搜索框样式切换
+                    //   开 = 旧版（系统搜索栏，进页折叠）；关 = 新版（页面顶部常驻搜索框）。
+                    //   与搜索页右上角滑杆菜单为同一设置项。
+                    Toggle("旧版搜索界面（系统搜索栏）", isOn: $settings.searchLegacyUI)
+
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in
                             Label(theme.displayName, systemImage: theme.symbolName)

@@ -1,7 +1,20 @@
 import SwiftUI
+import UIKit
+
+/// 应用级方向锁：全局默认竖屏，只有 MV 播放页临时放开横屏。
+/// （Info.plist 声明了 Portrait + Landscape；实际旋转与否由这里返回的掩码决定。）
+final class WellMusicAppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
+
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        WellMusicAppDelegate.orientationLock
+    }
+}
 
 @main
 struct WellMusicApp: App {
+    @UIApplicationDelegateAdaptor(WellMusicAppDelegate.self) private var appDelegate
     /// ⚠️⚠️ 这里**只能**用 `@StateObject` 持有「参与 body 求值」的对象。
     ///
     /// 2026-10-14 16:44 掉帧根因（用户：「播放音乐就会掉帧严重」）：

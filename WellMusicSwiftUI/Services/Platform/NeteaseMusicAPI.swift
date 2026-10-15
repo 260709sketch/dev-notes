@@ -481,6 +481,10 @@ final class NeteaseMusicAPI {
     }
 
     /// MV 搜索（明文 `api/cloudsearch/pc`，type=1004）。
+    ///
+    /// ⚠️ cloudsearch 对「歌手名」关键词的相关度会把**访谈/预告/花絮**排在歌曲 MV
+    /// 前面（与官方 App 的观感明显不同）——这里做轻量净化：剔除访谈类标题与
+    /// 30 秒以下的预告片段；其余保持接口原顺序（不做重排，避免引入更大偏差）。
     func searchMVs(keyword: String, limit: Int = 30, offset: Int = 0) async throws -> [WellMVSummary] {
         let params: [String: Any] = ["s": keyword, "type": 1004,
                                      "limit": limit, "offset": offset, "total": true]
@@ -488,15 +492,29 @@ final class NeteaseMusicAPI {
             "api/cloudsearch/pc", params: params, type: MVCloudSearchResponse.self)
         return (resp.result?.mvs ?? []).compactMap { mv in
             guard let id = mv.id else { return nil }
+            let name = mv.name ?? ""
+            let duration = TimeInterval(mv.duration ?? 0) / 1000
+            guard !Self.isNoisyMVTitle(name), duration >= 30 else { return nil }
             return WellMVSummary(
                 id: "\(id)",
-                name: mv.name ?? "",
+                name: name,
                 coverURL: Self.neteaseCover(mv.cover, size: 500),
                 artistName: mv.artistName,
-                duration: TimeInterval(mv.duration ?? 0) / 1000,
+                duration: duration,
                 playCount: mv.playCount ?? 0,
                 platform: .netease)
         }
+    }
+
+    /// 访谈 / 预告 / 花絮类 MV 标题判定（MV 搜索结果净化用）。
+    private static let noisyMVKeywords: [String] = [
+        "访谈", "预告", "花絮", "幕后", "采访", "彩蛋", "纪录片", "特辑",
+        "片花", "未播", "先导", "直拍", "彩排", "reaction", "对话", "问候",
+    ]
+
+    private static func isNoisyMVTitle(_ title: String) -> Bool {
+        let lower = title.lowercased()
+        return noisyMVKeywords.contains { lower.contains($0) }
     }
 
     /// MV 播放地址（weapi `/api/song/enhance/play/mv/url`；r = 清晰度 1080）。

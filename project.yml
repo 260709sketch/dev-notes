@@ -39,8 +39,12 @@ targets:
           - audio
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # ⚠️ 声明横屏仅为「MV 播放页」服务：App 全局由 WellMusicAppDelegate
+        #   的方向锁保持竖屏，只有 MV 页临时放开横屏（2026-10-15 用户）。
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIApplicationSupportsIndirectInputEvents: true
         # ★ 2026-10-15：解锁 ProMotion 高刷（iPhone 上最高 120Hz）。
         #
