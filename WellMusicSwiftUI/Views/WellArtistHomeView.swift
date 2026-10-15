@@ -294,6 +294,21 @@ struct WellArtistHomeView: View {
         var realMid: String? = artistMid
         var resolvedAvatar: String?
 
+        // ★ 2026-10-15 用户：「进入歌手主页要转圈那么久」——每次进页都要经历
+        //   「解析身份 → 拉歌曲 + 专辑」至少 2~3 轮网络，全完成前整页转圈。
+        //   加会话级快照缓存：再次进入立即渲染缓存，随后照常后台刷新（数据新鲜）。
+        let cacheKey = artistId + "|" + artistName
+        if let cached = WellArtistSnapshotCache.shared.get(cacheKey) {
+            realId = cached.artistId
+            realMid = cached.artistMid
+            resolvedAvatar = cached.avatar
+            resolvedName = cached.name
+            hotSongs = cached.songs
+            albums = cached.albums
+            platformAlbumCount = cached.albumCount
+            isLoading = false
+        }
+
         // mid 缺失才按歌手名搜索解析身份（调用方已带 mid 时直接跳过，省一轮网络往返）
         if realMid == nil, let sp, !artistName.isEmpty {
             let found = await SearchService.shared
@@ -334,6 +349,18 @@ struct WellArtistHomeView: View {
 
         failed = hotSongs.isEmpty && albums.isEmpty
         isLoading = false
+
+        // 写入快照缓存（供下次进入秒开；失败态不缓存）
+        if !failed, !hotSongs.isEmpty || !albums.isEmpty {
+            WellArtistSnapshotCache.shared.set(cacheKey, WellArtistSnapshotCache.Snapshot(
+                artistId: realId,
+                artistMid: realMid,
+                name: resolvedName.isEmpty ? artistName : resolvedName,
+                avatar: resolvedCover ?? resolvedAvatar,
+                songs: hotSongs,
+                albums: albums,
+                albumCount: platformAlbumCount))
+        }
     }
 
     /// 按平台取歌手热门歌曲；顺带带回平台给的歌手头像（酷狗 `singer/info` 有）。
@@ -398,5 +425,34 @@ struct WellArtistHomeView: View {
     // 触发构建
     NavigationStack {
         WellArtistHomeView(artistId: "6452", artistName: "示例歌手")
+    }
+}
+
+/// 歌手主页快照缓存（会话级；再次进入秒开，后台照常刷新）。
+@MainActor
+final class WellArtistSnapshotCache {
+    static let shared = WellArtistSnapshotCache()
+    private init() {}
+
+    struct Snapshot {
+        var artistId: String
+        var artistMid: String?
+        var name: String
+        var avatar: String?
+        var songs: [MusicItem]
+        var albums: [WellAlbumSummary]
+        var albumCount: Int?
+    }
+
+    private var storage: [String: Snapshot] = [:]
+
+    func get(_ key: String) -> Snapshot? { storage[key] }
+
+    func set(_ key: String, _ snapshot: Snapshot) {
+        storage[key] = snapshot
+        // 简单容量上限：超过 60 位歌手后丢弃最早写入的一条
+        if storage.count > 60, let firstKey = storage.keys.first {
+            storage.removeValue(forKey: firstKey)
+        }
     }
 }

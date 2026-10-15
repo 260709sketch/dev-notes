@@ -46,21 +46,37 @@ struct ProfileView: View {
         WellPlaylistSort(rawValue: playlistSortRaw) ?? .manual
     }
 
-    /// 合并后的歌单条目（本地 + 网易云，按排序方式输出）。
-    private var mergedPlaylists: [ProfilePlaylistItem] {
+    /// 合并后的歌单条目缓存（本地 + 网易云，按排序方式输出）。
+    /// ⚠️ 原为计算属性：body 每次求值都要重建数组 + 排序（滚动/订阅刷新时反复执行）。
+    /// 改为 @State 缓存，数据源或排序变化时由 `rebuildMergedPlaylists()` 更新。
+    @State private var mergedPlaylists: [ProfilePlaylistItem] = []
+
+    /// 重算合并歌单（loadContent / 歌单变化 / 排序变化时调用）。
+    private func rebuildMergedPlaylists() {
+        mergedPlaylists = Self.buildMergedPlaylists(
+            local: appState.playlists,
+            netease: neteasePlaylists,
+            sort: playlistSort)
+    }
+
+    private static func buildMergedPlaylists(
+        local: [Playlist],
+        netease: [NeteaseMusicAPI.UserPlaylistItem],
+        sort: WellPlaylistSort
+    ) -> [ProfilePlaylistItem] {
         var items: [ProfilePlaylistItem] = []
-        for pl in appState.playlists {
+        for pl in local {
             items.append(ProfilePlaylistItem(
                 id: "local_\(pl.id.uuidString)", name: pl.name, coverURL: pl.coverURL,
                 subtitle: "\(pl.tracks.count) 首", source: .local(pl)))
         }
-        for pl in neteasePlaylists {
+        for pl in netease {
             items.append(ProfilePlaylistItem(
                 id: "ne_\(pl.id)", name: pl.name, coverURL: pl.coverURL,
                 subtitle: "\(pl.trackCount) 首 · 网易云",
                 source: .netease(id: pl.id, name: pl.name, coverURL: pl.coverURL, creatorName: "网易云音乐")))
         }
-        switch playlistSort {
+        switch sort {
         case .manual: return items
         case .name: return items.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .trackCount:
@@ -80,7 +96,10 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                // ★ 2026-10-15 用户：「我的页上下滑动掉帧」——
+                //   原为普通 VStack：**所有分组一次性全部构建**（收藏专辑几十张卡全量
+                //   参与布局），滚动时每帧都要走过整棵子树。改 LazyVStack 后按需构建。
+                LazyVStack(alignment: .leading, spacing: 26) {
                     quickEntries
                     playlistsSection
                     recentLikesSection
@@ -94,11 +113,21 @@ struct ProfileView: View {
             .background(AppTheme.background)
             .navigationTitle("我的")
             .navigationBarTitleDisplayMode(.large)
-            .task { await loadContent() }
+            .task {
+                await loadContent()
+                rebuildMergedPlaylists()
+            }
             // ★ 2026-10-15 用户：登录/退出网易云后，收藏专辑与账号歌单要跟着刷新
             //   （原先只在进页 task 拉一次，登录后回来还是空 = 「不同步」的观感来源）。
             .onChange(of: session.isLoggedIn) { _ in
                 Task { await loadContent() }
+            }
+            // 合并歌单缓存的重算时机（本地歌单变化 / 排序变化；性能优化配套）
+            .onChange(of: appState.playlists) { _ in
+                rebuildMergedPlaylists()
+            }
+            .onChange(of: playlistSortRaw) { _ in
+                rebuildMergedPlaylists()
             }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
@@ -451,6 +480,7 @@ struct ProfileView: View {
             }
             favoriteAlbums = (try? await albumsTask) ?? []
         }
+        rebuildMergedPlaylists()
         isLoadingContent = false
     }
 
