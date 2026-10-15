@@ -101,9 +101,15 @@ final class SearchService {
 
     private func playlists(_ key: String, platform: WellSearchPlatform, limit: Int) async -> WellSearchResult {
         var out = WellSearchResult()
-        guard platform == .netease else { return out }
         do {
-            out.playlists = try await NeteaseMusicAPI.shared.search(key, kind: .playlists, limit: limit).playlists
+            switch platform {
+            case .netease:
+                out.playlists = try await NeteaseMusicAPI.shared.search(key, kind: .playlists, limit: limit).playlists
+            case .qq:
+                out.playlists = try await QQMusicAPI.shared.searchPlaylists(keyword: key, limit: limit)
+            case .kugou:
+                out.playlists = try await KugouMusicAPI.shared.searchPlaylists(keyword: key, limit: limit)
+            }
         } catch { }
         return out
     }

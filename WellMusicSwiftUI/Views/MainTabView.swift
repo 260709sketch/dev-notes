@@ -93,10 +93,10 @@ struct MainTabView: View {
             Tab("精选", systemImage: MainTabView.squareTabSymbol, value: WellTab.square) {
                 NavigationStack(path: $squarePath) { pageContent(for: .square) }
             }
-            Tab(value: WellTab.search, role: .search) {
+            // ⚠️ 2026-10-15 用户：搜索框每次进页默认折叠（系统 search 角色行为）
+            //   → 改回普通 tab，搜索框由页面自绘常驻（SearchView.searchBar）。
+            Tab("搜索", systemImage: "magnifyingglass", value: WellTab.search) {
                 NavigationStack(path: $searchPath) { pageContent(for: .search) }
-            } label: {
-                Label("搜索", systemImage: "magnifyingglass")
             }
             Tab("我的", systemImage: "person.crop.circle.fill", value: WellTab.profile) {
                 NavigationStack(path: $profilePath) { pageContent(for: .profile) }

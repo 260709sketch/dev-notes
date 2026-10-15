@@ -104,6 +104,8 @@ struct WellPlaylistSummary: Identifiable, Hashable {
     var playCount: Int
     var trackCount: Int
     var creatorName: String?
+    /// 歌单所属平台（搜索页 QQ / 酷狗歌单打开时需要区分通道）。
+    var platform: MusicSource = .netease
 }
 
 /// 排行榜条目（发现页「排行榜」货架用）。

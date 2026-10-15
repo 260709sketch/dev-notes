@@ -125,6 +125,9 @@ struct SearchView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // ★ 2026-10-15 用户：搜索框常驻可见（原先系统搜索栏进页自动折叠）
+                searchBar
+
                 if hasQuery {
                     platformPicker
                         .padding(.horizontal, WellSearchLayout.contentInset)
@@ -149,20 +152,6 @@ struct SearchView: View {
                 Color.clear.frame(height: 170)
             }
         }
-        // 系统搜索框（不自绘）。
-        // iOS 26 的 `Tab(role: .search)` 会把这里挂上的 `searchable` 接到系统搜索栏上；
-        // iOS 16–25 则落在导航栏下方，两种形态都不需要额外适配。
-        .searchable(text: $searchText, prompt: "搜索歌曲、歌手、专辑、歌单")
-        .onSubmit(of: .search) {
-            committedQuery = searchText
-        }
-        .onChange(of: searchText) { newValue in
-            // 400ms 防抖：输入过程中不逐字打接口
-            Task {
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                if searchText == newValue { committedQuery = newValue }
-            }
-        }
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
         // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
         // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
@@ -171,6 +160,47 @@ struct SearchView: View {
         .task(id: taskID) {
             await model.load(keyword: committedQuery)
         }
+    }
+
+    // MARK: 搜索框（常驻；替代原先会折叠的系统搜索栏）
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+
+            TextField("想听点什么？", text: $searchText)
+                .font(.system(size: 16))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit { committedQuery = searchText }
+                .onChange(of: searchText) { newValue in
+                    // 400ms 防抖：输入过程中不逐字打接口
+                    Task {
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        if searchText == newValue { committedQuery = newValue }
+                    }
+                }
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    committedQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppTheme.secondaryBackground, in: Capsule())
+        .padding(.horizontal, WellSearchLayout.contentInset)
+        .padding(.top, 8)
     }
 
     // MARK: 分段选择
@@ -345,17 +375,70 @@ struct SearchView: View {
     private func playlistCards(_ items: some Collection<WellPlaylistSummary>) -> some View {
         ForEach(Array(items)) { playlist in
             NavigationLink {
-                // ★ 2026-10-15 用户：搜索页歌单详情改用「我的歌单」同款版式
-                //   （WellMyPlaylistDetailView：小封面 + 播放全部 + 歌曲行）。
-                WellMyPlaylistDetailView(
-                    source: .netease(id: playlist.id, name: playlist.name,
-                                     coverURL: playlist.coverURL,
-                                     creatorName: playlist.creatorName))
+                playlistDestination(playlist)
             } label: {
                 WellSearchCoverCard(coverURL: playlist.coverURL, title: playlist.name,
                                     subtitle: playlist.creatorName, playCount: playlist.playCount)
             }
             .buttonStyle(.plain)
+        }
+    }
+
+    /// 歌单打开目标：网易云走「我的歌单」版式；QQ / 酷狗先拉曲目再套同款版式。
+    @ViewBuilder
+    private func playlistDestination(_ playlist: WellPlaylistSummary) -> some View {
+        switch playlist.platform {
+        case .qq:
+            WellRemotePlaylistView(platform: .qq, playlistId: playlist.id,
+                                   name: playlist.name, coverURL: playlist.coverURL)
+        case .kugou:
+            WellRemotePlaylistView(platform: .kugou, playlistId: playlist.id,
+                                   name: playlist.name, coverURL: playlist.coverURL)
+        default:
+            WellMyPlaylistDetailView(
+                source: .netease(id: playlist.id, name: playlist.name,
+                                 coverURL: playlist.coverURL,
+                                 creatorName: playlist.creatorName))
+        }
+    }
+}
+
+/// QQ / 酷狗歌单的打开桥：拉取曲目后套「我的歌单」同款版式。
+struct WellRemotePlaylistView: View {
+    let platform: MusicSource
+    let playlistId: String
+    let name: String
+    let coverURL: String?
+    @State private var tracks: [MusicItem]?
+
+    var body: some View {
+        Group {
+            if let tracks {
+                if tracks.isEmpty {
+                    ProfileEmptyTip(icon: "music.note.list",
+                                    title: "暂时拿不到这个歌单",
+                                    note: "换个网络环境再试试")
+                } else {
+                    WellMyPlaylistDetailView(
+                        source: .tracks(name: name, coverURL: coverURL,
+                                        creatorName: platform.displayName, tracks: tracks))
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard tracks == nil else { return }
+            switch platform {
+            case .qq:
+                tracks = ((try? await QQMusicAPI.shared.playlistDetail(dissTid: playlistId))?.tracks) ?? []
+            case .kugou:
+                tracks = ((try? await KugouMusicAPI.shared.playlistSongs(specialId: playlistId))) ?? []
+            default:
+                tracks = []
+            }
         }
     }
 }

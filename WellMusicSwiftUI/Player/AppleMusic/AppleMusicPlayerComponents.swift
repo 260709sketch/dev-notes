@@ -683,9 +683,12 @@ private extension UIColor {
 
 // MARK: - 动态封面视频播放器
 
-/// 循环播放静音视频，用于网易云动态封面（始终自动播放，不依赖音乐播放状态）
+/// 循环播放静音视频，用于网易云动态封面（AVPlayerLooper 无限循环；
+/// 跟随音乐暂停/恢复 —— 2026-10-15 用户要求）。
 struct DynamicCoverPlayer: UIViewRepresentable {
     let url: URL
+    /// 音乐是否处于暂停态（true 时视频跟随暂停）。
+    var isMusicPaused: Bool = false
 
     func makeUIView(context: Context) -> PlayerContainerView {
         let view = PlayerContainerView()
@@ -745,9 +748,12 @@ struct DynamicCoverPlayer: UIViewRepresentable {
             uiView.setNeedsLayout()
             uiView.layoutIfNeeded()
         }
-        // 确保视频始终在播放
-        if context.coordinator.player?.timeControlStatus != .playing {
-            context.coordinator.player?.play()
+        // 跟随音乐播放状态（幂等：只在状态不一致时才调用，避免每帧骚扰 AVPlayer）
+        guard let player = context.coordinator.player else { return }
+        if isMusicPaused {
+            if player.timeControlStatus != .paused { player.pause() }
+        } else if player.timeControlStatus != .playing {
+            player.play()
         }
     }
 

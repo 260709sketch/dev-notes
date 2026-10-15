@@ -618,6 +618,81 @@ final class QQMusicAPI {
         return list.compactMap { parseMobileAlbum($0) }
     }
 
+    // MARK: - 歌单搜索（client_music_search_songlist）
+
+    /// 搜索 QQ 歌单。`num_per_page` 上限 30（超过返回空），响应层级不稳定，
+    /// 解析时递归收集「有 id 又有名字」的条目。
+    func searchPlaylists(keyword: String, limit: Int = 30) async throws -> [WellPlaylistSummary] {
+        let target = min(max(limit, 1), 30)
+        var comps = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_music_search_songlist")!
+        comps.queryItems = [
+            URLQueryItem(name: "page_no", value: "0"),
+            URLQueryItem(name: "num_per_page", value: "\(target)"),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "query", value: keyword),
+            URLQueryItem(name: "remoteplace", value: "txt.yqq.playlist"),
+        ]
+        guard let url = comps.url else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue("https://y.qq.com/portal/search.html", forHTTPHeaderField: "Referer")
+        req.setValue("https://y.qq.com", forHTTPHeaderField: "Origin")
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+                     forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = NetworkClient.jsonObject(data) else { return [] }
+
+        var raw: [[String: Any]] = []
+        func walk(_ value: Any) {
+            if let dict = value as? [String: Any] {
+                let hasID = dict["dissid"] != nil || dict["diss_id"] != nil || dict["tid"] != nil || dict["listid"] != nil
+                let hasName = dict["diss_name"] != nil || dict["dissname"] != nil || dict["name"] != nil || dict["title"] != nil
+                if hasID && hasName { raw.append(dict) }
+                for child in dict.values { walk(child) }
+            } else if let arr = value as? [Any] {
+                for child in arr { walk(child) }
+            }
+        }
+        walk(json)
+
+        var seen = Set<String>()
+        let out: [WellPlaylistSummary] = raw.compactMap { item in
+            let id = Self.intValue(item["dissid"]) ?? Self.intValue(item["diss_id"])
+                ?? Self.intValue(item["tid"]) ?? Self.intValue(item["listid"]) ?? 0
+            guard id > 0 else { return nil }
+            let name = (item["diss_name"] as? String) ?? (item["dissname"] as? String)
+                ?? (item["name"] as? String) ?? (item["title"] as? String) ?? ""
+            guard !name.isEmpty, seen.insert("\(id)").inserted else { return nil }
+            var cover: String?
+            for key in ["diss_cover", "dir_pic_url", "logo", "picurl", "pic_url", "cover", "cover_url", "headurl", "imgurl"] {
+                if let value = item[key] as? String, !value.isEmpty {
+                    cover = value.replacingOccurrences(of: "http://", with: "https://")
+                    break
+                }
+            }
+            let creator = item["creator"] as? [String: Any]
+            let creatorName = (creator?["name"] as? String)
+                ?? (item["creator_name"] as? String) ?? (item["nickname"] as? String)
+            return WellPlaylistSummary(
+                id: "\(id)", name: name, coverURL: cover,
+                playCount: Self.intValue(item["listennum"]) ?? Self.intValue(item["play_count"]) ?? 0,
+                trackCount: Self.intValue(item["song_cnt"]) ?? Self.intValue(item["songnum"])
+                    ?? Self.intValue(item["total_song_num"]) ?? 0,
+                creatorName: creatorName,
+                platform: .qq)
+        }
+        return Array(out.prefix(target))
+    }
+
+    /// 从任意数值类型安全取整。
+    private static func intValue(_ any: Any?) -> Int? {
+        if let i = any as? Int { return i }
+        if let d = any as? Double { return Int(d) }
+        if let n = any as? NSNumber { return n.intValue }
+        if let s = any as? String { return Int(s) }
+        return nil
+    }
+
     // MARK: - 歌手歌曲（展开全部 / 详情页用）
 
     func singerSongs(singerMid: String, begin: Int = 0, num: Int = 30) async throws -> (list: [MusicItem], total: Int, hasMore: Bool) {

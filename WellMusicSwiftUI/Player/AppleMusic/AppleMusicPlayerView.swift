@@ -457,7 +457,7 @@ struct AppleMusicPlayerView: View {
 
             // 动态封面视频叠加在上面
             if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
-                DynamicCoverPlayer(url: dynamicURL)
+                DynamicCoverPlayer(url: dynamicURL, isMusicPaused: !player.isPlaying)
                     .frame(width: side, height: targetFrame.height)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             }
@@ -495,7 +495,7 @@ struct AppleMusicPlayerView: View {
 
                     // 动态封面视频叠加在上面
                     if settings.dynamicCoverEnabled, let dynamicURL = dynamicCover.coverURL {
-                        DynamicCoverPlayer(url: dynamicURL)
+                        DynamicCoverPlayer(url: dynamicURL, isMusicPaused: !player.isPlaying)
                             .frame(width: artworkSize, height: artworkSize)
                             .clipShape(RoundedRectangle(cornerRadius: ScreenAdapter.h(16), style: .continuous))
                     }
@@ -979,8 +979,9 @@ struct AppleMusicPlayerView: View {
             VStack(spacing: 0) {
                 ZStack {
                     Color.clear
+                    // ★ 2026-10-15 用户：歌词界面要有小横条（下滑关闭把手，显形）
                     Capsule()
-                        .fill(.clear)
+                        .fill(.white.opacity(0.4))
                         .frame(width: 36, height: 5)
                 }
                 .frame(height: max(Self.safeAreaTopInset + ScreenAdapter.h(24), ScreenAdapter.h(70)))

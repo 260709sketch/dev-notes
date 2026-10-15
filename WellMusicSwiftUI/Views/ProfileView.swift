@@ -230,7 +230,7 @@ struct ProfileView: View {
             } else if playlistTotalCount == 0 {
                 emptyRow("还没有歌单")
             } else {
-                WellShelf(title: "", rowHeight: 178, showsHeader: false) {
+                WellShelf(title: "", rowHeight: 192, showsHeader: false) {
                     ForEach(mergedPlaylists) { item in
                         NavigationLink {
                             WellMyPlaylistDetailView(source: item.source)
@@ -257,7 +257,7 @@ struct ProfileView: View {
 
     /// 横滑歌单卡（2026-10-15 用户：尺寸调小、副标题贴紧名称 —— 原先名称固定 2 行高，
     /// 一行名字时副标题被顶到 38pt 之外）。
-    private static let playlistCardSide: CGFloat = 128
+    private static let playlistCardSide: CGFloat = 140
 
     private func playlistCard(name: String, coverURL: String?, subtitle: String) -> some View {
         let side = Self.playlistCardSide

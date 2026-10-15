@@ -357,7 +357,87 @@ final class KugouMusicAPI {
         return (list, (data["total"] as? Int) ?? 0)
     }
 
-    /// 歌手专辑（v5 接口，参考 Kumone KugouAPI.artistAlbums：循环分页拉全量，含 EP/单曲）。
+    // MARK: - 歌单搜索（/api/v3/search/special）
+
+    /// 搜索酷狗歌单。
+    func searchPlaylists(keyword: String, limit: Int = 40) async throws -> [WellPlaylistSummary] {
+        let url = "https://msearchretry.kugou.com/api/v3/search/special?" +
+            "keyword=\(kugouEncode(keyword))&page=1&pagesize=\(min(max(limit, 1), 60))" +
+            "&showtype=10&filter=0&version=7910&sver=2"
+        let resp = try await NetworkClient.shared.get(url, headers: headers)
+        guard let json = NetworkClient.jsonObject(resp.data) else { return [] }
+        let list = (json["info"] as? [[String: Any]])
+            ?? (json["special_list"] as? [[String: Any]])
+            ?? (json["list"] as? [[String: Any]])
+            ?? ((json["data"] as? [String: Any])?["info"] as? [[String: Any]])
+            ?? []
+        var seen = Set<String>()
+        return list.compactMap { item -> WellPlaylistSummary? in
+            let idText = Self.intValue(item["specialid"]).map(String.init)
+                ?? Self.intValue(item["specialId"]).map(String.init) ?? ""
+            guard !idText.isEmpty, seen.insert(idText).inserted else { return nil }
+            let name = (item["specialname"] as? String)
+                ?? (item["name"] as? String) ?? (item["title"] as? String) ?? ""
+            guard !name.isEmpty else { return nil }
+            var pic = (item["imgurl"] as? String)?.kugouNormalizedImage
+                ?? (item["img"] as? String)?.kugouNormalizedImage
+                ?? (item["cover"] as? String)?.kugouNormalizedImage
+            if pic == nil {
+                pic = "https://imge.kugou.com/soft/collection/400/\(idText).jpg"
+            }
+            return WellPlaylistSummary(
+                id: idText, name: name, coverURL: pic,
+                playCount: Self.intValue(item["playcount"]) ?? 0,
+                trackCount: Self.intValue(item["songcount"]) ?? 0,
+                creatorName: (item["nickname"] as? String) ?? (item["creator"] as? String),
+                platform: .kugou)
+        }
+    }
+
+    /// 歌单曲目（官网歌单页 `data` JS 数组解析；字段直通 `parseSong` 的多键兼容）。
+    func playlistSongs(specialId: String) async throws -> [MusicItem] {
+        let url = "https://www.kugou.com/yy/special/single/\(specialId).html"
+        let resp = try await NetworkClient.shared.get(url, headers: [
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ])
+        guard let html = resp.string,
+              let data = Self.extractJSArray(named: "data", in: html),
+              let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            return []
+        }
+        return arr.compactMap { parseSong($0) }
+    }
+
+    /// 从 HTML 提取 `var data = [...]` 的 JSON 数组（字符串感知的括号配平扫描）。
+    private static func extractJSArray(named name: String, in html: String) -> Data? {
+        guard let range = html.range(of: "\(name) = [") ?? html.range(of: "\(name)=[") else { return nil }
+        let start = html.index(before: range.upperBound)   // 指向 '['
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var idx = start
+        while idx < html.endIndex {
+            let ch = html[idx]
+            if inString {
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+            } else if ch == "\"" {
+                inString = true
+            } else if ch == "[" {
+                depth += 1
+            } else if ch == "]" {
+                depth -= 1
+                if depth == 0 {
+                    return String(html[start...idx]).data(using: .utf8)
+                }
+            }
+            idx = html.index(after: idx)
+        }
+        return nil
+    }
+
+    /// 歌手专辑（v5 接口，循环分页拉全量，含 EP/单曲）。
     func artistAlbums(singerId: String, page: Int = 1, limit: Int = 30) async throws -> (list: [WellAlbumSummary], total: Int, hasMore: Bool) {
         let id = singerId.replacingOccurrences(of: "kugou_", with: "")
         let singerName = (try? await singerDetail(singerId: id).name) ?? ""
