@@ -64,7 +64,7 @@ final class MusicURLResolver {
     /// 内置音源：官方平台通道（QQ vkey / 网易云 / 酷狗 / 酷我），成功后 Toast 提示。
     private func resolveViaBuiltinSource(item: MusicItem, quality: WellAudioQuality) async throws -> ResolvedPlayback {
         let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
-        ToastCenter.shared.show("使用内置音源播放")
+        await ToastCenter.shared.show("使用内置音源播放")
         return ResolvedPlayback(
             url: url,
             headers: WellLXPlaybackHeaders.requestHeaders(
