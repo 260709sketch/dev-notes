@@ -102,7 +102,6 @@ struct ProfileView: View {
                 LazyVStack(alignment: .leading, spacing: 26) {
                     quickEntries
                     playlistsSection
-                    recentLikesSection
                     favoriteAlbumsSection
 
                     // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白
@@ -187,6 +186,7 @@ struct ProfileView: View {
             entryRow(icon: "chart.bar.fill", title: "听歌排行") { NeteasePlayRecordView() }
             Divider().padding(.leading, 54)
             entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
+            entryRow(icon: "cloud.fill", title: "我的云盘") { NeteaseCloudView() }
             Divider().padding(.leading, 54)
             entryRow(icon: "heart.text.square", title: "我喜欢的音乐") { NeteaseLikedSongsView() }
             Divider().padding(.leading, 54)
@@ -933,11 +933,11 @@ struct RecentPlaysView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // 复用「我的歌单」截图版式；封面取最近一首的封面
-                WellMyPlaylistDetailView(
-                    source: .tracks(name: "最近播放",
-                                    coverURL: displayTracks.first?.albumCoverURL,
-                                    creatorName: nil, tracks: displayTracks))
+                // ★ 2026-10-15 用户：最近播放页采用**发现页歌单版式**（大封面 + 主色底）
+                WellPlaylistDetailView(
+                    source: .tracks(displayTracks),
+                    coverURL: displayTracks.first?.albumCoverURL,
+                    creatorName: nil)
             }
         }
         // ★ 2026-10-14 用户：进入本页导航栏会闪一下「最近播放」。
@@ -1098,5 +1098,41 @@ struct ProfileEmptyTip: View {
             Text(note).font(.caption).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 我的云盘（网易云 /api/v1/cloud/get；「我的歌单」版式）
+
+struct NeteaseCloudView: View {
+    @State private var cloudTracks: [MusicItem] = []
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if cloudTracks.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "cloud")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("云盘里还没有歌曲").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // 「我的歌单」同款版式（用户 2026-10-15 指定）
+                WellMyPlaylistDetailView(
+                    source: .tracks(name: "我的云盘",
+                                    coverURL: cloudTracks.first?.albumCoverURL,
+                                    creatorName: nil, tracks: cloudTracks))
+            }
+        }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard cloudTracks.isEmpty else { return }
+            cloudTracks = (try? await NeteaseMusicAPI.shared.userCloud(limit: 500)) ?? []
+            isLoading = false
+        }
     }
 }

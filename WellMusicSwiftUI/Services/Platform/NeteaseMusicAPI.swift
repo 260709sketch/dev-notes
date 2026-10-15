@@ -593,6 +593,29 @@ final class NeteaseMusicAPI {
         struct Payload: Decodable { var url: String? }
     }
 
+    /// 我的云盘歌曲列表（weapi `/api/v1/cloud/get`）。
+    func userCloud(limit: Int = 100, offset: Int = 0) async throws -> [MusicItem] {
+        let params: [String: Any] = ["limit": limit, "offset": offset]
+        let resp: CloudListResponse = try await Self.weapiRequest(
+            "/api/v1/cloud/get", params: params, type: CloudListResponse.self)
+        return (resp.data ?? []).compactMap { entry in
+            let song = entry.song ?? entry.simpleSong
+            guard let song else { return nil }
+            return Self.mapSong(song)
+        }
+    }
+
+    private struct CloudListResponse: Decodable {
+        var code: Int?
+        var count: Int?
+        var data: [Entry]?
+        struct Entry: Decodable {
+            var songId: Int?
+            var song: Song?
+            var simpleSong: Song?
+        }
+    }
+
     /// 我喜欢的音乐（Kumone 同款链路）：红心 id 列表（weapi `song/like/get`）
     /// + 分块详情（明文 `api/song/detail`）。
     func likedSongs(uid: String, limit: Int = 2000) async throws -> [MusicItem] {

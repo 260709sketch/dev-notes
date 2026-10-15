@@ -131,6 +131,9 @@ final class SearchService {
     /// 优先走各平台的真实详情接口；失败时再退回同名搜索兜底。
     func detailTracks(for source: WellSearchDetailSource) async -> [MusicItem] {
         switch source {
+        case .tracks(let items):
+            return items
+
         case .playlist(let id, let platform, _):
             guard platform == .netease else { return [] }
             return (try? await NeteaseMusicAPI.shared.playlistTracks(id: id)) ?? []

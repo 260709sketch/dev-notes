@@ -149,6 +149,12 @@ struct WellPlaylistDetailView: View {
             }
         }
         .task {
+            // ★ 数据版式（.tracks：最近播放 / 云盘等本地数据）：直接装载，不走网络。
+            if case .tracks(let items) = source {
+                tracks = items
+                isLoading = false
+                return
+            }
             guard tracks.isEmpty else { return }
             await load()
         }

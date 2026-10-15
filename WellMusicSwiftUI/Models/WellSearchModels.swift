@@ -165,12 +165,16 @@ enum WellSearchDetailSource: Hashable {
     case playlist(id: String, platform: MusicSource, name: String)
     case album(id: String, platform: MusicSource, name: String, artist: String, mid: String?)
     case artist(id: String, platform: MusicSource, name: String, mid: String?)
+    /// ★ 2026-10-15：直接携带曲目的「数据版式」入口（最近播放 / 云盘等本地数据
+    /// 复用「发现页歌单页」的展示，不再请求接口）。
+    case tracks([MusicItem])
 
     var title: String {
         switch self {
         case .playlist(_, _, let name): return name
         case .album(_, _, let name, _, _): return name
         case .artist(_, _, let name, _): return name
+        case .tracks: return ""
         }
     }
 
@@ -179,6 +183,7 @@ enum WellSearchDetailSource: Hashable {
         case .playlist(_, let p, _): return p
         case .album(_, let p, _, _, _): return p
         case .artist(_, let p, _, _): return p
+        case .tracks: return .netease
         }
     }
 }

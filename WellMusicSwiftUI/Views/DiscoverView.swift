@@ -19,6 +19,9 @@ import SwiftUI
 struct DiscoverView: View {
     @State private var dailySongs: [MusicItem] = []
     @State private var recommendedPlaylists: [WellPlaylistSummary] = []
+    // ★ 2026-10-15 用户：推荐歌单下方新增「我的歌单」横滑区（网易云登录后显示）
+    @ObservedObject private var session = NeteaseSession.shared
+    @State private var myPlaylists: [WellPlaylistSummary] = []
     @State private var newAlbums: [WellAlbumSummary] = []
     @State private var toplists: [WellToplistSummary] = []
     @State private var artists: [WellArtistSummary] = []
@@ -39,6 +42,7 @@ struct DiscoverView: View {
                 } else {
                     dailySection
                     recommendedSection
+                    myPlaylistsSection
                     newAlbumsSection
                     artistsSection
                 }
@@ -85,6 +89,22 @@ struct DiscoverView: View {
         if dailySongs.isEmpty && recommendedPlaylists.isEmpty && newAlbums.isEmpty && artists.isEmpty {
             errorMessage = "内容加载失败，请下拉重试"
         }
+
+        // ★ 我的歌单（登录后显示；副标题为网易云用户昵称）
+        myPlaylists = await loadMyPlaylists()
+    }
+
+    /// 网易云用户自己的歌单（发现页横滑区用）。
+    private func loadMyPlaylists() async -> [WellPlaylistSummary] {
+        guard session.isLoggedIn, let uid = session.account?.userId else { return [] }
+        let items = (try? await NeteaseMusicAPI.shared.userPlaylists(uid: "\(uid)")) ?? []
+        let nickname = session.account?.nickname ?? ""
+        return items.map { pl in
+            WellPlaylistSummary(
+                id: pl.id, name: pl.name, coverURL: pl.coverURL,
+                playCount: 0, trackCount: pl.trackCount,
+                creatorName: nickname, platform: .netease)
+        }
     }
 
     // MARK: - 推荐歌单（个性化推荐货架）
@@ -106,6 +126,31 @@ struct DiscoverView: View {
                     }
                     .buttonStyle(.plain)
                     .modifier(WellCardEntrance(index: index, itemID: "rec-\(pl.id)"))
+                }
+            }
+        }
+    }
+
+    // MARK: - 我的歌单（推荐歌单下方；网易云登录后显示，副标题为用户昵称）
+
+    @ViewBuilder
+    private var myPlaylistsSection: some View {
+        if !myPlaylists.isEmpty {
+            let nickname = session.account?.nickname ?? "网易云"
+            WellShelf(title: "\(nickname) 的歌单", rowHeight: 220) {
+                ForEach(Array(myPlaylists.enumerated()), id: \.element.id) { index, pl in
+                    NavigationLink {
+                        // 与「我的歌单」页一致：进我的歌单版式
+                        WellMyPlaylistDetailView(
+                            source: .netease(id: pl.id, name: pl.name,
+                                             coverURL: pl.coverURL,
+                                             creatorName: nickname))
+                    } label: {
+                        WellCoverCard(coverURL: pl.coverURL, title: pl.name,
+                                      subtitle: nickname, playCount: pl.playCount)
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(WellCardEntrance(index: index, itemID: "mypl-\(pl.id)"))
                 }
             }
         }
