@@ -12,7 +12,9 @@ struct SettingsView: View {
     /// 播放/暂停淡入淡出开关（2026-10-16 用户；未开启时不显示档位调节）
     @AppStorage(PlayerCore.fadeEnabledKey) private var fadeEnabled = false
     /// 淡入淡出时长（毫秒；300 / 500 / 1000 三档）
-    @AppStorage(PlayerCore.fadeDurationKey) private var fadeDurationMs = 500
+    /// ⚠️ 类型必须显式 `Double`：整数字面量 `500` 会被推断成 `AppStorage<Int>`，
+    /// 与 `PlayFadeDuration(rawValue: Double)` 对不上（2026-10-16 CI 教训）。
+    @AppStorage(PlayerCore.fadeDurationKey) private var fadeDurationMs: Double = 500
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
@@ -102,9 +104,19 @@ struct SettingsView: View {
                     // 播放/暂停淡入淡出（2026-10-16 用户：未开启时不显示档位调节）
                     Toggle("播放淡入淡出", isOn: $fadeEnabled)
                     if fadeEnabled {
+                        // ⚠️ 形状对齐上面「缓存上限」Picker（该形状在 CI 工具链上
+                        // 验证过可编译）：getter 多语句 + 显式 return、setter 用具名
+                        // 参数（不要 $0 简写 + 单表达式闭包）—— 2026-10-16 首版用
+                        // `get: { X ?? .ms500 }` + `set: { v = $0.rawValue }` 编译不过：
+                        // 「Cannot infer type of closure parameter 'option'」。
                         Picker("淡入淡出时长", selection: Binding(
-                            get: { PlayerCore.PlayFadeDuration(rawValue: fadeDurationMs) ?? .ms500 },
-                            set: { fadeDurationMs = $0.rawValue }
+                            get: {
+                                return PlayerCore.PlayFadeDuration(rawValue: fadeDurationMs)
+                                    ?? .ms500
+                            },
+                            set: { option in
+                                fadeDurationMs = option.rawValue
+                            }
                         )) {
                             ForEach(PlayerCore.PlayFadeDuration.allCases) { option in
                                 Text(option.displayName).tag(option)
