@@ -33,6 +33,14 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    // ★ 2026-10-15 用户：「导入歌单」入口新增在此分组 ——
+                    //   把原先「我的歌单」页右上角的「导入歌单 + 新建歌单」两个入口
+                    //   合二为一（页内同时提供导入与新建）。
+                    NavigationLink {
+                        PlaylistImportView()
+                    } label: {
+                        Label("导入歌单", systemImage: "square.and.arrow.down")
+                    }
                 }
 
                 Section("音频") {

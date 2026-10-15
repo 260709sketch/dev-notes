@@ -40,7 +40,6 @@ struct ProfileView: View {
                     playlistsSection
                     recentLikesSection
                     favoriteAlbumsSection
-                    settingsSection
 
                     // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白
                     Color.clear.frame(height: 170)
@@ -66,26 +65,26 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - 分组标题（参考图样式：⌄ + 标题(数量) + 查看更多）
+    // MARK: - 分组标题（小标题 + 蓝色「查看更多」）
 
     /// 带「查看更多」的标题（跳转用 `NavigationLink`）。
+    /// ⚠️ 2026-10-15 用户：去掉倒三角、字号调小（原 20pt bold → 17pt semibold）、
+    /// 「查看更多」换成蓝色（原主题红）。
     private func groupHeader<Destination: View>(
         _ title: String,
         count: Int? = nil,
         @ViewBuilder seeAll: () -> Destination
     ) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 13, weight: .bold))
             Text(count.map { "\(title) (\($0))" } ?? title)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 17, weight: .semibold))
             Spacer(minLength: 8)
             NavigationLink {
                 seeAll()
             } label: {
                 Text("查看更多")
                     .font(.system(size: 15))
-                    .foregroundStyle(AppTheme.accent)
+                    .foregroundStyle(.blue)
             }
             .buttonStyle(.plain)
         }
@@ -95,16 +94,14 @@ struct ProfileView: View {
     /// 无「查看更多」的标题（收藏专辑：全量展示，不另设入口）。
     private func plainGroupHeader(_ title: String, count: Int? = nil) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 13, weight: .bold))
             Text(count.map { "\(title) (\($0))" } ?? title)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 17, weight: .semibold))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
     }
 
-    // MARK: - 分组① 入口：听歌排行 / 最近播放 / 我喜欢（保持现有排版）
+    // MARK: - 分组① 入口：听歌排行 / 最近播放 / 我喜欢 / 设置（保持现有排版）
 
     private var quickEntries: some View {
         VStack(spacing: 0) {
@@ -113,10 +110,36 @@ struct ProfileView: View {
             entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
             Divider().padding(.leading, 54)
             entryRow(icon: "heart.text.square", title: "我喜欢") { NeteaseLikedSongsView() }
+            Divider().padding(.leading, 54)
+            // ★ 2026-10-15 用户：设置卡片融合到「听歌排行」分组里（原独立卡片）
+            settingsEntryRow
         }
         .background(AppTheme.secondaryBackground,
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 16)
+    }
+
+    /// 设置行（与上方入口行同款，只是动作是弹设置 sheet）。
+    private var settingsEntryRow: some View {
+        Button {
+            showingSettings = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17))
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(width: 26)
+                Text("设置").font(.system(size: 16)).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -157,7 +180,7 @@ struct ProfileView: View {
             } else if playlistTotalCount == 0 {
                 emptyRow("还没有歌单")
             } else {
-                WellShelf(title: "", rowHeight: 220, showsHeader: false) {
+                WellShelf(title: "", rowHeight: 178, showsHeader: false) {
                     ForEach(appState.playlists) { pl in
                         NavigationLink {
                             WellMyPlaylistDetailView(source: .local(pl))
@@ -166,6 +189,14 @@ struct ProfileView: View {
                                          subtitle: "\(pl.tracks.count) 首")
                         }
                         .buttonStyle(.plain)
+                        // ★ 2026-10-15 用户：长按删除歌单（仅本地自建；网易云账号歌单不可删）
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                appState.playlists.removeAll { $0.id == pl.id }
+                            } label: {
+                                Label("删除歌单", systemImage: "trash")
+                            }
+                        }
                     }
                     ForEach(neteasePlaylists) { pl in
                         NavigationLink {
@@ -184,46 +215,69 @@ struct ProfileView: View {
         }
     }
 
-    /// 横滑歌单卡（参考图：150pt 封面 + 名称 2 行 + 副标题 1 行）。
+    /// 横滑歌单卡（2026-10-15 用户：尺寸调小、副标题贴紧名称 —— 原先名称固定 2 行高，
+    /// 一行名字时副标题被顶到 38pt 之外）。
+    private static let playlistCardSide: CGFloat = 128
+
     private func playlistCard(name: String, coverURL: String?, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            WellRemoteImage(url: coverURL, displaySize: 150)
-                .frame(width: 150, height: 150)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        let side = Self.playlistCardSide
+        return VStack(alignment: .leading, spacing: 6) {
+            WellRemoteImage(url: coverURL, displaySize: side)
+                .frame(width: side, height: side)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .background(AppTheme.secondaryBackground,
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             Text(name)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(2)
-                .frame(width: 150, height: 38, alignment: .topLeading)
+                .font(.system(size: 14, weight: .medium))
+                .lineLimit(1)
+                .frame(width: side, alignment: .leading)
             Text(subtitle)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: 150, height: 16, alignment: .topLeading)
+                .frame(width: side, alignment: .leading)
         }
-        .frame(width: 150, alignment: .topLeading)
+        .frame(width: side, alignment: .topLeading)
     }
 
-    // MARK: - 分组③ 最近喜欢（标题 + 查看更多 + 5 首）
+    // MARK: - 分组③ 最近喜欢（标题 + 查看更多 + 5 首，支持左滑取消收藏）
 
     private var recentLikesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            groupHeader("最近喜欢", count: appState.favoriteTracks.count) { LocalFavoriteSongsView() }
+            // ★ 2026-10-15 用户：标题旁不显示歌曲数量
+            groupHeader("最近喜欢") { LocalFavoriteSongsView() }
 
             if recentLikes.isEmpty {
                 emptyRow("还没有喜欢的歌曲")
             } else {
-                VStack(spacing: 0) {
+                // ⚠️ 用内嵌 `List` 是为了 `swipeActions`（左滑取消收藏）——
+                //    SwiftUI 的左滑菜单只在 List 里生效；`scrollDisabled` 关掉它自己的
+                //    滚动（外层 ScrollView 负责滚），高度按行数精确给定。
+                List {
                     ForEach(Array(recentLikes.enumerated()), id: \.offset) { index, track in
                         likeRow(track, index: index)
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    appState.toggleFavorite(track)
+                                } label: {
+                                    Label("取消收藏", systemImage: "heart.slash")
+                                }
+                            }
                     }
                 }
+                .listStyle(.plain)
+                .scrollDisabled(true)
+                .scrollContentBackground(.hidden)
+                .frame(height: CGFloat(recentLikes.count) * 64)
             }
         }
     }
 
-    /// 歌曲行（参考图：46pt 封面 + 歌名 + 「歌手 · 平台」，点击播放）。
+    /// 歌曲行（46pt 封面 + 歌名 + 「歌手 · 平台」，点击播放）。
+    /// ★ 2026-10-15 用户：标题字重与发现页歌单卡统一（medium）。
     private func likeRow(_ track: MusicItem, index: Int) -> some View {
         Button {
             player.play(queue: appState.favoriteTracks, startIndex: index)
@@ -236,7 +290,7 @@ struct ProfileView: View {
                                 in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .medium))
                         .lineLimit(1)
                     Text(likeSubtitle(track))
                         .font(.system(size: 12))
@@ -299,32 +353,6 @@ struct ProfileView: View {
                 .padding(.horizontal, 16)
             }
         }
-    }
-
-    // MARK: - 设置入口（保留）
-
-    private var settingsSection: some View {
-        VStack(spacing: 0) {
-            Button {
-                showingSettings = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 17))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 26)
-                    Text("设置").font(.system(size: 16)).foregroundStyle(.primary)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .background(AppTheme.secondaryBackground,
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 16)
     }
 
     // MARK: - 加载/空态行
@@ -405,7 +433,6 @@ struct ProfileView: View {
 struct MyPlaylistsView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var session = NeteaseSession.shared
-    @State private var showingCreate = false
 
     /// 网易云账号歌单（未登录时保持为空，不请求）
     @State private var neteasePlaylists: [NeteaseMusicAPI.UserPlaylistItem] = []
@@ -463,37 +490,8 @@ struct MyPlaylistsView: View {
         }
         .navigationTitle("我的歌单")
         .task { await loadNeteasePlaylists() }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 14) {
-                    // 导入歌单（网易云 / QQ 音乐链接 → 本地歌单）
-                    NavigationLink {
-                        PlaylistImportView()
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
-                    }
-                    Button {
-                        showingCreate = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-        }
-        .alert("新建歌单", isPresented: $showingCreate) {
-            TextField("歌单名称", text: $newPlaylistName)
-            Button("创建") { createPlaylist() }
-            Button("取消", role: .cancel) {}
-        }
-    }
-
-    @State private var newPlaylistName = ""
-
-    private func createPlaylist() {
-        let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        appState.playlists.insert(Playlist(name: name), at: 0)
-        newPlaylistName = ""
+        // ★ 2026-10-15 用户：原右上角「导入歌单 / 新建歌单」两个入口已合二为一，
+        //   迁移到「设置 → 账号 → 导入歌单」（页内提供导入 + 新建），此处不再重复。
     }
 
     private func row(name: String, coverURL: String?, subtitle: String) -> some View {

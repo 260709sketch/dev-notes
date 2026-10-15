@@ -26,8 +26,31 @@ struct PlaylistImportView: View {
     @State private var errorMessage = ""
     @State private var showSuccess = false
 
+    // ★ 2026-10-15 用户：本页与「新建歌单」入口合二为一（原「我的歌单」页的两个入口合并）
+    @State private var newPlaylistName = ""
+    @State private var lastCreatedName = ""
+    @State private var showCreated = false
+
     var body: some View {
         Form {
+            // ★ 2026-10-15：新建空歌单（原「我的歌单」页「+」入口迁移至此）
+            Section("新建歌单") {
+                TextField("歌单名称", text: $newPlaylistName)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    createEmptyPlaylist()
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("创建歌单")
+                            .foregroundStyle(AppTheme.accent)
+                        Spacer()
+                    }
+                }
+                .disabled(newPlaylistName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
             Section("选择平台") {
                 Picker("平台", selection: $platform) {
                     ForEach(ImportPlatform.allCases) { p in
@@ -120,6 +143,22 @@ struct PlaylistImportView: View {
         } message: {
             Text("已成功导入 \(importedTracks.count) 首歌曲到本地歌单「\(playlistName)」")
         }
+        .alert("已创建", isPresented: $showCreated) {
+            Button("好的", role: .cancel) {}
+        } message: {
+            Text("歌单「\(lastCreatedName)」已添加到「我的歌单」")
+        }
+    }
+
+    // MARK: - 新建空歌单（与导入入口合二为一）
+
+    private func createEmptyPlaylist() {
+        let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        appState.playlists.insert(Playlist(name: name), at: 0)
+        lastCreatedName = name
+        newPlaylistName = ""
+        showCreated = true
     }
 
     // MARK: - 导入主流程
