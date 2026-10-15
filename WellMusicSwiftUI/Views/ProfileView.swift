@@ -100,6 +100,8 @@ struct ProfileView: View {
                 //   原为普通 VStack：**所有分组一次性全部构建**（收藏专辑几十张卡全量
                 //   参与布局），滚动时每帧都要走过整棵子树。改 LazyVStack 后按需构建。
                 LazyVStack(alignment: .leading, spacing: 26) {
+                    // ★ 2026-10-15 用户：网易云风格的封面卡（我喜欢的音乐/最近播放/听歌排行/云盘）
+                    featureCards
                     quickEntries
                     playlistsSection
                     favoriteAlbumsSection
@@ -181,14 +183,127 @@ struct ProfileView: View {
 
     // MARK: - 分组① 入口：听歌排行 / 最近播放 / 我喜欢 / 设置（保持现有排版）
 
+    // MARK: - 封面卡横滑（网易云风格：我喜欢的音乐 / 最近播放 / 听歌排行 / 我的云盘）
+
+    /// 网易云「我喜欢的音乐」官方默认封面。
+    private static let likedMusicCover = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+
+    private var featureCards: some View {
+        let recentCover = appState.playHistory.first?.albumCoverURL
+            ?? appState.favoriteTracks.first?.albumCoverURL
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                NavigationLink {
+                    NeteaseLikedSongsView()
+                } label: {
+                    featureCard(title: "我喜欢的音乐",
+                                subtitle: "\(appState.favoriteTracks.count) 首",
+                                coverURL: Self.likedMusicCover)
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    RecentPlaysView()
+                } label: {
+                    featureCard(title: "最近播放",
+                                subtitle: "最近听过",
+                                coverURL: recentCover,
+                                fallbackIcon: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    NeteasePlayRecordView()
+                } label: {
+                    featureCard(title: "听歌排行",
+                                subtitle: "按播放次数",
+                                gradient: LinearGradient(colors: [
+                                    Color(red: 0.42, green: 0.16, blue: 0.72),
+                                    Color(red: 0.85, green: 0.24, blue: 0.38),
+                                ], startPoint: .topLeading, endPoint: .bottomTrailing),
+                                fallbackIcon: "chart.bar.fill")
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    NeteaseCloudView()
+                } label: {
+                    featureCard(title: "我的云盘",
+                                subtitle: "网易云云盘",
+                                gradient: LinearGradient(colors: [
+                                    Color(red: 0.16, green: 0.38, blue: 0.62),
+                                    Color(red: 0.28, green: 0.62, blue: 0.82),
+                                ], startPoint: .topLeading, endPoint: .bottomTrailing),
+                                fallbackIcon: "cloud.fill")
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, WellSearchLayout.contentInset)
+        }
+    }
+
+    /// 单张封面卡：132pt 方图（无封面时用渐变 + 图标兜底）+ 底部渐隐遮罩 + 名称。
+    private func featureCard(title: String,
+                             subtitle: String,
+                             coverURL: String? = nil,
+                             gradient: LinearGradient? = nil,
+                             fallbackIcon: String = "music.note") -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomLeading) {
+                Group {
+                    if let coverURL, !coverURL.isEmpty {
+                        WellAsyncImage(url: coverURL) {
+                            ZStack {
+                                LinearGradient(colors: [Color(white: 0.25), Color(white: 0.12)],
+                                               startPoint: .top, endPoint: .bottom)
+                                Image(systemName: fallbackIcon)
+                                    .font(.system(size: 26))
+                                    .foregroundStyle(.white.opacity(0.75))
+                            }
+                        }
+                    } else if let gradient {
+                        ZStack {
+                            gradient
+                            Image(systemName: fallbackIcon)
+                                .font(.system(size: 26))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                    } else {
+                        ZStack {
+                            LinearGradient(colors: [Color(white: 0.3), Color(white: 0.15)],
+                                           startPoint: .top, endPoint: .bottom)
+                            Image(systemName: fallbackIcon)
+                                .font(.system(size: 26))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+                    }
+                }
+                .frame(width: 132, height: 132)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                LinearGradient(colors: [.clear, .black.opacity(0.55)],
+                               startPoint: .center, endPoint: .bottom)
+                    .allowsHitTesting(false)
+
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.leading, 8)
+                    .padding(.bottom, 7)
+            }
+            Text(subtitle)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 132)
+    }
+
     private var quickEntries: some View {
         VStack(spacing: 0) {
-            entryRow(icon: "chart.bar.fill", title: "听歌排行") { NeteasePlayRecordView() }
             Divider().padding(.leading, 54)
-            entryRow(icon: "clock.arrow.circlepath", title: "最近播放") { RecentPlaysView() }
-            entryRow(icon: "cloud.fill", title: "我的云盘") { NeteaseCloudView() }
             Divider().padding(.leading, 54)
-            entryRow(icon: "heart.text.square", title: "我喜欢的音乐") { NeteaseLikedSongsView() }
             Divider().padding(.leading, 54)
             // ★ 2026-10-15 用户：设置卡片融合到「听歌排行」分组里（原独立卡片）
             settingsEntryRow
@@ -733,7 +848,8 @@ struct NeteaseLikedSongsView: View {
         // 通道 1：红心 id 列表 + 分块详情（登录态稳定，优先）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
             tracks = songs
-            coverURL = songs.first?.albumCoverURL
+            // 封面用网易云「我喜欢的音乐」官方默认封面（与官方 App 一致）
+            coverURL = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
             isLoading = false
             return
         }
