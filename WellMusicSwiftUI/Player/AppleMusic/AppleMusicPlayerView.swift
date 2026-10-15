@@ -343,22 +343,26 @@ struct AppleMusicPlayerView: View {
             SleepTimerMenu(timer: player.sleepTimer, onCustom: { showCustomSleepTimerAlert() })
 
             // 分享歌曲（点击弹出系统分享，自带平台分享链接）
-            if let t = track {
-                let link: String
-                switch t.sourcePlatform {
-                case "tx":
-                    link = "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
-                case "kg":
-                    link = "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
-                default:
-                    link = "https://music.163.com/#/song?id=\(t.id)"
-                }
+            if let link = trackShareLink {
                 ShareLink(item: link) {
                     Label("分享歌曲", systemImage: "square.and.arrow.up")
                 }
             }
         } label: {
             compactActionButton(icon: "ellipsis") {}
+        }
+    }
+
+    /// 当前曲目的平台分享链接（分享入口用）。
+    private var trackShareLink: String? {
+        guard let t = track else { return nil }
+        switch t.sourcePlatform {
+        case "tx":
+            return "https://y.qq.com/n/ryqq/songDetail/\(t.platformSongId ?? "")"
+        case "kg":
+            return "https://www.kugou.com/song/#hash=\(t.platformSongId ?? "")"
+        default:
+            return "https://music.163.com/#/song?id=\(t.id)"
         }
     }
 

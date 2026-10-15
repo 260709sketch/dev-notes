@@ -96,7 +96,7 @@ final class AppState: ObservableObject {
         favoritePlaylists = loadJSON([RemotePlaylist].self, key: "favorites.playlists") ?? []
         playHistory = loadJSON([MusicItem].self, key: "favorites.history") ?? []
         playlists = loadJSON([Playlist].self, key: "playlists.all") ?? []
-        songLyricOffsets = loadJSON([String: Double].self, key: "lyrics.songOffsets") ?? []
+        songLyricOffsets = loadJSON([String: Double].self, key: "lyrics.songOffsets") ?? [:]
     }
 
     // MARK: 持久化工具
