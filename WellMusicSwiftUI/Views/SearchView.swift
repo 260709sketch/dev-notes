@@ -314,8 +314,27 @@ struct SearchView: View {
             WellSearchCardGrid { albumCards(model.result.albums) }
                 .padding(.horizontal, WellSearchLayout.contentInset)
         case .mvs:
-            WellSearchCardGrid { mvCards(model.result.mvs) }
+            // ★ 2026-10-15 用户：MV 改为**单列列表**（一行一个）
+            if model.result.mvs.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "film")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(.tertiary)
+                    Text(model.platform == .netease
+                         ? "没有找到相关 MV"
+                         : "QQ / 酷狗暂不支持 MV 搜索\n请切换到「网易云」再搜")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 70)
+            } else {
+                VStack(spacing: 10) {
+                    mvRows(model.result.mvs)
+                }
                 .padding(.horizontal, WellSearchLayout.contentInset)
+            }
         case .playlists:
             WellSearchCardGrid { playlistCards(model.result.playlists) }
                 .padding(.horizontal, WellSearchLayout.contentInset)
@@ -420,38 +439,56 @@ struct SearchView: View {
         }
     }
 
-    /// MV 卡片（2 列网格：封面 + MV 角标 + 名称 + 歌手）。
-    private func mvCards(_ items: [WellMVSummary]) -> some View {
+    /// MV 行（单列列表：16:9 封面 + MV 角标 + 名称/歌手/时长）。
+    private func mvRows(_ items: [WellMVSummary]) -> some View {
         ForEach(items) { mv in
             Button {
                 playingMV = mv
             } label: {
-                VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
                     ZStack(alignment: .bottomTrailing) {
                         WellRemoteImage(url: mv.coverURL, displaySize: 320)
-                            .aspectRatio(1, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .frame(width: 128, height: 72)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         Text("MV")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
                             .background(.black.opacity(0.55), in: Capsule())
-                            .padding(6)
+                            .padding(4)
                     }
-                    Text(mv.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .foregroundStyle(.primary)
-                    Text(mv.artistName ?? "")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(mv.name)
+                            .font(.system(size: 15, weight: .medium))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .foregroundStyle(.primary)
+                        Text(mv.artistName ?? "")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if mv.duration > 0 {
+                            Text(Self.mvDurationText(mv.duration))
+                                .font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private static func mvDurationText(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     /// 歌单打开目标：网易云走「我的歌单」版式；QQ / 酷狗先拉曲目再套同款版式。
