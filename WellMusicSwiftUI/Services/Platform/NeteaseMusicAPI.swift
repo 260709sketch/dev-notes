@@ -2,16 +2,23 @@ import Foundation
 
 /// 网易云音乐 API。
 ///
-/// ⚠️ **通道说明（2026-10 实测，改动前务必先读这段）**
+/// ⚠️ **通道说明（2026-10-16 复测，改动前务必先读这段）**
 ///
-/// `music.163.com/weapi/*`（AES + RSA 加密通道）**已被服务端停用**：
-/// 不论参数是否正确，一律返回 `HTTP 200 + 空响应体（0 字节）`。
-/// 已实测：两个域名（`music.163.com` / `interface.music.163.com`）、
-/// 带不带 Cookie 都一样 —— 也就是说这条通道上的调用会**静默拿不到任何数据**，
-/// 而不是抛出一个明确的错误。
+/// 两条通道都可用，按接口类型分工：
 ///
-/// 明文 `api/*` 通道**全部正常**（搜索页一直能出结果就是因为它走的是明文，
-/// 见 `runSearch` 里的注释）。所以本文件统一走明文通道：`apiRequest(_:params:type:)`。
+/// * **weapi（`/weapi/*`，AES + RSA 加密）**：登录族接口（二维码 / 短信 / 手机号 /
+///   听歌排行）走这条。2026-10-16 实测：`weapi/login/qrcode/unikey` 返回
+///   `code:200 + unikey`、轮询返回 `801`、合规号段 `weapi/sms/captcha/sent`
+///   返回 `code:200`（真能下发验证码）—— 通道完全正常。
+///   weapi 请求带设备指纹 Cookie（nuid / deviceId / NMTID），风控评分低于裸明文，
+///   与参考实现（kumone）保持一致。
+///   ⚠️ 历史误判：本文件曾断言「weapi 已被服务端停用、恒返回空体」—— 那是加密
+///   参数没配对导致的假象，已作废。谁再改登录相关代码，先跑一遍探针脚本确认。
+///
+/// * **明文（`api/*`）**：搜索、歌单、歌曲详情这类公开接口走这条，省一次加解密。
+///   账号资料 `api/nuser/account/get` 也是明文 GET（参考实现同款）。
+///
+/// 加密实现见 `NeteaseWeapi.swift`（AES-128-CBC 双层 + 密钥反转的 RAW RSA）。
 final class NeteaseMusicAPI {
     static let shared = NeteaseMusicAPI()
 
@@ -115,6 +122,13 @@ final class NeteaseMusicAPI {
     }
 
     /// weapi 请求的完整 Cookie：设备指纹（持久化）+ 登录票据。
+    ///
+    /// ⚠️ 两个坑（都实测过）：
+    /// 1. **NMTID 必须稳定**：每次请求都换一个新 NMTID，等于每秒换一台设备，
+    ///    风控立刻盯上。服务端下发过（已存进会话）就原样复用，没下发过才自己补。
+    /// 2. **同一个 Key 不能在 Cookie 头里出现两次**：设备指纹列表末尾原来直接拼
+    ///    会话 Cookie，而会话里可能已存有 NMTID —— 同名撞车时服务端取哪个全看心情。
+    ///    所以这里按 Key 去重后再拼。
     /// ⚠️ 设备 cookie 缺失时服务端可能直接忽略登录态请求（返回空数据）。
     private static func neteaseWebCookieHeader() -> String {
         let defaults = UserDefaults.standard
@@ -142,10 +156,20 @@ final class NeteaseMusicAPI {
             "os=pc",
             "channel=netease",
             "appver=3.1.17.204416",
-            "NMTID=\(randomHex(length: 16))",
         ]
-        let sessionCookie = NeteaseSession.shared.cookieHeader
-        if !sessionCookie.isEmpty { parts.append(sessionCookie) }
+        // 会话 Cookie（登录票据 + 服务端下发的 NMTID / __csrf），按 Key 去重后拼接
+        var emitted = Set(parts.compactMap { $0.split(separator: "=", maxSplits: 1).first.map(String.init) })
+        for piece in NeteaseSession.shared.cookieHeader.split(separator: "; ") {
+            let text = String(piece)
+            guard let name = text.split(separator: "=", maxSplits: 1).first.map(String.init),
+                  !name.isEmpty, !emitted.contains(name) else { continue }
+            emitted.insert(name)
+            parts.append(text)
+        }
+        // 服务端没给过 NMTID 时才自己补一个
+        if !emitted.contains("NMTID") {
+            parts.append("NMTID=\(randomHex(length: 16))")
+        }
         return parts.joined(separator: "; ")
     }
 
@@ -1620,9 +1644,17 @@ final class NeteaseMusicAPI {
     }
 
     /// 申请一个二维码 unikey。
+    ///
+    /// 走 weapi（对齐参考实现）：`csrf_token` 必须进加密 payload，且请求带的
+    /// 设备指纹 Cookie 由 `weapiRequest` 统一拼。服务端会在响应头里下发
+    /// NMTID / `__csrf`，由 `weapiRequest` 吸收进会话，后续轮询原样带回。
+    ///
+    /// 申请前先重置上一次的二维码会话 Cookie（NMTID/__csrf）—— 带着陈旧会话去申请，
+    /// 服务端会以会话特征不匹配为由拒绝（参考实现同款处理）。
     func qrLoginKey() async throws -> String {
-        let resp: QRKeyResponse = try await Self.apiRequest(
-            "api/login/qrcode/unikey", params: ["type": 1], type: QRKeyResponse.self)
+        NeteaseSession.shared.resetQRLoginSession()
+        let resp: QRKeyResponse = try await Self.weapiRequest(
+            "/api/login/qrcode/unikey", params: ["type": 1], type: QRKeyResponse.self)
         try Self.ensureOK(resp.code, fallback: "二维码获取失败")
         guard let key = resp.unikey, !key.isEmpty else {
             throw NetworkClient.NetworkError.noData
@@ -1631,10 +1663,16 @@ final class NeteaseMusicAPI {
     }
 
     /// 轮询二维码状态（建议 1.5s 一次）。
+    ///
+    /// 走 weapi：`key` / `type` / `csrf_token` 全部进加密 payload —— 少了 payload
+    /// 里的 csrf，手机确认后服务端会一直回 802（参考实现同款坑）。
     func qrLoginCheck(key: String) async throws -> NeteaseQRState {
-        let resp: QRPollResponse = try await Self.apiRequest(
-            "api/login/qrcode/client/login", params: ["key": key, "type": 1],
+        let csrf = NeteaseSession.shared.cookie(named: "__csrf") ?? ""
+        let resp: QRPollResponse = try await Self.weapiRequest(
+            "/api/login/qrcode/client/login",
+            params: ["key": key, "type": 1, "csrf_token": csrf],
             type: QRPollResponse.self)
+        // 803 时票据可能只在响应体的 cookie 字段里，Set-Cookie 已由 weapiRequest 吸收
         if let cookie = resp.cookie, !cookie.isEmpty {
             NeteaseSession.shared.ingest(cookieString: cookie)
         }
@@ -1650,9 +1688,14 @@ final class NeteaseMusicAPI {
     }
 
     /// 发送登录用短信验证码。
+    ///
+    /// 走 weapi（对齐参考实现）：明文 `api/sms/captcha/sent` 实测对设备指纹要求更严，
+    /// weapi 通道 2026-10-16 实测合规号段返回 `code:200`。
     func sendLoginSMSCode(phone: String, countryCode: String = "86") async throws {
-        let resp: CodeResponse = try await Self.apiRequest(
-            "api/sms/captcha/sent",
+        let resp: CodeResponse = try await Self.weapiRequest(
+            "/api/sms/captcha/sent",
+            // csrf_token 显式给空串：与参考实现的 payload 严格一致，
+            // 不让 weapiRequest 自动补一个可能已过期的会话 csrf
             params: ["cellphone": phone, "ctcode": countryCode,
                      "secrete": "music_middleuser_pclogin", "csrf_token": ""],
             type: CodeResponse.self)
@@ -1660,6 +1703,10 @@ final class NeteaseMusicAPI {
     }
 
     /// 手机号登录：验证码与密码二选一。
+    ///
+    /// 走 weapi（对齐参考实现）：`weapi/w/login/cellphone`。登录成功的票据
+    /// （`MUSIC_U` 等）走 `Set-Cookie` 下发，由 `weapiRequest` 自动吸收；
+    /// 个别情况下响应体也会给一份 `cookie` 字段，一并接住。
     @discardableResult
     func loginCellphone(phone: String,
                         captcha: String? = nil,
@@ -1674,8 +1721,8 @@ final class NeteaseMusicAPI {
         // 约定：服务端要的是 MD5
         if let password, !password.isEmpty { params["password"] = CryptoUtils.md5(password) }
 
-        let resp: LoginResponse = try await Self.apiRequest(
-            "api/w/login/cellphone", params: params, type: LoginResponse.self)
+        let resp: LoginResponse = try await Self.weapiRequest(
+            "/api/w/login/cellphone", params: params, type: LoginResponse.self)
         if let cookie = resp.cookie, !cookie.isEmpty {
             NeteaseSession.shared.ingest(cookieString: cookie)
         }
@@ -1693,11 +1740,33 @@ final class NeteaseMusicAPI {
     }
 
     /// 当前账号资料。未登录时服务端返回 `profile: null` —— 这也是校验票据是否还有效的手段。
+    ///
+    /// 优先明文 **GET** `api/nuser/account/get`（参考实现同款，实测匿名状态下与
+    /// POST 路径行为一致）；GET 拿不到再回退旧的 POST `api/w/nuser/account/get`。
     func userAccount() async throws -> NeteaseAccount {
+        if let account = try? await Self.getAccountViaGet() {
+            return account
+        }
         let resp: AccountResponse = try await Self.apiRequest(
             "api/w/nuser/account/get", params: [:], type: AccountResponse.self)
         guard let profile = resp.profile, let account = Self.mapAccount(profile) else {
             throw NeteaseAPIError(code: resp.code ?? 301, message: "登录已过期，请重新登录")
+        }
+        return account
+    }
+
+    /// GET `api/nuser/account/get`（无 `/w/` 前缀，参考实现同款）。
+    private static func getAccountViaGet() async throws -> NeteaseAccount {
+        let data = try await NetworkClient.shared.get(
+            "https://music.163.com/api/nuser/account/get",
+            headers: [
+                "Referer": "https://music.163.com/",
+                "Cookie": NeteaseSession.shared.cookieHeader,
+            ]
+        ).data
+        guard let resp = NetworkClient.decode(AccountResponse.self, from: data),
+              let profile = resp.profile, let account = mapAccount(profile) else {
+            throw NeteaseAPIError(code: 301, message: "登录已过期，请重新登录")
         }
         return account
     }

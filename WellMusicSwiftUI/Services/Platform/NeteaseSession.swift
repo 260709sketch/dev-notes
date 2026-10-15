@@ -120,6 +120,21 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
         merge(cookies: parsed)
     }
 
+    /// 重置二维码登录的会话 Cookie（`NMTID` / `__csrf`），保留登录票据与其它字段。
+    ///
+    /// 对齐参考实现：每次生成新二维码前重置，避免带着上一次会话的陈旧 NMTID/__csrf
+    /// 去申请，导致服务端会话特征不匹配（表现为 unikey 申请失败或轮询卡在 802）。
+    /// ⚠️ 只清这两个键 —— 不清 `MUSIC_U`：从设置里重新打开登录面板，
+    /// 不该把已经登录的票据弄丢。
+    func resetQRLoginSession() {
+        lock.lock()
+        cookieStorage.removeValue(forKey: "NMTID")
+        cookieStorage.removeValue(forKey: "__csrf")
+        let snapshot = cookieStorage
+        lock.unlock()
+        persist(snapshot)
+    }
+
     /// 退出登录：只清登录票据，保留其它无关 Cookie。
     @MainActor
     func clearAuth() {

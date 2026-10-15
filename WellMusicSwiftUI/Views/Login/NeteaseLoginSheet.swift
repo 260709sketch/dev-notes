@@ -374,7 +374,8 @@ struct NeteaseLoginSheet: View {
                         qrPhase = .expired
                         return
                     case .confirmed:
-                        await completeLogin()
+                        if await completeLogin() { return }
+                        qrPhase = .failed("登录确认失败，请刷新二维码重试")
                         return
                     }
                 }
@@ -555,7 +556,8 @@ struct NeteaseLoginSheet: View {
                     try await NeteaseMusicAPI.shared.loginCellphone(
                         phone: number, password: password)
                 }
-                await completeLogin()
+                if await completeLogin() { return }
+                phoneMessage = "登录失败：未能获取账号信息，请重试或改用扫码 / Cookie 登录"
             } catch {
                 phoneMessage = Self.message(for: error)
             }
@@ -640,11 +642,32 @@ struct NeteaseLoginSheet: View {
 
     // MARK: 公共部分
 
-    private func completeLogin() async {
+    /// 收尾：拉账号资料 → 真的拿到了才提示并关闭。
+    ///
+    /// 以前这里无视 `refreshAccount()` 的返回值，账号没拉到也弹「欢迎回来」并关面板，
+    /// 而登录卡片要求 `account != nil` 才渲染已登录态 —— 用户看到的就是
+    /// 「提示登陆了但界面没变化」。现在按「资料到手 / 只有票据 / 什么都没有」
+    /// 三档分别处理，失败时把面板留着让用户重试。
+    @discardableResult
+    private func completeLogin() async -> Bool {
         pollTask?.cancel()
-        await session.refreshAccount()
-        ToastCenter.shared.show("欢迎回来，\(session.account?.nickname ?? "")")
+        var fetched = await session.refreshAccount()
+        // 刚登录成功时账号资料接口偶发超时；票据已到手就再试两次，别急着下结论
+        var attempt = 0
+        while !fetched, session.isLoggedIn, attempt < 2 {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            fetched = await session.refreshAccount()
+            attempt += 1
+        }
+        guard fetched || session.isLoggedIn else { return false }
+        if fetched, let nickname = session.account?.nickname {
+            ToastCenter.shared.show("欢迎回来，\(nickname)")
+        } else {
+            // 票据有效但资料没拉到：不清登录态，进入「我的」页还会再拉一次
+            ToastCenter.shared.show("已登录，账号信息稍后自动刷新")
+        }
         dismiss()
+        return true
     }
 
     /// 主按钮：渐变胶囊，禁用时灰掉。
