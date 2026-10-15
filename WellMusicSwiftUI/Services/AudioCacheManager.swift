@@ -13,12 +13,40 @@ final class AudioCacheManager {
     static let shared = AudioCacheManager()
     /// 设置键（默认开）
     static let enabledKey = "wellmusic.player.audioCacheEnabled"
+    /// 缓存上限设置键（字节）
+    static let limitKey = "wellmusic.player.audioCacheLimitBytes"
+    /// 默认上限 1.5GB
+    static let defaultLimitBytes: Int64 = 1_500_000_000
 
     static var isEnabled: Bool {
         (UserDefaults.standard.object(forKey: enabledKey) as? Bool) ?? true
     }
 
-    private let maxBytes: Int64 = 1_500_000_000
+    /// 用户选择的上限（设置 → 播放 → 缓存上限；默认 1.5GB）。
+    static var byteLimit: Int64 {
+        let stored = (UserDefaults.standard.object(forKey: limitKey) as? NSNumber)?.int64Value ?? 0
+        return stored > 0 ? stored : defaultLimitBytes
+    }
+
+    /// 可选档位（设置页 Picker 用）。
+    enum LimitOption: Int64, CaseIterable, Identifiable {
+        case mb500 = 500_000_000
+        case gb1 = 1_000_000_000
+        case gb2 = 2_000_000_000
+        case gb4 = 4_000_000_000
+        case gb8 = 8_000_000_000
+
+        var id: Int64 { rawValue }
+        var displayName: String {
+            switch self {
+            case .mb500: return "500 MB"
+            case .gb1: return "1 GB"
+            case .gb2: return "2 GB"
+            case .gb4: return "4 GB"
+            case .gb8: return "8 GB"
+            }
+        }
+    }
 
     private var directory: URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -116,12 +144,18 @@ final class AudioCacheManager {
             return (file, Int64(values.fileSize ?? 0), values.contentModificationDate ?? .distantPast)
         }
         var total = entries.reduce(Int64(0)) { $0 + $1.size }
-        guard total > maxBytes else { return }
+        let limit = Self.byteLimit
+        guard total > limit else { return }
         entries.sort { $0.date < $1.date }
         for entry in entries {
-            guard total > maxBytes else { break }
+            guard total > limit else { break }
             try? FileManager.default.removeItem(at: entry.url)
             total -= entry.size
         }
+    }
+
+    /// 立即执行一次容量检查（用户改小上限时调用）。
+    func enforceLimitNow() {
+        enforceLimitIfNeeded()
     }
 }

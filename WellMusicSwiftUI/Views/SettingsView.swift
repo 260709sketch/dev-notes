@@ -72,6 +72,24 @@ struct SettingsView: View {
                         get: { (UserDefaults.standard.object(forKey: AudioCacheManager.enabledKey) as? Bool) ?? true },
                         set: { UserDefaults.standard.set($0, forKey: AudioCacheManager.enabledKey) }
                     ))
+                    // 缓存上限（用户自选档位；2026-10-15）
+                    if (UserDefaults.standard.object(forKey: AudioCacheManager.enabledKey) as? Bool) ?? true {
+                        Picker("缓存上限", selection: Binding(
+                            get: {
+                                let current = AudioCacheManager.byteLimit
+                                return AudioCacheManager.LimitOption(rawValue: current)
+                                    ?? .gb2
+                            },
+                            set: { option in
+                                UserDefaults.standard.set(option.rawValue, forKey: AudioCacheManager.limitKey)
+                                AudioCacheManager.shared.enforceLimitNow()
+                            }
+                        )) {
+                            ForEach(AudioCacheManager.LimitOption.allCases) { option in
+                                Text(option.displayName).tag(option)
+                            }
+                        }
+                    }
                     // 均衡器入口（2026-10-15 用户）
                     NavigationLink {
                         WellEqualizerView()
