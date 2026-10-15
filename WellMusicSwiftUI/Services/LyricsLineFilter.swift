@@ -1,7 +1,6 @@
 import Foundation
 
-/// 歌词「非演唱行」过滤器 —— 移植自用户给的参考实现
-/// （`src/utils/stripLyricMetadata.ts` + `src/utils/isRealLyricLine.ts`）。
+/// 歌词「非演唱行」过滤器（内置规则集：796 条关键词 + 8 条严格正则 + 判定算法）。
 ///
 /// ## 为什么需要它（用户 2026-10-14 反馈）
 /// 「每次刚听歌打开歌词界面歌词**全是艺术家名字**」——
@@ -28,8 +27,7 @@ import Foundation
 ///    不会误伤真歌词）；
 /// 5. 有效正文区间：剔除正文开唱前 / 结束后的空白与元数据行。
 ///
-/// 另外补上 `isRealLyricLine.ts` 里与本投诉直接相关的两条：段落标记 `[Chorus]` 类、
-/// 以及 `Leland Wayne/Brittany…` 这种「英文人名/斜杠串」行。
+/// 过滤严格等于内置规则集，不做额外扩展 —— 规则之外的任何行一律保留。
 ///
 /// ⚠️ 只按行过滤、**不动任何时间轴**（时间戳原样保留），对歌词同步零副作用。
 /// ⚠️ 本项目模型没有 `isBG` 字段，故参考实现里的「背景行联动剔除」这一步不适用。
@@ -107,14 +105,11 @@ enum LyricsLineFilter {
             .filter { !$0.isEmpty }
     }
 
-    // MARK: - 单行判定（`stripLyricMetadata.isMetadataLine` + `isRealLyricLine` 的并集）
+    // MARK: - 单行判定（严格等于内置规则集的判定算法）
 
     private static func isMetadataLine(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return true }
-
-        // —— isRealLyricLine：段落标记 / 括号注释 / 冒号左侧职务 / 英文人名串 ——
-        if isRealLyricLine(trimmed) == false { return true }
 
         // —— 1. 严格正则 ——
         if matchesAnyRegex(trimmed) { return true }
@@ -151,23 +146,6 @@ enum LyricsLineFilter {
         return false
     }
 
-    /// `isRealLyricLine.ts` 的逐条移植（返回 false = 不是真演唱行）。
-    private static func isRealLyricLine(_ t: String) -> Bool {
-        // [Chorus] [Verse] [主歌] 等段落标记
-        if t.hasPrefix("["), t.hasSuffix("]"), t.count > 2 { return false }
-        // （间奏）（伴奏）（solo）（intro）等括号注释
-        if bracketAnnotationRegex.firstMatch(in: t) != nil { return false }
-        // 纯括号 + 无中文（如 "(instrumental)"）
-        if t.hasPrefix("("), t.hasSuffix(")") || (t.hasPrefix("（") && t.hasSuffix("）")) {
-            if t.range(of: "[\\u4e00-\\u9fa5]", options: .regularExpression) == nil { return false }
-        }
-        // 冒号左侧是职务（作词/作曲/编曲/制作/监制/混音/录音/母带/出品/发行…）
-        if rolePrefixRegex.firstMatch(in: t) != nil { return false }
-        // `Leland Wayne/Brittany Hazzard` 这类英文创作人员名单
-        if englishCreditsRegex.firstMatch(in: t) != nil { return false }
-        return true
-    }
-
     // MARK: - 关键词库（`stripLyricMetadata` 的 defaultKeywords，自动移植）
 
     /// 模块级：归一化后的完整关键词集合（精确匹配用，O(1)）
@@ -195,15 +173,7 @@ enum LyricsLineFilter {
         ":", ",", ".", "!", "-", "_", "(", "[", "{", "【", "『", "「", "。", "·",
     ]
 
-    // MARK: - 严格正则（`stripLyricMetadata` 的 defaultRegexes + isRealLyricLine 的两条）
-
-    private static let rolePrefixRegex = regex(
-        #"^(作词|作曲|编曲|制作|监制|混音|录音|吉他|贝斯|鼓|钢琴|和声|编写|配唱|制作人|出品|发行|OP|SP|演唱|歌手|专辑|词曲|原唱|翻唱|和声编写|录音师|混音师|母带|伴奏|间奏|主唱|歌词|和声演唱|program|programming|弦乐|小号|萨克斯|长笛|小提琴|大提琴|中提琴|鼓组|打击乐|键盘|合成器|和声设计|人声制作|配器|录音棚|录音室|混音室|母带工程|母带处理|发行公司|出品公司|唱片公司|经纪公司|版权所有|版权提供)"#)
-
-    private static let bracketAnnotationRegex = regex(
-        #"^[（(](间奏|伴奏|solo|intro|outro|bridge|hook|verse|chorus|副歌|主歌|桥段|前奏|尾奏|器乐|音乐|melody|rap|ad-lib|adlib)[)）]*$"#)
-
-    private static let englishCreditsRegex = regex(#"^[A-Z][a-z]+ [A-Za-z]+/[A-Z]"#)
+    // MARK: - 严格正则（内置规则集 8 条）
 
     private static let strictRegexes: [NSRegularExpression] =
         LyricsMetadataKeywords.regexPatterns.compactMap { pattern in
