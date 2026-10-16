@@ -124,9 +124,14 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         let alignScript = """
         (function(){
           var st = document.createElement('style');
-          st.textContent = ':root{--wellLyricAlign:center}'
+          st.textContent = ':root{--wellLyricAlign:center;--wellDotsLeft:0;--wellDotsRight:0;--wellDotsML:auto;--wellDotsMR:auto}'
             + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
-            + '{text-align:var(--wellLyricAlign)!important}';
+            + '{text-align:var(--wellLyricAlign)!important}'
+            // ★ 间奏点：官方组件由 JS 每次布局写**内联 style** 定位 —— 只有带
+            //   !important 的样式表能压过它（内联改法必被覆盖，这就是还居左的原因）。
+            //   位置由 CSS 变量驱动，随对齐设置变化。
+            + '.interludeDots{left:var(--wellDotsLeft)!important;right:var(--wellDotsRight)!important;'
+            + 'margin-left:var(--wellDotsML)!important;margin-right:var(--wellDotsMR)!important}';
           document.documentElement.appendChild(st);
         })();
         """
@@ -197,10 +202,11 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 上次下发的歌词对齐（-1 = 未下发过）
         private var lastAlignment: Int = -1
 
-        /// ★ 问题6/间奏点（2026-10-16 定案）：文本行用 CSS 变量对齐；
-        /// 间奏点（.interludeDots）是页面自带的 absolute 元素、**CSS 写死 left:0**，
-        /// 不响应 text-align —— 必须直接改它本体的定位：
-        /// 居中 = left:0+right:0+margin auto；右 = left:auto+right:0；左 = 原生。
+        /// ★ 问题6/间奏点（2026-10-16 三定案，参照 AMLL 官方组件机制）：
+        /// 官方组件每次布局都用 JS **内联 style** 定位间奏点 —— 任何「给它写内联
+        /// 样式」的改法都会在下一帧被官方 JS 覆盖（此前两次失败的原因）。
+        /// 唯一稳的做法：把定位抽成 **CSS 变量**，由带 `!important` 的样式表消费
+        /// （样式表 !important 压过页面的内联写入）。只设置变量，不碰元素本体。
         func applyAlignment(_ alignment: Int, web: WKWebView) {
             guard lastAlignment != alignment else { return }
             lastAlignment = alignment
@@ -210,22 +216,23 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             case 2: css = "right"
             default: css = "center"
             }
+            // 间奏点四变量：居中=左右都 0 + 双 auto 外边距；右=靠右；左=靠左
+            let dotsVars: String
+            switch alignment {
+            case 1: dotsVars = "--wellDotsLeft:0;--wellDotsRight:auto;--wellDotsML:0;--wellDotsMR:0;"
+            case 2: dotsVars = "--wellDotsLeft:auto;--wellDotsRight:0;--wellDotsML:0;--wellDotsMR:0;"
+            default: dotsVars = "--wellDotsLeft:0;--wellDotsRight:0;--wellDotsML:auto;--wellDotsMR:auto;"
+            }
             let js = """
             (function(){
-              document.documentElement.style.setProperty('--wellLyricAlign','\(css)');
-              var d = document.querySelector('.interludeDots');
-              if (d) {
-                var a = \(alignment);
-                if (a === 2) {
-                  d.style.left = 'auto'; d.style.right = '0';
-                  d.style.marginLeft = ''; d.style.marginRight = '';
-                } else if (a === 1) {
-                  d.style.left = '0'; d.style.right = '';
-                  d.style.marginLeft = ''; d.style.marginRight = '';
-                } else {
-                  d.style.left = '0'; d.style.right = '0';
-                  d.style.marginLeft = 'auto'; d.style.marginRight = 'auto';
-                }
+              var r = document.documentElement.style;
+              r.setProperty('--wellLyricAlign','\(css)');
+              var vars = '\(dotsVars)'.split(';');
+              for (var i = 0; i < vars.length; i++) {
+                var kv = vars[i];
+                if (!kv) continue;
+                var idx = kv.indexOf(':');
+                r.setProperty(kv.slice(0, idx), kv.slice(idx + 1));
               }
             })();
             """
