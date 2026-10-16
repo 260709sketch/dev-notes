@@ -267,11 +267,11 @@ final class WellLXSourceTestModel: ObservableObject {
         case "wy":
             item = (try? await NeteaseMusicAPI.shared.search(keyword, limit: 5))?.first
         case "tx":
-            item = (try? await QQMusicAPI.shared.search(keyword, limit: 5))?.first
+            item = (try? await QQMusicAPI.shared.search(keyword: trimmed, limit: 5))?.first
         case "kg":
-            item = (try? await KugouMusicAPI.shared.search(keyword, limit: 5))?.first
+            item = (try? await KugouMusicAPI.shared.search(keyword: trimmed, limit: 5))?.first
         case "kw":
-            item = (try? await KuwoMusicAPI.shared.search(keyword, limit: 5))?.first
+            item = (try? await KuwoMusicAPI.shared.search(keyword: trimmed, limit: 5))?.first
         default:
             item = nil
         }
