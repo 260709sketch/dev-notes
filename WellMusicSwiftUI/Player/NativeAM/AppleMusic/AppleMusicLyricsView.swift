@@ -453,7 +453,7 @@ struct AppleMusicLyricsView: View {
     @ViewBuilder
     private func lyricsLoadedGeometry(
         _ blurFocusLyricID: WMLyricLine.ID?,
-        _ focusNeighborIDs: Set<WMLyricLine.ID>,
+        _ focusNeighborIDs: (preceding: WMLyricLine.ID?, following: WMLyricLine.ID?),
         _ focusEffectAnimation: Animation?,
         _ visualScaleFocusLyricID: WMLyricLine.ID?,
         _ usesPseudoTiming: Bool,
