@@ -1,6 +1,35 @@
 import SwiftUI
 import UIKit
 
+// MARK: - 文案（文件级自由函数）
+
+/// ⚠️ 这两个必须放在**文件级**，不能做成 `WellLXSourceTestModel` 的 static 方法 ——
+/// 那个类是 `@MainActor`，其 static 成员会被主 actor 隔离，
+/// 而 `WellLXPlatformTestResult.qualityShort` 是非隔离上下文，
+/// CI 实报「call to main actor-isolated static method 'qualityLabel'
+/// in a synchronous nonisolated context」。
+func wellLXQualityLabel(_ quality: String) -> String {
+    switch quality {
+    case "master": return "母带"
+    case "atmos_plus": return "ATMOS+"
+    case "atmos": return "ATMOS"
+    case "hires": return "Hi-Res"
+    case "flac": return "FLAC"
+    case "320k": return "320K"
+    case "128k": return "128K"
+    default: return quality
+    }
+}
+
+func wellLXStateText(_ state: WellLXPlatformTestResult.State) -> String {
+    switch state {
+    case .pending: return "待测试"
+    case .testing: return "测试中…"
+    case .success: return "可用"
+    case .failed: return "不可用"
+    }
+}
+
 // MARK: - 结果模型
 
 /// 单个平台的测试结果。
@@ -30,7 +59,7 @@ struct WellLXPlatformTestResult: Identifiable, Equatable {
 
     var qualityShort: String {
         guard let maxQuality else { return "—" }
-        return WellLXSourceTestModel.qualityLabel(maxQuality)
+        return wellLXQualityLabel(maxQuality)
     }
 }
 
@@ -59,19 +88,6 @@ final class WellLXSourceTestModel: ObservableObject {
 
     /// 音质档位（由高到低逐档测试，取第一个成功档为「最高可用」）
     static let qualityLevels = ["master", "atmos_plus", "atmos", "hires", "flac", "320k", "128k"]
-
-    static func qualityLabel(_ quality: String) -> String {
-        switch quality {
-        case "master": return "母带"
-        case "atmos_plus": return "ATMOS+"
-        case "atmos": return "ATMOS"
-        case "hires": return "Hi-Res"
-        case "flac": return "FLAC"
-        case "320k": return "320K"
-        case "128k": return "128K"
-        default: return quality
-        }
-    }
 
     /// 默认测试关键词（对齐参考实现）
     static func defaultKeyword(for platform: String) -> String {
@@ -271,16 +287,16 @@ final class WellLXSourceTestModel: ObservableObject {
                 guard !url.isEmpty else { throw WellLXEngineError.invalidResponse }
                 let used = Date().timeIntervalSince(qualityStarted)
                 if maxQuality == nil { maxQuality = actual }
-                details.append("\(Self.qualityLabel(quality)) ✓ \(String(format: "%.1fs", used))")
-                append("[\(platform.name)] \(Self.qualityLabel(quality)) 可用（\(String(format: "%.1fs", used))）")
+                details.append("\(wellLXQualityLabel(quality)) ✓ \(String(format: "%.1fs", used))")
+                append("[\(platform.name)] \(wellLXQualityLabel(quality)) 可用（\(String(format: "%.1fs", used))）")
                 if showDowngrades, actual != quality {
-                    downgrades.append("\(Self.qualityLabel(quality))→\(Self.qualityLabel(actual))")
+                    downgrades.append("\(wellLXQualityLabel(quality))→\(wellLXQualityLabel(actual))")
                 }
             } catch {
                 let text = errorText(error)
-                details.append("\(Self.qualityLabel(quality)) ✗")
-                errors.append("\(Self.qualityLabel(quality))：\(text)")
-                append("[\(platform.name)] \(Self.qualityLabel(quality)) 失败：\(text)")
+                details.append("\(wellLXQualityLabel(quality)) ✗")
+                errors.append("\(wellLXQualityLabel(quality))：\(text)")
+                append("[\(platform.name)] \(wellLXQualityLabel(quality)) 失败：\(text)")
             }
         }
 
@@ -291,7 +307,7 @@ final class WellLXSourceTestModel: ObservableObject {
         var messages: [String] = []
         if let maxQuality {
             result.state = .success
-            messages.append("最高可用：\(Self.qualityLabel(maxQuality))")
+            messages.append("最高可用：\(wellLXQualityLabel(maxQuality))")
         } else {
             result.state = .failed
             messages.append("全部音质均不可用")
@@ -326,7 +342,7 @@ final class WellLXSourceTestModel: ObservableObject {
         }
         for result in results {
             lines.append("")
-            lines.append("【\(result.platformName)】\(stateText(result.state))　最高音质：\(result.qualityShort)")
+            lines.append("【\(result.platformName)】\(wellLXStateText(result.state))　最高音质：\(result.qualityShort)")
             if !result.searchedSong.isEmpty { lines.append("  命中：\(result.searchedSong)") }
             if let delay = result.delay { lines.append(String(format: "  耗时：%.1fs", delay)) }
             if !result.qualityDetails.isEmpty {
@@ -337,15 +353,6 @@ final class WellLXSourceTestModel: ObservableObject {
             }
         }
         return lines.joined(separator: "\n")
-    }
-
-    static func stateText(_ state: WellLXPlatformTestResult.State) -> String {
-        switch state {
-        case .pending: return "待测试"
-        case .testing: return "测试中…"
-        case .success: return "可用"
-        case .failed: return "不可用"
-        }
     }
 
     private func append(_ line: String) {
