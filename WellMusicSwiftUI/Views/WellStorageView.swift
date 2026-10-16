@@ -30,6 +30,20 @@ struct WellStorageView: View {
     /// 参与备份的设置键前缀（本项目自定义键都在这几个前缀下）。
     private static let backupPrefixes = ["favorites.", "playlists.", "lyric", "player.", "wellmusic."]
 
+    /// ★ 2026-10-16 用户问题20：这些键**永不备份** —— Cookie/账号是设备私密凭据
+    ///   （换机恢复反而会造成登录态错乱）；内置音源开关后续会隐藏，不随备份走。
+    private static let backupExcludedKeys: Set<String> = [
+        "wellmusic.netease.account",
+        MusicURLResolver.builtinSourceKey,
+    ]
+
+    /// 是否为排除项（含网易云账号/Cookie 类前缀兜底）。
+    private static func isExcluded(_ key: String) -> Bool {
+        if backupExcludedKeys.contains(key) { return true }
+        let sensitivePrefixes = ["wellmusic.netease.", "netease."]
+        return sensitivePrefixes.contains { key.hasPrefix($0) }
+    }
+
     @State private var exportingURL: URL?
     @State private var showingExporter = false
     /// 自建文档选择器（UIDocumentPicker asCopy；fileImporter 在部分场景点击无响应）
@@ -192,6 +206,8 @@ struct WellStorageView: View {
         var payload: [String: Any] = [:]
         for (key, value) in defaults.dictionaryRepresentation() {
             guard Self.backupPrefixes.contains(where: { key.hasPrefix($0) }) else { continue }
+            // ★ 2026-10-16 问题20：Cookie/账号与内置音源开关不进备份
+            guard !Self.isExcluded(key) else { continue }
             payload[key] = encodeValue(value)
         }
         let file: [String: Any] = [
@@ -257,6 +273,8 @@ struct WellStorageView: View {
         var restored = 0
         for (key, value) in payload {
             guard Self.backupPrefixes.contains(where: { key.hasPrefix($0) }) else { continue }
+            // 恢复侧同样排除 Cookie/账号与内置音源开关（老备份文件也防一手）
+            guard !Self.isExcluded(key) else { continue }
             if let decoded = decodeValue(value) {
                 defaults.set(decoded, forKey: key)
                 restored += 1

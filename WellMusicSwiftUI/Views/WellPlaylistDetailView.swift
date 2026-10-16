@@ -23,6 +23,8 @@ struct WellPlaylistDetailView: View {
     var showsSearchRow: Bool = true
 
     @EnvironmentObject private var appState: AppState
+    /// ★ 2026-10-16 问题8：正在播放标识（低频订阅，见 NowPlayingTracker）
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     /// 歌单内排序方式
     enum SortMode: String, CaseIterable, Identifiable {
@@ -110,20 +112,27 @@ struct WellPlaylistDetailView: View {
 
             // ⚠️ ScrollView 自身铺主色底：overscroll（下拉回弹）与封面渐隐带
             //    后方都不再漏系统白/黑（2026-10-15 用户：全屏铺满上滑漏泄）。
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    heroCover
-                    titleBlock
-                    controlsRow
-                    descriptionBlock
-                    // ★ 2026-10-15 用户：专辑详情暂时移除搜索框（歌单保留）
-                    // ★ 2026-10-16 用户：发现页歌单/每日推荐也移除（见 showsSearchRow）
-                    if showsSearchRow && !isAlbumSource {
-                        searchRow
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        Color.clear.frame(height: 0).id("well-page-top")
+                        heroCover
+                        titleBlock
+                        controlsRow
+                        descriptionBlock
+                        // ★ 2026-10-15 用户：专辑详情暂时移除搜索框（歌单保留）
+                        // ★ 2026-10-16 用户：发现页歌单/每日推荐也移除（见 showsSearchRow）
+                        if showsSearchRow && !isAlbumSource {
+                            searchRow
+                        }
+                        songsSection
+                        Color.clear.frame(height: 170)
                     }
-                    songsSection
-                    Color.clear.frame(height: 170)
                 }
+                .coordinateSpace(name: "well-playlist-scroll")
+                // ★ 2026-10-16 问题24：上滑浮现「回到顶部」浮钮
+                .modifier(WellScrollToTopPageModifier(
+                    space: "well-playlist-scroll", topID: "well-page-top", proxy: proxy))
             }
             .background(coverBackdropColor ?? Color(uiColor: .systemBackground))
             // ★ 深色封面自动识别：封面偏暗时整页文字转白（用户 2026-10-14 要求）。
@@ -146,8 +155,17 @@ struct WellPlaylistDetailView: View {
         .modifier(NativeNavigationBarBackground())
         .overlay {
             if isLoading && tracks.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // ★ 2026-10-16 用户问题18：转圈换骨架屏（kumone 同款流光）
+                VStack(spacing: 24) {
+                    WellSkeletonHeader(coverSide: isAlbumSource ? 120 : 304)
+                    ForEach(0..<6, id: \.self) { _ in
+                        WellSkeletonView(cornerRadius: 8)
+                            .frame(height: 52)
+                            .padding(.horizontal, 16)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 24)
             } else if failed && tracks.isEmpty {
                 retryState
             }
@@ -462,7 +480,7 @@ struct WellPlaylistDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Text(item.artist ?? "未知歌手")
                     .font(.system(size: 12))
@@ -487,9 +505,14 @@ struct WellPlaylistDetailView: View {
                 .buttonStyle(.plain)
             }
 
-            Text(item.durationText)
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(.secondary)
+            // ★ 2026-10-16 问题8：当前播放行显示音条动画（发现页歌单/专辑/歌手通用）
+            if nowPlaying.isNowPlaying(item) {
+                NowPlayingIndicator()
+            } else {
+                Text(item.durationText)
+                    .font(.system(size: 13).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

@@ -351,11 +351,26 @@ final class AppleMusicLayoutStore: ObservableObject {
     }
 
     static func defaultEntry(for part: AppleMusicLayoutPart) -> PlayerLayoutEntry {
+        // ★ 2026-10-16 用户问题10：以下默认值 = 用户在 iPhone 14 Pro 上
+        //   实机调定的「最佳参数」，改为出厂默认（用户存档存在时仍以存档优先）。
         switch part {
         case .top:
             return PlayerLayoutEntry(y: -63)
-        case .cover, .title, .previewLyric, .progress, .previous, .play, .next, .volume, .actions,
-             .lyricsHeader, .lyricsTrackInfo:
+        case .cover:
+            return PlayerLayoutEntry(y: -11)
+        case .progress:
+            return PlayerLayoutEntry(y: -22)
+        case .previous, .play, .next:
+            return PlayerLayoutEntry(y: -10)
+        case .volume:
+            return PlayerLayoutEntry(y: -5)
+        case .actions:
+            return PlayerLayoutEntry(y: -20)
+        case .title:
+            return PlayerLayoutEntry(x: 1, y: -15)
+        case .lyricsHeader:
+            return PlayerLayoutEntry(y: -59)
+        case .previewLyric, .lyricsTrackInfo:
             return PlayerLayoutEntry()
         }
     }
@@ -400,7 +415,10 @@ struct AppleMusicLayoutTransform: ViewModifier {
     func body(content: Content) -> some View {
         content
             .scaleEffect(entry.scale)
-            .offset(x: entry.x, y: entry.y)
+            // ★ 2026-10-16 用户问题10：偏移量按屏幕尺寸等比缩放 ——
+            //   用户在 iPhone 14 Pro（852pt）调出的版式，换 iPhone 17 Pro Max
+            //   打开观感一致（ScreenAdapter 0.7~1.3 夹紧）
+            .offset(x: ScreenAdapter.w(entry.x), y: ScreenAdapter.h(entry.y))
     }
 }
 

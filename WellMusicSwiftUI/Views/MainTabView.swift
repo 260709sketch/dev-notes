@@ -18,7 +18,7 @@ struct MainTabView: View {
     ///
     /// ⚠️ 应用时是 `42 - value`（不是 `+`）：见 `customTabInterface` 里的符号说明 ——
     /// 贴底容器里底部 padding 越大内容越靠上，所以要「靠下」就得**减** padding。
-    @AppStorage("wellmusic.tabbar.bottomOffset") private var tabBarBottomOffset: Double = 0
+    @AppStorage("wellmusic.tabbar.bottomOffset") private var tabBarBottomOffset: Double = 50
 
     /// 是否有活跃曲目（决定 MiniPlayer 出现与否）。低频：仅换歌/停止时变化。
     @State private var hasActiveTrack = false
@@ -282,37 +282,80 @@ struct WellLXUpdateAlertPresenter: View {
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
-            .alert(
-                Text("音源更新提示"),
-                isPresented: Binding(
-                    get: { store.pendingUpdateAlert != nil },
-                    set: { newValue in if !newValue { store.dismissUpdateAlert() } }
-                ),
-                presenting: store.pendingUpdateAlert
-            ) { notice in
-                // 应用侧检查到的新版本：弹窗里直接一键更新（2026-10-16 问题4）
-                if let script = notice.inAppUpdateScript, let id = notice.sourceID {
-                    Button("立即更新") {
-                        Task {
-                            if let target = store.sources.first(where: { $0.id == id }) {
-                                try? await store.applyUpdate(script, to: target)
-                            }
-                            store.dismissUpdateAlert()
-                        }
-                    }
+            // ★ 2026-10-16 用户问题16：更新提示改为**底部弹出**（原来是中央 alert）
+            .sheet(isPresented: Binding(
+                get: { store.pendingUpdateAlert != nil },
+                set: { newValue in if !newValue { store.dismissUpdateAlert() } }
+            )) {
+                if let notice = store.pendingUpdateAlert {
+                    WellLXUpdateBottomCard(notice: notice)
+                        .presentationDetents([.medium])
                 }
-                if notice.hasLink, let url = URL(string: notice.updateUrl) {
-                    Button("打开更新链接") {
-                        UIApplication.shared.open(url)
+            }
+    }
+}
+
+/// 音源更新提示（底部卡片）：音源名 + 说明 + 操作按钮。
+private struct WellLXUpdateBottomCard: View {
+    let notice: WellLXUpdateNotice
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var store = WellLXSourceStore.shared
+
+    var body: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 8) {
+                Text("\(notice.sourceName) 有更新")
+                    .font(.headline)
+                if !notice.log.isEmpty {
+                    Text(notice.log)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(6)
+                }
+            }
+            .padding(.top, 20)
+
+            // 应用侧检查到的新版本：可直接一键覆盖本地脚本
+            if let script = notice.inAppUpdateScript, let id = notice.sourceID {
+                Button {
+                    Task {
+                        if let target = store.sources.first(where: { $0.id == id }) {
+                            try? await store.applyUpdate(script, to: target)
+                        }
                         store.dismissUpdateAlert()
                     }
+                } label: {
+                    Text("立即更新")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
-                Button("关闭", role: .cancel) { store.dismissUpdateAlert() }
-            } message: { notice in
-                Text([notice.sourceName + " 有更新", notice.log]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n"))
+                .buttonStyle(.borderedProminent)
             }
+            if notice.hasLink, let url = URL(string: notice.updateUrl) {
+                Button {
+                    UIApplication.shared.open(url)
+                    store.dismissUpdateAlert()
+                } label: {
+                    Text("打开更新地址")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.bordered)
+            }
+            Button {
+                store.dismissUpdateAlert()
+            } label: {
+                Text("关闭")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .tint(.secondary)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 20)
     }
 }
 
@@ -552,7 +595,9 @@ struct ArtworkView: View {
     }
 
     var body: some View {
-        WellAsyncImage(url: resolvedURL) {
+        // ★ 2026-10-16 性能（照 kumone 实测）：行内小图关闭交叉淡入 ——
+        //   滚动回收行重新显示时省一次 opacity 动画合成
+        WellAsyncImage(url: resolvedURL, animated: false) {
             placeholder
         }
         .frame(width: size, height: size)

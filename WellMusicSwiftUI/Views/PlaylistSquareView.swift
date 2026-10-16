@@ -38,9 +38,11 @@ struct PlaylistSquareView: View {
 
     var body: some View {
         // ⚠️ 不带 NavigationStack：导航容器由 MainTabView 的 page() 统一提供（11:10 架构）。
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                categoryBar
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Color.clear.frame(height: 0).id("well-page-top")
+                    categoryBar
 
                 if failed && playlists.isEmpty && toplists.isEmpty {
                     retryState
@@ -56,6 +58,11 @@ struct PlaylistSquareView: View {
                 Color.clear.frame(height: 170)
             }
             .padding(.top, 8)
+            }
+            .coordinateSpace(name: "well-square-scroll")
+            // ★ 2026-10-16 问题24：上滑浮现「回到顶部」浮钮
+            .modifier(WellScrollToTopPageModifier(
+                space: "well-square-scroll", topID: "well-page-top", proxy: proxy))
         }
         .navigationTitle("精选")
         .navigationBarTitleDisplayMode(.large)

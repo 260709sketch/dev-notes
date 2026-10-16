@@ -8,36 +8,32 @@ struct WellAdvancedFeaturesView: View {
     var body: some View {
         Form {
             Section {
-                HStack {
-                    Text("当前音源")
-                    Spacer()
-                    Text(WellLXSourceStore.shared.activeSource?.name ?? "未启用")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
                 Toggle("内置音源", isOn: Binding(
                     get: { UserDefaults.standard.bool(forKey: MusicURLResolver.builtinSourceKey) },
                     set: { UserDefaults.standard.set($0, forKey: MusicURLResolver.builtinSourceKey) }
                 ))
                 NavigationLink {
-                    WellLXSourceManageView()
-                } label: {
-                    Label("自定义音源", systemImage: "square.stack.3d.up")
-                }
-                NavigationLink {
                     WellLXSourceTestView()
                 } label: {
                     Label("音源测试", systemImage: "stethoscope")
-                }
-                NavigationLink {
-                    WellLXSourceStatusView()
-                } label: {
-                    Label("音源状态", systemImage: "waveform.path.ecg")
                 }
             } header: {
                 Text("音源")
             } footer: {
                 Text("开启「内置音源」后，未导入自定义音源（或全部音源解析失败）时，自动通过第三方解析获取完整音频（含 320k 高码率）。受版权限制的个别歌曲解析不到时回退官方通道（可能仅试听 30 秒）——这类歌可导入自定义音源解决。")
+                    .font(.system(size: 12))
+            }
+
+            // ★ 2026-10-16 用户：内置音源提醒可由用户关闭
+            Section {
+                Toggle("内置音源播放提醒", isOn: Binding(
+                    get: { (UserDefaults.standard.object(forKey: MusicURLResolver.builtinReminderKey) as? Bool) ?? true },
+                    set: { UserDefaults.standard.set($0, forKey: MusicURLResolver.builtinReminderKey) }
+                ))
+            } header: {
+                Text("提醒")
+            } footer: {
+                Text("关闭后，内置音源接管播放时不再弹出「使用内置音源播放」提示。")
                     .font(.system(size: 12))
             }
 

@@ -77,28 +77,27 @@ final class WellLXSourceTestModel: ObservableObject {
         let name: String
     }
 
-    /// 五大平台（顺序对齐参考实现）
+    /// 测试平台（2026-10-16 用户：移除咪咕和酷我，只留酷狗 / QQ / 网易）
     static let platforms: [Platform] = [
-        Platform(id: "kw", name: "酷我"),
         Platform(id: "kg", name: "酷狗"),
         Platform(id: "tx", name: "QQ"),
         Platform(id: "wy", name: "网易"),
-        Platform(id: "mg", name: "咪咕"),
     ]
 
-    /// 音质档位（由高到低逐档测试，取第一个成功档为「最高可用」）
-    static let qualityLevels = ["master", "atmos_plus", "atmos", "hires", "flac", "320k", "128k"]
+    /// 音质档位（由高到低逐档测试，取第一个成功档为「最高可用」）。
+    /// ★ 2026-10-16 用户：本应用最高音质到 Hi-Res，更高档位（母带/全景声）不测。
+    static let qualityLevels = ["hires", "flac", "320k", "128k"]
 
-    /// 默认测试关键词（对齐参考实现）
+    /// 默认测试关键词
     static func defaultKeyword(for platform: String) -> String {
-        platform == "wy" ? "再也没有" : "晴天"
+        "晴天"
     }
 
     // MARK: 对外状态
 
     @Published private(set) var results: [WellLXPlatformTestResult] = []
     @Published private(set) var isRunning = false
-    @Published private(set) var logs: [String] = []
+    // ★ 2026-10-16 用户：测试日志整体移除（append 保留为空操作，少动 30 处调用点）
     @Published private(set) var keywords: [String: String] = [:]
     @Published var testTimeoutSeconds = 20
     @Published var qualityTimeoutSeconds = 5
@@ -117,12 +116,6 @@ final class WellLXSourceTestModel: ObservableObject {
     private let qualityTimeoutKey = "well.lx.srctest.qtimeout"
     private let showErrorsKey = "well.lx.srctest.showErrors"
     private let showDowngradesKey = "well.lx.srctest.showDowngrades"
-
-    private static let stampFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
 
     private static let reportFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -184,29 +177,40 @@ final class WellLXSourceTestModel: ObservableObject {
 
     // MARK: 运行
 
+    /// ★ 2026-10-16 用户：测试一次后换其他音源「秒返回成功」——
+    ///   根因是引擎里还挂着**上一个音源**（切源后引擎未必重建，旧脚本环境残留）。
+    ///   每次开测前把当前激活音源**强制重载**进引擎，保证测的就是所选音源。
     func start() {
         guard !isRunning else { return }
-        guard WellLXEngine.shared.currentSource != nil else {
-            logs.insert("[\(Self.stampFormatter.string(from: Date()))] [源测试] 没有已激活的音源，请先在「自定义音源」里导入并启用", at: 0)
+        guard let active = WellLXSourceStore.shared.activeSource else {
             results = []
+            ToastCenter.shared.show("请先在「自定义音源」里导入并启用音源")
             return
         }
         stopRequested = false
         isRunning = true
-        logs.removeAll()
         results = Self.platforms.map {
             WellLXPlatformTestResult(id: $0.id, platformName: $0.name, keyword: keyword(for: $0.id))
         }
-        append("[源测试] 开始测试，音源：\(activeSourceName)")
-        append("[源测试] 支持平台：\(supportedPlatformsText)")
-        Task { await runAll() }
+        Task {
+            // 强制重载（activate 内部会重建引擎环境）
+            await WellLXSourceStore.shared.activate(active)
+            await runAll()
+        }
+    }
+
+    /// 快捷换源测试（2026-10-16 用户问题4）：切激活音源并清空旧结果。
+    func switchSource(_ source: WellLXSourceInfo) async {
+        guard !isRunning else { return }
+        await WellLXSourceStore.shared.activate(source)
+        results = []
+        capabilityRevision &+= 1
     }
 
     func stop() {
         guard isRunning else { return }
         stopRequested = true
         isRunning = false
-        append("[源测试] 用户请求停止")
     }
 
     private func runAll() async {
@@ -224,7 +228,6 @@ final class WellLXSourceTestModel: ObservableObject {
         }
         isRunning = false
         stopRequested = false
-        append("[源测试] 测试结束")
         // 让「支持平台」按最新能力刷新
         capabilityRevision &+= 1
     }
@@ -375,13 +378,7 @@ final class WellLXSourceTestModel: ObservableObject {
         return result
     }
 
-    // MARK: 日志 / 报告
-
-    func clearLogs() {
-        logs.removeAll()
-    }
-
-    var logText: String { logs.joined(separator: "\n") }
+    // MARK: 报告
 
     /// 纯文本报告，供复制分享。
     var reportText: String {
@@ -408,8 +405,7 @@ final class WellLXSourceTestModel: ObservableObject {
     }
 
     private func append(_ line: String) {
-        logs.append("[\(Self.stampFormatter.string(from: Date()))] \(line)")
-        if logs.count > 600 { logs.removeFirst(logs.count - 600) }
+        // 测试日志已按用户要求整体移除（2026-10-16）；保留空实现以免改动全部调用点
     }
 
     private func errorText(_ error: Error) -> String {
@@ -419,11 +415,10 @@ final class WellLXSourceTestModel: ObservableObject {
 
 // MARK: - 视图
 
-/// 音源源测试页（设置 → 高级功能 → 音源测试）。
+/// 音源源测试页（设置 → 播放/高级功能 → 音源测试）。
 struct WellLXSourceTestView: View {
     @StateObject private var model = WellLXSourceTestModel()
     @ObservedObject private var store = WellLXSourceStore.shared
-    @State private var showLogs = false
 
     var body: some View {
         Form {
@@ -445,7 +440,6 @@ struct WellLXSourceTestView: View {
                         Button { model.start() } label: { Label("开始测试", systemImage: "play.circle") }
                             .disabled(store.activeSource == nil)
                     }
-                    Button { showLogs = true } label: { Label("查看日志", systemImage: "doc.text.magnifyingglass") }
                     Button {
                         UIPasteboard.general.string = model.reportText
                         ToastCenter.shared.show("测试结果已复制")
@@ -461,9 +455,6 @@ struct WellLXSourceTestView: View {
             }
         }
         .task { model.loadIfNeeded() }
-        .sheet(isPresented: $showLogs) {
-            WellLXSourceTestLogSheet(text: model.logText) { model.clearLogs() }
-        }
     }
 
     // MARK: 当前音源
@@ -474,6 +465,31 @@ struct WellLXSourceTestView: View {
                 Label("当前音源", systemImage: "music.note")
                 Spacer()
                 Text(model.activeSourceName).foregroundStyle(.secondary)
+            }
+            // ★ 2026-10-16 用户问题4：测试页内快捷更换音源，不必来回进设置
+            if store.sources.count > 1 {
+                Menu {
+                    ForEach(store.sources) { source in
+                        Button {
+                            Task { await model.switchSource(source) }
+                        } label: {
+                            HStack {
+                                Text(source.name)
+                                if source.id == store.activeSourceID {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label("换一个音源测试", systemImage: "arrow.triangle.2.circlepath")
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             HStack {
                 Label("支持平台", systemImage: "square.stack.3d.up")
@@ -492,7 +508,7 @@ struct WellLXSourceTestView: View {
             }
             .disabled(model.isRunning || store.activeSource == nil)
         } footer: {
-            Text("逐个平台执行「搜索歌曲 → 逐档请求播放地址」，测出该音源实际支持哪些平台、每个平台最高能取到哪一档音质。测试期间会大量请求接口，请勿频繁重复测试。")
+            Text("逐个平台执行「搜索歌曲 → 逐档请求播放地址」，测出该音源实际支持哪些平台、每个平台最高能取到哪一档音质。本应用最高支持 Hi-Res，更高档位不在测试范围。")
         }
     }
 
@@ -584,10 +600,15 @@ private struct WellLXPlatformResultRow: View {
             if let delay = result.delay {
                 Text(String(format: "耗时：%.1f 秒", delay)).font(.caption).foregroundStyle(.secondary)
             }
+            // ★ 2026-10-16 用户问题5：逐档明细一行一条（原先拼一长串会被截断看不清）
             if !result.qualityDetails.isEmpty {
-                Text(result.qualityDetails.joined(separator: "　"))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(result.qualityDetails, id: \.self) { line in
+                        Text(line)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             if !result.message.isEmpty {
                 Text(result.message).font(.caption).foregroundStyle(.secondary)
@@ -607,46 +628,6 @@ private struct WellLXPlatformResultRow: View {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        }
-    }
-}
-
-// MARK: - 日志
-
-private struct WellLXSourceTestLogSheet: View {
-    let text: String
-    let onClear: () -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                Text(text.isEmpty ? "暂无日志" : text)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .textSelection(.enabled)
-            }
-            .navigationTitle("测试日志")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button {
-                            UIPasteboard.general.string = text
-                            ToastCenter.shared.show("日志已复制")
-                        } label: { Label("复制日志", systemImage: "doc.on.doc") }
-                        Button(role: .destructive, action: onClear) { Label("清空日志", systemImage: "trash") }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
         }
     }
 }

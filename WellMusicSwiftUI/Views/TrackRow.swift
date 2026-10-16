@@ -31,5 +31,8 @@ struct TrackRow: View {
             }
         }
         .padding(.vertical, 2)
+        // ★ 2026-10-16 性能（kumone）：固定行高让 LazyVStack 高度估算零误差，
+        //   长列表不出现滚动偏移跳动
+        .frame(minHeight: 58)
     }
 }

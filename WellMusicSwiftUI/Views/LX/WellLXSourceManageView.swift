@@ -132,13 +132,9 @@ struct WellLXSourceManageView: View {
                     isActive: source.id == store.activeSourceID,
                     isTesting: testingIDs.contains(source.id),
                     isCheckingUpdate: updateCheckingIDs.contains(source.id),
-                    allowsUpdateAlert: store.allowsUpdateAlert(for: source.id),
                     onToggle: { toggle(source) },
                     onTest: { runTest(source) },
-                    onCheckUpdate: { checkUpdate(source) },
-                    onToggleUpdateAlert: { allows in
-                        store.setAllowsUpdateAlert(allows, for: source.id)
-                    }
+                    onCheckUpdate: { checkUpdate(source) }
                 )
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -157,7 +153,7 @@ struct WellLXSourceManageView: View {
         } header: {
             Text("已导入音源（\(store.sources.count)）")
         } footer: {
-            Text("左滑音源可删除；导入后自动设为优先音源，播放失败时自动换源。音源脚本上报更新时会弹窗提示，可在此关闭「更新提示」。")
+            Text("左滑音源可删除；导入后自动设为优先音源，播放失败时自动换源。发现新版本时从底部弹出更新提示。")
         }
     }
 
@@ -285,11 +281,9 @@ private struct WellLXSourceRow: View {
     let isActive: Bool
     let isTesting: Bool
     let isCheckingUpdate: Bool
-    let allowsUpdateAlert: Bool
     let onToggle: () -> Void
     let onTest: () -> Void
     let onCheckUpdate: () -> Void
-    let onToggleUpdateAlert: (Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -320,18 +314,15 @@ private struct WellLXSourceRow: View {
                     if isCheckingUpdate {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
+                        // ★ 2026-10-16 用户：检查更新按钮不要图标
+                        Text("检查更新")
                     }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
-            Toggle("更新提示", isOn: Binding(
-                get: { allowsUpdateAlert },
-                set: { newValue in onToggleUpdateAlert(newValue) }
-            ))
-            .font(.caption)
-            .toggleStyle(.switch)
+            // ★ 2026-10-16 用户问题1：每音源「更新提示」开关移除
+            //   （启动自动检查已由高级功能的全局开关统一控制，这里的单项开关只会让人困惑）
         }
         .padding(.vertical, 2)
     }

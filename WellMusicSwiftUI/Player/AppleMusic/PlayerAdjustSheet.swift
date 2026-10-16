@@ -26,6 +26,7 @@ struct PlayerAdjustSheet: View {
                 backgroundSection
                 topBarSection
                 amllLyricSection
+                lyricAlignmentSection
                 amllFontSection
             }
             .navigationTitle("播放器调整")
@@ -250,6 +251,27 @@ struct PlayerAdjustSheet: View {
             Text(settings.appleMusicUseAMLL
                  ? "单位为点（pt），改动即时生效。"
                  : "当前未开启 AMLL 歌词，这些设置会在开启后生效。")
+        }
+    }
+
+    // MARK: - 歌词对齐（2026-10-16 用户问题11：iOS 原生分段控制）
+
+    private var lyricAlignmentSection: some View {
+        Section {
+            Picker("歌词对齐", selection: Binding(
+                get: { settings.appleMusicLyricAlignment },
+                set: { settings.appleMusicLyricAlignment = $0 }
+            )) {
+                Text("居中").tag(0)
+                Text("左").tag(1)
+                Text("右").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        } header: {
+            Text("歌词位置")
+        } footer: {
+            Text("歌词行在页面内的对齐方向（居中 / 靠左 / 靠右）。")
         }
     }
 

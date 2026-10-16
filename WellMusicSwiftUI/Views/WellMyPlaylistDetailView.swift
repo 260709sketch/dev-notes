@@ -165,8 +165,11 @@ struct WellMyPlaylistDetailView: View {
                         row(item)
                     }
                 }
+
+                // ★ 2026-10-16 用户问题23：滑到底部最后几行被 dock + 迷你播放器
+                //   挡住 —— 底部统一加 170pt 留白（与其他列表页一致）
+                Color.clear.frame(height: 170)
             }
-            .padding(.bottom, 24)
         }
         // 裸 ScrollView 不自带底色，深色下会露出白底（工程里踩过这个「白边」）
         .background(AppTheme.background)

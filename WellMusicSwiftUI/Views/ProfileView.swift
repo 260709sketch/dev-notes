@@ -81,6 +81,7 @@ struct ProfilePlaylistItem: Identifiable {
 /// 分组标题 = `⌄ 标题 (数量)` + 右侧「查看更多」（Apple Music 音乐库风格）。
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var session = NeteaseSession.shared
     @State private var showingSettings = false
     /// 点头像 → 底部弹出账号设置（未登录 = 登录入口；已登录 = 账号详情/退出登录）
@@ -103,6 +104,8 @@ struct ProfileView: View {
     /// ⚠️ 原为计算属性：body 每次求值都要重建数组 + 排序（滚动/订阅刷新时反复执行）。
     /// 改为 @State 缓存，数据源或排序变化时由 `rebuildMergedPlaylists()` 更新。
     @State private var mergedPlaylists: [ProfilePlaylistItem] = []
+    /// ★ 2026-10-16 问题8：最近喜欢的正在播放标识（低频订阅）
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     /// 重算合并歌单（loadContent / 歌单变化 / 排序变化时调用）。
     private func rebuildMergedPlaylists() {
@@ -129,9 +132,29 @@ struct ProfileView: View {
         //   另一处跟着变）。
         func localItems(_ list: [Playlist]) -> [ProfilePlaylistItem] {
             list.map { pl in
-                ProfilePlaylistItem(
+                // ★ 2026-10-16 用户问题19：导入的 QQ 歌单在我的页也要显示平台标识
+                //   （与详情页 platformDisplayName 同口径：sourcePlatform 优先，
+                //   旧数据按曲目来源兜底推断）
+                let platformSuffix: String
+                if let sp = pl.sourcePlatform, !sp.isEmpty {
+                    platformSuffix = sp == "qq" ? "QQ音乐" : "网易云"
+                } else {
+                    let sources = Set(pl.tracks.map(\.source))
+                    if sources.count == 1, let only = sources.first {
+                        switch only {
+                        case .qq: platformSuffix = "QQ音乐"
+                        case .netease: platformSuffix = "网易云"
+                        default: platformSuffix = ""
+                        }
+                    } else {
+                        platformSuffix = ""
+                    }
+                }
+                let base = "\(pl.tracks.count) 首"
+                return ProfilePlaylistItem(
                     id: "local_\(pl.id.uuidString)", name: pl.name, coverURL: pl.coverURL,
-                    subtitle: "\(pl.tracks.count) 首", source: .local(pl))
+                    subtitle: platformSuffix.isEmpty ? base : "\(base) · \(platformSuffix)",
+                    source: .local(pl))
             }
         }
         func neteaseItems(_ list: [NeteaseMusicAPI.UserPlaylistItem]) -> [ProfilePlaylistItem] {
@@ -205,6 +228,13 @@ struct ProfileView: View {
             //   否则刚登录就被 5 分钟冷却挡住，观感还是「登录了没同步」。
             .onChange(of: session.isLoggedIn) { _ in
                 Task { await loadContent(force: true) }
+            }
+            // ★ 2026-10-16 用户问题14：收藏专辑要自动同步网易云 —— 回到前台就强制
+            //   拉一次（绕过刷新闸门），新收藏的专辑自动出现在分区里
+            .onChange(of: scenePhase) { phase in
+                if phase == .active, session.isLoggedIn {
+                    Task { await loadContent(force: true) }
+                }
             }
             // 合并歌单缓存的重算时机（本地歌单变化 / 排序变化；性能优化配套）
             .onChange(of: appState.playlists) { _ in
@@ -465,6 +495,7 @@ struct ProfileView: View {
 
     /// 歌曲行（46pt 封面 + 歌名 + 「歌手 · 平台」，点击播放）。
     /// ★ 2026-10-15 用户：标题字重与发现页歌单卡统一（medium）。
+    /// ★ 2026-10-16 问题8：当前播放行显示音条动画。
     private func likeRow(_ track: MusicItem, index: Int) -> some View {
         Button {
             player.play(queue: appState.favoriteTracks, startIndex: index)
@@ -478,6 +509,7 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title)
                         .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(nowPlaying.isCurrent(track) ? Color.accentColor : .primary)
                         .lineLimit(1)
                     Text(likeSubtitle(track))
                         .font(.system(size: 12))
@@ -485,6 +517,9 @@ struct ProfileView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                if nowPlaying.isNowPlaying(track) {
+                    NowPlayingIndicator()
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 9)

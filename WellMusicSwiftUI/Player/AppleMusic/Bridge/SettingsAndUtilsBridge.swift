@@ -285,7 +285,7 @@ final class SettingsManager: ObservableObject {
 
     /// 底部栏（dock + 迷你播放器）纵向位置微调（pt；正 = 更靠下）。
     /// 基准位置在 `MainTabView`（距屏幕底 42pt），本值在其上叠加。
-    @AppStorage("wellmusic.tabbar.bottomOffset") var tabBarBottomOffset: Double = 0
+    @AppStorage("wellmusic.tabbar.bottomOffset") var tabBarBottomOffset: Double = 50
 
     // MARK: - 发现页
 
@@ -323,7 +323,7 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.appleMusic.controlsHeight") var appleMusicControlsHeight: Double = 1.0
 
     /// AMLL 字体大小（Apple Music 模式下）
-    @AppStorage("wellmusic.appleMusic.amllFontSize") var appleMusicAmllFontSize: Double = 24
+    @AppStorage("wellmusic.appleMusic.amllFontSize") var appleMusicAmllFontSize: Double = 28
     /// AMLL 字重（Apple Music 模式下）
     @AppStorage("wellmusic.appleMusic.amllFontWeight") var appleMusicAmllFontWeight: Int = 600
 
@@ -340,15 +340,17 @@ final class SettingsManager: ObservableObject {
     /// 取值范围 50…400，默认 140。
     @AppStorage("wellmusic.appleMusic.amllLyricTopPx") var appleMusicAmllLyricTop: Int = 140
     /// AMLL 歌词底部位置（点，100…500，默认 305）
-    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") var appleMusicAmllLyricBottom: Int = 305
+    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") var appleMusicAmllLyricBottom: Int = 335
     /// AMLL 歌词左右位置（点，-200…200，默认 10；正值=两侧留白更多）
-    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") var appleMusicAmllLyricHorizontal: Int = 10
+    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") var appleMusicAmllLyricHorizontal: Int = 0
 
     /// 播放页背景暗度（0…1）。
     ///
     /// 作用在封面模糊层之上的那块压暗遮罩：暗色模式下 0 = 不压暗（封面最亮）、
     /// 1 = 几乎全黑；浅色模式下则是提亮遮罩的强度。默认 0.48，与旧版硬编码一致。
-    @AppStorage("wellmusic.appleMusic.backgroundDim") var appleMusicBackgroundDim: Double = 0.48
+    @AppStorage("wellmusic.appleMusic.backgroundDim") var appleMusicBackgroundDim: Double = 0.04
+    /// ★ 2026-10-16 用户问题11：歌词对齐（0 居中 / 1 左 / 2 右）
+    @AppStorage("wellmusic.appleMusic.lyricAlignment") var appleMusicLyricAlignment: Int = 0
 
     /// 是否隐藏大封面状态顶部的小横条指示器（下滑关闭手势仍然可用）。
     @AppStorage("wellmusic.appleMusic.hideTopIndicator") var appleMusicHideTopIndicator: Bool = false

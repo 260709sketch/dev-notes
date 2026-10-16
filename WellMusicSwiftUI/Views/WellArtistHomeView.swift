@@ -30,6 +30,8 @@ struct WellArtistHomeView: View {
     @State private var isLoading = true
     @State private var failed = false
     @State private var searchText = ""
+    /// ★ 2026-10-16 问题8：正在播放标识（低频订阅，见 NowPlayingTracker）
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     /// 热门歌曲过滤（只影响显示，点击后的队列仍按完整顺序走）
     private var displayedHotSongs: [MusicItem] {
@@ -53,14 +55,21 @@ struct WellArtistHomeView: View {
             } else if failed && hotSongs.isEmpty && albums.isEmpty {
                 retryState
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        artistHeader
-                        hotSongsSection
-                        albumsSection
-                        Color.clear.frame(height: 170)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Color.clear.frame(height: 0).id("well-page-top")
+                            artistHeader
+                            hotSongsSection
+                            albumsSection
+                            Color.clear.frame(height: 170)
+                        }
+                        .padding(.top, 6)
                     }
-                    .padding(.top, 6)
+                    .coordinateSpace(name: "well-artist-scroll")
+                    // ★ 2026-10-16 问题24：上滑浮现「回到顶部」浮钮
+                    .modifier(WellScrollToTopPageModifier(
+                        space: "well-artist-scroll", topID: "well-page-top", proxy: proxy))
                 }
             }
         }
@@ -177,7 +186,7 @@ struct WellArtistHomeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
@@ -189,7 +198,12 @@ struct WellArtistHomeView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 0)
+            // ★ 2026-10-16 问题8：当前播放行显示音条动画
+            if nowPlaying.isNowPlaying(item) {
+                NowPlayingIndicator()
+            } else {
+                Spacer(minLength: 0)
+            }
         }
     }
 

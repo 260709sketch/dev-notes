@@ -20,12 +20,10 @@ struct NeteaseAccountCard: View {
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
-    /// 未登录卡片的背景：品牌色的淡渐变。
-    ///
-    /// 这里刻意不再套一层 `.opacity(_:)` —— `ShapeStyle.opacity(_:)` 是 **iOS 17** 才有的，
-    /// 直接给渐变加透明度在 iOS 16 上编不过；改成在颜色上取透明度就没有版本问题。
+    /// 未登录卡片的背景：与「近期播放」卡一致的中性色（2026-10-16 用户问题21：
+    /// 不要红色品牌渐变）。
     private var cardGradient: LinearGradient {
-        LinearGradient(colors: [AppTheme.accent.opacity(0.16), AppTheme.accent.opacity(0.05)],
+        LinearGradient(colors: [AppTheme.secondaryBackground, AppTheme.secondaryBackground],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
@@ -59,18 +57,24 @@ struct NeteaseAccountCard: View {
             showingSettings = true
         } label: {
             HStack(spacing: 14) {
-                // 原网易云图标位置 → 蓝色设置按钮
+                // ★ 2026-10-16 用户问题21：图标改方形（与近期播放卡 56pt 方形对齐），
+                //   颜色中性；文案不带「网易云/未登录」字样
                 Image(systemName: "gearshape")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(Color.blue))
+                    .frame(width: 56, height: 56)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(LinearGradient(
+                                colors: [Color(red: 0.16, green: 0.22, blue: 0.42),
+                                         Color(red: 0.41, green: 0.28, blue: 0.65)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing)))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("设置")
                         .font(.system(size: 15.5, weight: .semibold))
                         .foregroundStyle(.primary)
-                    Text("登录网易云音乐，同步歌单与每日推荐")
+                    Text("账号、音质与通用选项")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -84,11 +88,7 @@ struct NeteaseAccountCard: View {
             .padding(15)
             .background {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(cardGradient)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(AppTheme.accent.opacity(0.18), lineWidth: 1)
+                    .fill(AppTheme.secondaryBackground)
             }
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }

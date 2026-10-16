@@ -82,10 +82,12 @@ struct AppleMusicPlayerView: View {
     // `@AppStorage` 依赖 `UserDefaults` 的变更通知，两边用同一个 key 就会同步，
     // 因此在这里再声明一份即可拿到实时刷新（值本身仍存在同一处 UserDefaults）。
     @AppStorage("wellmusic.appleMusic.backgroundMode") private var bgMode: AppleMusicBackgroundMode = .dark
-    @AppStorage("wellmusic.appleMusic.backgroundDim") private var bgDim: Double = 0.48
+    @AppStorage("wellmusic.appleMusic.backgroundDim") private var bgDim: Double = 0.04
     @AppStorage("wellmusic.appleMusic.amllLyricTopPx") private var amllTopPx: Int = 140
-    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") private var amllBottomPx: Int = 305
-    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = 10
+    @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") private var amllBottomPx: Int = 335
+    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = 0
+    /// ★ 2026-10-16 用户问题11：歌词对齐（0 居中 / 1 左 / 2 右；默认居中）
+    @AppStorage("wellmusic.appleMusic.lyricAlignment") private var lyricAlignment: Int = 0
     /// 歌名 / 歌手信息字号（需求 12；0 表示未设置，用默认值）
     @AppStorage("wellmusic.appleMusic.trackTitleFontSize") private var trackTitleFontSizeRaw: Double = 0
     @AppStorage("wellmusic.appleMusic.trackArtistFontSize") private var trackArtistFontSizeRaw: Double = 0
@@ -1319,12 +1321,21 @@ struct AppleMusicPlayerView: View {
     }
 
     private func lyricLine(_ line: LyricLine, isFocused: Bool) -> some View {
-        Button {
+        // ★ 2026-10-16 用户问题11：歌词对齐方向（0 居中 / 1 左 / 2 右，设置里分段控制）
+        let align: HorizontalAlignment = {
+            switch lyricAlignment {
+            case 1: return .leading
+            case 2: return .trailing
+            default: return .leading   // 居中由行内 Spacer 实现（见下）
+            }
+        }()
+        return Button {
             WellHaptics.tap()
             player.seek(to: LyricTiming.seekTime(for: line, userOffset: lyricOffset))
         } label: {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: align, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    if lyricAlignment == 2 { Spacer(minLength: 0) }
                     Text(line.text.isEmpty ? " " : line.text)
                         .font(.system(size: isFocused ? 27 : 23, weight: isFocused ? .bold : .semibold))
                         .foregroundStyle(primaryColor.opacity(isFocused ? 1 : 0.36))
@@ -1335,6 +1346,8 @@ struct AppleMusicPlayerView: View {
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(secondaryColor.opacity(0.82))
                     }
+                    if lyricAlignment == 0 { Spacer(minLength: 0) }
+                    if lyricAlignment == 1 { Spacer(minLength: 0) }
                 }
                 if isFocused, let translation = line.translation, !translation.isEmpty {
                     Text(translation)
@@ -1343,9 +1356,9 @@ struct AppleMusicPlayerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: align)
             .contentShape(Rectangle())
-            .scaleEffect(isFocused ? 1.06 : 0.84, anchor: .leading)
+            .scaleEffect(isFocused ? 1.06 : 0.84, anchor: lyricAlignment == 2 ? .trailing : .leading)
             .blur(radius: isFocused ? 0 : 0.7)
         }
         .buttonStyle(.plain)

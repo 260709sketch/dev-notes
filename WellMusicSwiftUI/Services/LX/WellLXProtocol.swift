@@ -63,17 +63,32 @@ enum WellLXProtocol {
     // MARK: 脚本格式检测
 
     /// 判断一段源码是否为 LX 自定义音源脚本
-    /// 规则（与 wellmusic 一致）：头部注释 + 出现 LX API 特征 + 不含 Well 自有格式
+    ///
+    /// ★ 2026-10-16 用户问题2（加密音源）：很多音源脚本是**加密/混淆体** ——
+    ///   头注释保留明文（@name/@version/srcUrl），代码段是 hex/base64/AES 密文，
+    ///   运行时自解密。权威版 lx-music-mobile 的导入门禁**只要求块注释头**
+    ///   （data.ts addUserApi），对脚本主体零校验。原先这里还要求明文 lx API
+    ///   特征 → 加密源**导入都被拒**。现对齐权威版：
+    ///   头注释 + 非明文混淆体（长 hex/base64 单行）也放行。
     static func isLxMusicScript(_ script: String) -> Bool {
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         guard hasHeaderComment(trimmed) else { return false }
+        let isWellFormat = regex(trimmed, #"module\s*\.\s*exports\s*\.\s*getMusicUrl"#) != nil
+        if isWellFormat { return false }
+        // 明文 LX API 特征 → 直接认
         let hasLxApi =
             regex(trimmed, #"\bEVENT_NAMES\b"#) != nil ||
             regex(trimmed, #"\blx\s*\.\s*(on|send)\b"#) != nil ||
             regex(trimmed, #"\blxu?\s*\.\s*(on|send|request|EVENT_NAMES)\b"#) != nil ||
             regex(trimmed, #"\bglobalThis\s*\.\s*lx"#) != nil
-        let isWellFormat = regex(trimmed, #"module\s*\.\s*exports\s*\.\s*getMusicUrl"#) != nil
-        return hasLxApi && !isWellFormat
+        if hasLxApi { return true }
+        // 加密/混淆体：头注释在、但代码段是密文（超长 hex/base64 无空白行，
+        // 或带 eval/new Function/atob 的自解密 loader）→ 放行，运行时自解密
+        let looksEncrypted =
+            regex(trimmed, #"\b[0-9a-fA-F]{512,}\b"#) != nil ||
+            regex(trimmed, #"[A-Za-z0-9+/=]{1024,}"#) != nil ||
+            regex(trimmed, #"\b(new\s+Function|eval\s*\(|atob\s*\()"#) != nil
+        return looksEncrypted
     }
 
     private static func hasHeaderComment(_ script: String) -> Bool {

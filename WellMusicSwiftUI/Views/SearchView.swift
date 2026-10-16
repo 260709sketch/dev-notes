@@ -158,35 +158,42 @@ struct SearchView: View {
     }
 
     /// 主滚动内容（新旧两版共用；新版在顶部带常驻自绘搜索框）。
+    /// ★ 2026-10-16 问题24：上滑浮现「回到顶部」浮钮。
     private var mainScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
-                if !legacySearchUI {
-                    searchBar
-                }
-
-                if hasQuery {
-                    platformPicker
-                        .padding(.horizontal, WellSearchLayout.contentInset)
-                        .padding(.top, 12)
-                    typePicker
-                        .padding(.horizontal, WellSearchLayout.contentInset)
-                        .padding(.top, 8)
-
-                    if model.isLoading && currentEmpty {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 300)
-                    } else {
-                        content
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Color.clear.frame(height: 0).id("well-page-top")
+                    // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
+                    if !legacySearchUI {
+                        searchBar
                     }
-                } else {
-                    emptyPrompt
-                }
 
-                // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白。
-                Color.clear.frame(height: 170)
+                    if hasQuery {
+                        platformPicker
+                            .padding(.horizontal, WellSearchLayout.contentInset)
+                            .padding(.top, 12)
+                        typePicker
+                            .padding(.horizontal, WellSearchLayout.contentInset)
+                            .padding(.top, 8)
+
+                        if model.isLoading && currentEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, minHeight: 300)
+                        } else {
+                            content
+                        }
+                    } else {
+                        emptyPrompt
+                    }
+
+                    // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白。
+                    Color.clear.frame(height: 170)
+                }
             }
+            .coordinateSpace(name: "well-search-scroll")
+            .modifier(WellScrollToTopPageModifier(
+                space: "well-search-scroll", topID: "well-page-top", proxy: proxy))
         }
     }
 
@@ -524,6 +531,10 @@ struct WellMVPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var failed = false
+    /// ★ 2026-10-16 用户问题22：顶部标题/关闭钮跟随控制条显隐
+    ///（点一下出现，再点消失；4 秒无操作自动隐藏，不挡视野）
+    @State private var controlsVisible = true
+    @State private var hideTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -552,23 +563,26 @@ struct WellMVPlayerView: View {
 
                     Spacer(minLength: 8)
 
-                    // 标题块**居中**（用户 2026-10-15）
+                    // 标题块**居中**（用户 2026-10-15）；
+                    // ★ 问题22：过长自动截断留 …（maxWidth 限制，不碰两侧按钮）
                     VStack(alignment: .center, spacing: 2) {
                         Text(mv.name)
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         Text(mv.artistName ?? "")
                             .font(.system(size: 12))
                             .foregroundStyle(.white.opacity(0.7))
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 8)
 
                     Spacer(minLength: 8)
 
-                    // 关闭钮放**右上角**（用户 2026-10-16：「退出按钮移到右边」；
-                    // 左上角版本会挡住系统返回手势起点一侧的视觉重心）
+                    // 关闭钮放**右上角**（用户 2026-10-16：「退出按钮移到右边」）
                     Button {
                         player?.pause()
                         // ⚠️ 先复位方向锁再关（否则关闭动画期间系统仍按横屏评估，
@@ -586,10 +600,20 @@ struct WellMVPlayerView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
+                .opacity(controlsVisible ? 1 : 0)
+                .animation(.easeInOut(duration: 0.2), value: controlsVisible)
+                .allowsHitTesting(controlsVisible)
                 Spacer()
             }
         }
         .statusBarHidden()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            controlsVisible.toggle()
+            scheduleHide()
+        }
+        .onAppear { scheduleHide() }
+        .onDisappear { hideTask?.cancel() }
         .task {
             // ★ 2026-10-15 用户：进 MV 页先收起搜索页遗留的键盘
             //   （双保险：tap 处已收过一次，这里兜住系统搜索栏等其它入口）
@@ -635,6 +659,17 @@ struct WellMVPlayerView: View {
     /// 错误的几何位置上。两招合用：① 把 dismiss 推迟到旋转动画之后；
     /// ② dismiss 后对场景的窗口强制 setNeedsLayout + layoutIfNeeded，
     /// 让底层 SwiftUI 树按竖屏重新测量。
+    /// 4 秒无操作自动隐藏顶部条（用户点按会重置计时）
+    private func scheduleHide() {
+        hideTask?.cancel()
+        controlsVisible = true
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            controlsVisible = false
+        }
+    }
+
     private func closeAndDismiss() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [dismiss] in
             dismiss()

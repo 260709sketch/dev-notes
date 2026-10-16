@@ -93,10 +93,20 @@ struct DiscoverView: View {
             errorMessage = "内容加载失败，请下拉重试"
         }
 
-        // 「我喜欢的音乐」封面：登录后拉网易云我喜欢**第一首歌曲**的专辑封面
-        //（用户 2026-10-16 问题7）；未登录/拉不到时回落官方默认封面。
+        // 「我喜欢的音乐」封面（2026-10-16 用户问题17：一直刷不出来）。
+        // ★ kumone 同款做法：/user/playlist 响应里 specialType==5 那条歌单的
+        //   coverImgUrl **就是**「我喜欢」官方封面 —— 一次请求顺带拿到，最稳；
+        //   拿不到再走 likedFirstTrackCover 三级兜底。
         if let uid = NeteaseSession.shared.account?.userId {
-            likedCoverURL = try? await NeteaseMusicAPI.shared.likedFirstTrackCover(uid: "\(uid)")
+            var cover: String?
+            if let lists = try? await NeteaseMusicAPI.shared.userPlaylists(uid: Int(uid) ?? 0) {
+                let liked = lists.first(where: { $0.isLoved }) ?? lists.first
+                if let c = liked?.coverURL, !c.isEmpty { cover = c }
+            }
+            if cover == nil {
+                cover = try? await NeteaseMusicAPI.shared.likedFirstTrackCover(uid: "\(uid)")
+            }
+            likedCoverURL = cover
         }
     }
 
@@ -267,6 +277,8 @@ struct DiscoverView: View {
     }
 
     /// 经典横卡样式：264×88 入口卡（`WellActionCard`），同样不带「推荐」标题。
+    /// ★ 2026-10-16 用户问题9：横卡上下空隙偏大 —— 收 6pt 让下方内容上提
+    /// （封面方卡样式不受影响）。
     private var dailyActionSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 14) {
@@ -317,7 +329,7 @@ struct DiscoverView: View {
                 Color.clear.frame(width: WellSearchMetrics.contentInset - 14, height: 1)
             }
             .frame(height: 112)
-            .padding(.vertical, 4)
+            .padding(.vertical, -2)
         }
     }
 
@@ -506,13 +518,21 @@ struct DiscoverView: View {
     // MARK: - 状态视图
 
     private var loadingState: some View {
-        VStack(spacing: 14) {
-            ProgressView()
-            Text("正在加载推荐内容…")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        // ★ 2026-10-16 用户问题18：转圈换成 kumone 同款骨架屏（结构镜像 + 流光），
+        //   加载完成不跳版
+        VStack(spacing: 30) {
+            HStack(spacing: 14) {
+                ForEach(0..<3, id: \.self) { _ in
+                    WellSkeletonView(cornerRadius: 14)
+                        .frame(width: 230, height: 88)
+                }
+            }
+            .padding(.horizontal, 16)
+            WellSkeletonShelf()
+            WellSkeletonShelf()
         }
-        .frame(maxWidth: .infinity, minHeight: 420)
+        .frame(maxWidth: .infinity, minHeight: 420, alignment: .top)
+        .padding(.top, 8)
     }
 
     private func errorState(_ message: String) -> some View {

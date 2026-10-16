@@ -100,6 +100,18 @@ struct SettingsView: View {
                 }
 
                 Section("播放") {
+                    // ★ 2026-10-16 用户问题2：自定义音源 + 音源状态移出高级功能，
+                    //   放到「播放」分组最前面
+                    NavigationLink {
+                        WellLXSourceManageView()
+                    } label: {
+                        Label("自定义音源", systemImage: "square.stack.3d.up")
+                    }
+                    NavigationLink {
+                        WellLXSourceStatusView()
+                    } label: {
+                        Label("音源状态", systemImage: "waveform.path.ecg")
+                    }
                     // 启动恢复上次播放（2026-10-14 用户要求）
                     Toggle("启动恢复上次播放", isOn: $settings.restoreLastPlayback)
                     // 预加载下一首（2026-10-14 用户要求提供开关）
@@ -197,7 +209,8 @@ struct SettingsView: View {
                     // ★ 2026-10-15 用户：搜索框样式切换
                     //   开 = 旧版（系统搜索栏，进页折叠）；关 = 新版（页面顶部常驻搜索框）。
                     //   与搜索页右上角滑杆菜单为同一设置项。
-                    Toggle("旧版搜索界面（系统搜索栏）", isOn: $settings.searchLegacyUI)
+                    // ★ 2026-10-16 用户问题8：改名「系统搜索框」
+                    Toggle("系统搜索框", isOn: $settings.searchLegacyUI)
 
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in
@@ -245,12 +258,7 @@ struct SettingsView: View {
                 //   ③ 「版本」只保留当前 1.0.0（原先显示「1.0.0 (SwiftUI)」）；
                 //   ④ 新增「检查更新」与更新机制（从 GitHub 仓库拉取，见 `UpdateChecker`）。
                 Section("关于") {
-                    HStack {
-                        Text("名称")
-                        Spacer()
-                        Text(UpdateChecker.appName)
-                            .foregroundStyle(.secondary)
-                    }
+                    // ★ 2026-10-16 用户问题8：顺序改为 开发者 → 版本 → 名称 → 检查更新
                     HStack {
                         Text("开发者")
                         Spacer()
@@ -261,6 +269,12 @@ struct SettingsView: View {
                         Text("版本")
                         Spacer()
                         Text(UpdateChecker.currentVersion)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("名称")
+                        Spacer()
+                        Text(UpdateChecker.appName)
                             .foregroundStyle(.secondary)
                     }
                     Button {
