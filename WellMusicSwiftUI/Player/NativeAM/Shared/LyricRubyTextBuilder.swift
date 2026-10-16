@@ -2,7 +2,7 @@ import SwiftUI
 
 @MainActor
 enum LyricRubyTextBuilder {
-    static func romanizationText(
+    nonisolated static func romanizationText(
         from units: [LyricRubyPlacementUnit]
     ) -> Text {
         units.reduce(into: LyricAttributedText(verbatim: "")) { result, unit in
@@ -27,7 +27,7 @@ enum LyricRubyTextBuilder {
         }.text
     }
 
-    static func hasTimedRomanization(
+    nonisolated static func hasTimedRomanization(
         _ unit: LyricRubyUnit
     ) -> Bool {
         guard unit.hasAuthoredRomanizationTiming,

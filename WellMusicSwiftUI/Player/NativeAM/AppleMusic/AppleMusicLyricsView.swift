@@ -211,11 +211,16 @@ struct AppleMusicLyricsView: View {
     private var lyricsContent: some View {
         if lyrics.isEmpty {
             if let errorMessage {
-                ContentUnavailableView(
-                    "ui.lyrics.empty",
-                    systemImage: "quote.bubble",
-                    description: Text(errorMessage)
-                )
+                // ★ 2026-10-16：原 ContentUnavailableView 泛型 init 让类型检查器超时，
+                //   改为等价手写（视觉一致）。
+                VStack(spacing: 10) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 34))
+                    Text(errorMessage)
+                        .font(.system(size: 14))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(.rect)
