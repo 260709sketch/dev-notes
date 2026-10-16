@@ -23,7 +23,7 @@ enum WellNativeLyricsAdapter {
                 id: "\(index)",
                 time: line.time,
                 duration: duration,
-                timingKind: syllables.isEmpty ? .normal : .precise,
+                timingKind: syllables.isEmpty ? .lineSynchronized : .precise,
                 text: line.text,
                 syllables: syllables,
                 romanization: line.romaji,
@@ -69,6 +69,7 @@ struct WellNativeLyricsHost: View {
         .padding(.bottom, bottomPadding)
         .padding(.horizontal, horizontalPadding)
         .onReceive(player.$lyrics) { parsed in
+            guard let parsed else { return }
             let signature = parsed.lines.count * 1000 + (parsed.lines.first?.time.bitPattern.hashValue ?? 0)
             guard signature != lastLyricsSignature else { return }
             lastLyricsSignature = signature
@@ -78,8 +79,8 @@ struct WellNativeLyricsHost: View {
             highlightedID = WellNativeLyricsAdapter.highlightedID(in: lines, at: time)
         }
         .onAppear {
-            if lines.isEmpty {
-                lines = WellNativeLyricsAdapter.lines(from: player.lyrics)
+            if lines.isEmpty, let parsed = player.lyrics {
+                lines = WellNativeLyricsAdapter.lines(from: parsed)
             }
         }
     }

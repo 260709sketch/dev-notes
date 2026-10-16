@@ -700,6 +700,7 @@ struct AppleMusicPlayerView: View {
             usesFluidBackground: settings.appleMusicFluidBackground,
             usesAMLL: settings.appleMusicUseAMLL,
             showsLyrics: showLyrics,
+            lyricsEngineNative: settings.appleMusicLyricsEngine == "native",
             coverURL: coverURL,
             amllTopPadding: ScreenAdapter.h(CGFloat(amllTopPx)),
             // ★ 2026-10-16 第十轮问题10：歌词页下滑收起底部控制后，歌词一直铺到
@@ -1639,6 +1640,8 @@ private struct AppleMusicPlayerBackground: View {
     let usesFluidBackground: Bool
     let usesAMLL: Bool
     let showsLyrics: Bool
+    /// ★ 歌词引擎：true = 原生 AppleMusic（移植版）
+    let lyricsEngineNative: Bool
     let coverURL: URL?
     let amllTopPadding: CGFloat
     let amllBottomPadding: CGFloat
@@ -1676,7 +1679,7 @@ private struct AppleMusicPlayerBackground: View {
             // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
             if usesAMLL && showsLyrics {
                 // ★ 2026-10-16：歌词引擎二选一（播放器调整 → 歌词引擎）
-                if settings.appleMusicLyricsEngine == "native" {
+                if lyricsEngineNative {
                     WellNativeLyricsHost(
                         topPadding: amllTopPadding,
                         bottomPadding: amllBottomPadding,

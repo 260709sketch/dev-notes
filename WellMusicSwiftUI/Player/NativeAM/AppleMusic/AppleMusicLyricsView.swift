@@ -248,295 +248,301 @@ struct AppleMusicLyricsView: View {
 
     @ViewBuilder
     private var lyricsLoadedState: some View {
-            let blurFocusLyricID =
-                visualCascadeFocusLyricID
-                ?? highlightedLyricID
-            let _ = lyricLayoutRevision
-            let focusNeighborIDs = lyricNeighborIDs(around: blurFocusLyricID)
-            let focusEffectAnimation = lyricFocusEffectAnimation(
-                for: visualHighlightedLyricID
-            )
-            let visualScaleFocusLyricID =
-                seekFeedback?.previousFocusLyricID
-                ?? visualCascadeFocusLyricID
-            let usesPseudoTiming = settings.lyricsPseudoWordByWord
-                && !hasSyllableSyncedLyrics
-            let appleMusicMotionProfile =
-                settings.appleMusicLyrics.usesAppleMusic26Motion
-                    ? AppleMusicLyricsMotionProfile.iOS26_6
-                    : nil
-            let showsTranslations = settings.lyricsTranslationEnabled
-                && hasTranslations
-            let showsRomanizations =
-                settings.lyricsRomanizationEnabled
-                && hasRomanizations
-            let showsAnnotations =
-                showsRomanizations || showsTranslations
-            let retainedCascadeLyricIDs = Set(
-                retainedCascadeLyrics.map(\.id)
-            )
-            let reservesAnnotationSpace = showsAnnotations
-            let lineSpacing = CGFloat(
-                settings.effectiveAppleMusicLyricsLineSpacing
-            )
-            let supplementalTextProfile =
-                appleMusicMotionProfile == nil
-                    ? nil
-                    : AppleMusicLyricsSupplementalTextProfile.iOS26_6
-            let title3Font = UIFont.systemFont(
-                ofSize: UIFont.preferredFont(
-                    forTextStyle: .title3
-                ).pointSize,
-                weight: .bold
-            )
-            let calloutFont = UIFont.systemFont(
-                ofSize: UIFont.preferredFont(
-                    forTextStyle: .callout
-                ).pointSize,
-                weight: .bold
-            )
-            let romanizationFontSize =
-                supplementalTextProfile == nil
-                    ? max(
-                        CGFloat(
-                            resolvedLyricsFontSize
-                                * settings.lyricsRomanizationFontScale
-                        ),
-                        13
-                    )
-                    : title3Font.pointSize
-            let romanizationHeight = showsRomanizations
-                ? supplementalTextProfile == nil
-                    ? romanizationFontSize * 1.2
-                    : title3Font.lineHeight
-                : 0
-            let translationHeight = showsTranslations
-                ? supplementalTextProfile == nil
-                    ? CGFloat(
+        lyricsLoadedMain()
+    }
+
+    // ★ 2026-10-16：主态体包成 func（原属性表达式让类型检查器超时）
+    @ViewBuilder
+    private func lyricsLoadedMain() -> some View {
+        let blurFocusLyricID =
+            visualCascadeFocusLyricID
+            ?? highlightedLyricID
+        let _ = lyricLayoutRevision
+        let focusNeighborIDs = lyricNeighborIDs(around: blurFocusLyricID)
+        let focusEffectAnimation = lyricFocusEffectAnimation(
+            for: visualHighlightedLyricID
+        )
+        let visualScaleFocusLyricID =
+            seekFeedback?.previousFocusLyricID
+            ?? visualCascadeFocusLyricID
+        let usesPseudoTiming = settings.lyricsPseudoWordByWord
+            && !hasSyllableSyncedLyrics
+        let appleMusicMotionProfile =
+            settings.appleMusicLyrics.usesAppleMusic26Motion
+                ? AppleMusicLyricsMotionProfile.iOS26_6
+                : nil
+        let showsTranslations = settings.lyricsTranslationEnabled
+            && hasTranslations
+        let showsRomanizations =
+            settings.lyricsRomanizationEnabled
+            && hasRomanizations
+        let showsAnnotations =
+            showsRomanizations || showsTranslations
+        let retainedCascadeLyricIDs = Set(
+            retainedCascadeLyrics.map(\.id)
+        )
+        let reservesAnnotationSpace = showsAnnotations
+        let lineSpacing = CGFloat(
+            settings.effectiveAppleMusicLyricsLineSpacing
+        )
+        let supplementalTextProfile =
+            appleMusicMotionProfile == nil
+                ? nil
+                : AppleMusicLyricsSupplementalTextProfile.iOS26_6
+        let title3Font = UIFont.systemFont(
+            ofSize: UIFont.preferredFont(
+                forTextStyle: .title3
+            ).pointSize,
+            weight: .bold
+        )
+        let calloutFont = UIFont.systemFont(
+            ofSize: UIFont.preferredFont(
+                forTextStyle: .callout
+            ).pointSize,
+            weight: .bold
+        )
+        let romanizationFontSize =
+            supplementalTextProfile == nil
+                ? max(
+                    CGFloat(
                         resolvedLyricsFontSize
-                            * settings.lyricsTranslationFontScale
-                            * 1.2
-                    )
-                    : showsRomanizations
-                        ? calloutFont.lineHeight
-                        : title3Font.lineHeight
-                : 0
-            let annotationHeight =
-                romanizationHeight
-                + translationHeight
-                + (
-                    showsRomanizations
-                        ? CGFloat(
-                            supplementalTextProfile?
-                                .transliterationSpacing
-                                ?? Double(Self.annotationSpacing)
-                        )
-                        : 0
-                )
-                + (
-                    showsTranslations
-                        ? CGFloat(
-                            (supplementalTextProfile?
-                                .translationSpacing
-                                ?? Double(Self.annotationSpacing))
-                                + (supplementalTextProfile?
-                                    .translationBottomPadding ?? 0)
-                        )
-                        : 0
-                )
-            let fallbackLyricStride = max(
-                CGFloat(resolvedLyricsFontSize) * 1.2
-                    + annotationHeight
-                    + lineSpacing,
-                1
-            )
-            let lyricStride = measuredLyricAnchorStride(
-                around: blurFocusLyricID,
-                lineSpacing: lineSpacing,
-                fallback: fallbackLyricStride
-            )
-            let blurIntensity = appleMusicMotionProfile == nil
-                ? CGFloat(settings.lyricsBlurIntensity)
-                : 1
-            let usesUniformBrowsingDimming =
-                isBrowsingLyrics
-                    && settings
-                        .lyricsUsesUniformDimmingWhileBrowsing
-            let bypassesPresetBlurForIncreasedContrast =
-                appleMusicMotionProfile != nil
-                    && colorSchemeContrast == .increased
-            let activeBlurIntensity =
-                usesUniformBrowsingDimming
-                    || bypassesPresetBlurForIncreasedContrast
-                ? 0
-                : blurIntensity
-            let distanceBlurScale = appleMusicMotionProfile == nil
-                ? CGFloat(settings.lyricsDistanceBlurScale)
-                : 1
-            let hiddenInterfaceBlurScale = appleMusicMotionProfile == nil
-                ? CGFloat(settings.lyricsHiddenInterfaceBlurScale)
-                : 1
-            let activeHiddenInterfaceProgress = min(
-                max(hiddenInterfaceProgress, 0),
-                1
-            )
-            let dimAmount = settings.lyricsDimAmount
-            let distanceDimAmount = usesUniformBrowsingDimming
-                ? 0
-                : dimAmount
-            let currentLineScale = lyricsCurrentLineScale
-            let usesPresetGlow = appleMusicMotionProfile != nil
-            let glowOverflow = Self.lyricGlowOverflow(
-                isEnabled: (usesPresetGlow || settings.lyricsGlowEnabled)
-                    && (
-                        (settings.lyricsWordByWord && hasSyllableSyncedLyrics)
-                            || usesPseudoTiming
+                            * settings.lyricsRomanizationFontScale
                     ),
-                fontSize: resolvedLyricsFontSize,
-                intensity:
-                    usesPresetGlow
-                        ? 1
-                        : settings.lyricsGlowIntensity
-            )
-            let horizontalVisualOverflow = max(
-                glowOverflow,
-                SynchronizedLyricText
-                    .interactionBackgroundVisualOverflow
-            )
-
-            GeometryReader { proxy in
-                let focusPosition = lyricsFocusPosition(
-                    for: proxy.size.height
+                    13
                 )
-                let focusAnchorY = proxy.size.height * focusPosition
-                let visibleViewportHeight = visibleLyricsViewportHeight(
-                    for: proxy.size.height
+                : title3Font.pointSize
+        let romanizationHeight = showsRomanizations
+            ? supplementalTextProfile == nil
+                ? romanizationFontSize * 1.2
+                : title3Font.lineHeight
+            : 0
+        let translationHeight = showsTranslations
+            ? supplementalTextProfile == nil
+                ? CGFloat(
+                    resolvedLyricsFontSize
+                        * settings.lyricsTranslationFontScale
+                        * 1.2
                 )
-                let maskLocations = lyricsMaskLocations(
-                    for: proxy.size.height
-                )
-                let lyricLayoutWidth = max(proxy.size.width, 1)
-                let bottomContentPadding = max(
-                    proxy.size.height * (1 - focusPosition),
-                    40
-                )
-                let topContentPadding = appleMusicMotionProfile.map {
-                    CGFloat($0.firstLineStartOffset)
-                } ?? max(proxy.size.height * focusPosition, 40)
-                let lyricRowContext = LyricRowVisualContext(
-                    activePlaybackLyricIDs: activePlaybackLyricIDs,
-                    visualScaleFocusLyricID: visualScaleFocusLyricID,
-                    precedingFocusLyricID: focusNeighborIDs.preceding,
-                    followingFocusLyricID: focusNeighborIDs.following,
-                    retainedCascadeLyricIDs: retainedCascadeLyricIDs,
-                    usesPseudoTiming: usesPseudoTiming,
-                    romanizationFontSize: romanizationFontSize,
-                    reservesAnnotationSpace: reservesAnnotationSpace,
-                    currentLineScale: currentLineScale,
-                    lyricLayoutWidth: lyricLayoutWidth,
-                    focusAnchorY: focusAnchorY,
-                    hiddenInterfaceProgress: activeHiddenInterfaceProgress,
-                    distanceBlurScale: distanceBlurScale,
-                    hiddenInterfaceBlurScale: hiddenInterfaceBlurScale,
-                    viewportHeight: proxy.size.height,
-                    lyricStride: lyricStride,
-                    activeBlurIntensity: activeBlurIntensity,
-                    motionProfile: appleMusicMotionProfile,
-                    distanceDimAmount: distanceDimAmount,
-                    dimAmount: dimAmount,
-                    focusEffectAnimation: focusEffectAnimation
-                )
-                let scrollPresentationContext =
-                    LyricScrollPresentationContext(
-                        viewportSize: proxy.size,
-                        focusPosition: focusPosition,
-                        maskTopOpaque: maskLocations.topOpaque,
-                        maskBottomOpaque: maskLocations.bottomOpaque,
-                        maskBottomClear: maskLocations.bottomClear,
-                        horizontalVisualOverflow:
-                            horizontalVisualOverflow,
-                        row: lyricRowContext
+                : showsRomanizations
+                    ? calloutFont.lineHeight
+                    : title3Font.lineHeight
+            : 0
+        let annotationHeight =
+            romanizationHeight
+            + translationHeight
+            + (
+                showsRomanizations
+                    ? CGFloat(
+                        supplementalTextProfile?
+                            .transliterationSpacing
+                            ?? Double(Self.annotationSpacing)
                     )
+                    : 0
+            )
+            + (
+                showsTranslations
+                    ? CGFloat(
+                        (supplementalTextProfile?
+                            .translationSpacing
+                            ?? Double(Self.annotationSpacing))
+                            + (supplementalTextProfile?
+                                .translationBottomPadding ?? 0)
+                    )
+                    : 0
+            )
+        let fallbackLyricStride = max(
+            CGFloat(resolvedLyricsFontSize) * 1.2
+                + annotationHeight
+                + lineSpacing,
+            1
+        )
+        let lyricStride = measuredLyricAnchorStride(
+            around: blurFocusLyricID,
+            lineSpacing: lineSpacing,
+            fallback: fallbackLyricStride
+        )
+        let blurIntensity = appleMusicMotionProfile == nil
+            ? CGFloat(settings.lyricsBlurIntensity)
+            : 1
+        let usesUniformBrowsingDimming =
+            isBrowsingLyrics
+                && settings
+                    .lyricsUsesUniformDimmingWhileBrowsing
+        let bypassesPresetBlurForIncreasedContrast =
+            appleMusicMotionProfile != nil
+                && colorSchemeContrast == .increased
+        let activeBlurIntensity =
+            usesUniformBrowsingDimming
+                || bypassesPresetBlurForIncreasedContrast
+            ? 0
+            : blurIntensity
+        let distanceBlurScale = appleMusicMotionProfile == nil
+            ? CGFloat(settings.lyricsDistanceBlurScale)
+            : 1
+        let hiddenInterfaceBlurScale = appleMusicMotionProfile == nil
+            ? CGFloat(settings.lyricsHiddenInterfaceBlurScale)
+            : 1
+        let activeHiddenInterfaceProgress = min(
+            max(hiddenInterfaceProgress, 0),
+            1
+        )
+        let dimAmount = settings.lyricsDimAmount
+        let distanceDimAmount = usesUniformBrowsingDimming
+            ? 0
+            : dimAmount
+        let currentLineScale = lyricsCurrentLineScale
+        let usesPresetGlow = appleMusicMotionProfile != nil
+        let glowOverflow = Self.lyricGlowOverflow(
+            isEnabled: (usesPresetGlow || settings.lyricsGlowEnabled)
+                && (
+                    (settings.lyricsWordByWord && hasSyllableSyncedLyrics)
+                        || usesPseudoTiming
+                ),
+            fontSize: resolvedLyricsFontSize,
+            intensity:
+                usesPresetGlow
+                    ? 1
+                    : settings.lyricsGlowIntensity
+        )
+        let horizontalVisualOverflow = max(
+            glowOverflow,
+            SynchronizedLyricText
+                .interactionBackgroundVisualOverflow
+        )
 
-                let baseScrollView = ScrollView {
-                    LazyVStack(
-                        alignment: .leading,
-                        spacing: lineSpacing
-                    ) {
-                        ForEach(displayItems) { item in
-                            if case let .interlude(interlude) = item {
-                                AppleMusicLyricInterludeView(
-                                    interlude: interlude,
-                                    isVisible:
-                                        visibleInterludeID == interlude.id
-                                        && retainedInterlude?.interlude.id
-                                            != interlude.id,
-                                    isAnimationActive: isActive,
-                                    advanceTime:
-                                        effectiveLyricsAdvanceTime,
-                                    onInterfaceInteraction:
-                                        onInterfaceInteraction
+        GeometryReader { proxy in
+            let focusPosition = lyricsFocusPosition(
+                for: proxy.size.height
+            )
+            let focusAnchorY = proxy.size.height * focusPosition
+            let visibleViewportHeight = visibleLyricsViewportHeight(
+                for: proxy.size.height
+            )
+            let maskLocations = lyricsMaskLocations(
+                for: proxy.size.height
+            )
+            let lyricLayoutWidth = max(proxy.size.width, 1)
+            let bottomContentPadding = max(
+                proxy.size.height * (1 - focusPosition),
+                40
+            )
+            let topContentPadding = appleMusicMotionProfile.map {
+                CGFloat($0.firstLineStartOffset)
+            } ?? max(proxy.size.height * focusPosition, 40)
+            let lyricRowContext = LyricRowVisualContext(
+                activePlaybackLyricIDs: activePlaybackLyricIDs,
+                visualScaleFocusLyricID: visualScaleFocusLyricID,
+                precedingFocusLyricID: focusNeighborIDs.preceding,
+                followingFocusLyricID: focusNeighborIDs.following,
+                retainedCascadeLyricIDs: retainedCascadeLyricIDs,
+                usesPseudoTiming: usesPseudoTiming,
+                romanizationFontSize: romanizationFontSize,
+                reservesAnnotationSpace: reservesAnnotationSpace,
+                currentLineScale: currentLineScale,
+                lyricLayoutWidth: lyricLayoutWidth,
+                focusAnchorY: focusAnchorY,
+                hiddenInterfaceProgress: activeHiddenInterfaceProgress,
+                distanceBlurScale: distanceBlurScale,
+                hiddenInterfaceBlurScale: hiddenInterfaceBlurScale,
+                viewportHeight: proxy.size.height,
+                lyricStride: lyricStride,
+                activeBlurIntensity: activeBlurIntensity,
+                motionProfile: appleMusicMotionProfile,
+                distanceDimAmount: distanceDimAmount,
+                dimAmount: dimAmount,
+                focusEffectAnimation: focusEffectAnimation
+            )
+            let scrollPresentationContext =
+                LyricScrollPresentationContext(
+                    viewportSize: proxy.size,
+                    focusPosition: focusPosition,
+                    maskTopOpaque: maskLocations.topOpaque,
+                    maskBottomOpaque: maskLocations.bottomOpaque,
+                    maskBottomClear: maskLocations.bottomClear,
+                    horizontalVisualOverflow:
+                        horizontalVisualOverflow,
+                    row: lyricRowContext
+                )
+
+            let baseScrollView = ScrollView {
+                LazyVStack(
+                    alignment: .leading,
+                    spacing: lineSpacing
+                ) {
+                    ForEach(displayItems) { item in
+                        if case let .interlude(interlude) = item {
+                            AppleMusicLyricInterludeView(
+                                interlude: interlude,
+                                isVisible:
+                                    visibleInterludeID == interlude.id
+                                    && retainedInterlude?.interlude.id
+                                        != interlude.id,
+                                isAnimationActive: isActive,
+                                advanceTime:
+                                    effectiveLyricsAdvanceTime,
+                                onInterfaceInteraction:
+                                    onInterfaceInteraction
+                            )
+                            .id(interlude.id)
+                            .onGeometryChange(for: CGRect.self) {
+                                geometry in
+                                geometry.frame(
+                                    in: .scrollView(axis: .vertical)
                                 )
-                                .id(interlude.id)
-                                .onGeometryChange(for: CGRect.self) {
-                                    geometry in
-                                    geometry.frame(
-                                        in: .scrollView(axis: .vertical)
-                                    )
-                                } action: { frame in
-                                    recordInterludeGeometry(
-                                        frame,
-                                        for: interlude.id
-                                    )
-                                }
-                                .onDisappear {
-                                    lyricGeometryCache.removeInterlude(
-                                        interlude.id
-                                    )
-                                }
+                            } action: { frame in
+                                recordInterludeGeometry(
+                                    frame,
+                                    for: interlude.id
+                                )
                             }
-
-                            if case let .lyric(line) = item {
-                                lyricRow(
-                                    line,
-                                    context: lyricRowContext
+                            .onDisappear {
+                                lyricGeometryCache.removeInterlude(
+                                    interlude.id
                                 )
                             }
                         }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.top, topContentPadding)
-                    .padding(.bottom, bottomContentPadding)
-                    .overlay(alignment: .bottom) {
-                        Color.clear
-                            .frame(maxWidth: .infinity)
-                            .frame(height: bottomContentPadding)
-                            .contentShape(.rect)
-                            .onTapGesture {
-                                onInterfaceInteraction?()
-                            }
-                            .accessibilityHidden(true)
-                    }
-                    .overlay(alignment: .top) {
-                        hiddenControlsTapTarget(
-                            viewportHeight: proxy.size.height
-                        )
+
+                        if case let .lyric(line) = item {
+                            lyricRow(
+                                line,
+                                context: lyricRowContext
+                            )
+                        }
                     }
                 }
-                let presentedScrollView = lyricScrollPresentation(
-                    baseScrollView,
-                    context: scrollPresentationContext
-                )
-                let interactiveScrollView = lyricScrollInteractions(
-                    presentedScrollView
-                )
-                lyricScrollLifecycle(
-                    interactiveScrollView,
-                    viewportWidth: proxy.size.width,
-                    viewportHeight: proxy.size.height,
-                    visibleViewportHeight: visibleViewportHeight
-                )
+                .scrollTargetLayout()
+                .padding(.top, topContentPadding)
+                .padding(.bottom, bottomContentPadding)
+                .overlay(alignment: .bottom) {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: bottomContentPadding)
+                        .contentShape(.rect)
+                        .onTapGesture {
+                            onInterfaceInteraction?()
+                        }
+                        .accessibilityHidden(true)
+                }
+                .overlay(alignment: .top) {
+                    hiddenControlsTapTarget(
+                        viewportHeight: proxy.size.height
+                    )
+                }
             }
+            let presentedScrollView = lyricScrollPresentation(
+                baseScrollView,
+                context: scrollPresentationContext
+            )
+            let interactiveScrollView = lyricScrollInteractions(
+                presentedScrollView
+            )
+            lyricScrollLifecycle(
+                interactiveScrollView,
+                viewportWidth: proxy.size.width,
+                viewportHeight: proxy.size.height,
+                visibleViewportHeight: visibleViewportHeight
+            )
+        }
     }
 
     private func lyricRow(
