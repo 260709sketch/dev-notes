@@ -58,7 +58,7 @@ struct WellArtistHomeView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            Color.clear.frame(height: 0).id("well-page-top")
+                            WellScrollTopReporter(space: "well-artist-scroll").id("well-page-top")
                             artistHeader
                             hotSongsSection
                             albumsSection

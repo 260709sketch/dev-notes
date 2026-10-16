@@ -301,15 +301,7 @@ private struct WellLXSourceRow: View {
                 Button(isActive ? "取消优先" : "设为优先", action: onToggle)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                Button(action: onTest) {
-                    if isTesting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("测试", systemImage: "stethoscope")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                // ★ 2026-10-16 第十轮问题3：删除「测试」按钮（测试统一走音源测试页）
                 Button(action: onCheckUpdate) {
                     if isCheckingUpdate {
                         ProgressView().controlSize(.small)

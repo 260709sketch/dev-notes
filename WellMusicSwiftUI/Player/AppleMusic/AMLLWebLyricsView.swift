@@ -56,12 +56,32 @@ struct AMLLWebLyricsView: View {
             )
         }
         .overlay { stateOverlay }
+        .task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            nilGraceElapsed = true
+        }
     }
+
+    /// 无歌词宽限期是否已过（3 秒内没好歌词 → 显示「暂无歌词」而不是一直转圈）
+    @State private var nilGraceElapsed = false
 
     @ViewBuilder
     private var stateOverlay: some View {
         if player.lyrics == nil {
-            ProgressView().controlSize(.small).tint(.white)
+            // ★ 2026-10-16 第十轮问题8：无歌词歌曲原来永远转圈 —— 给 3 秒宽限，
+            //   过后仍是 nil 就按「暂无歌词」展示（kumone 同款体验）。
+            if nilGraceElapsed {
+                VStack(spacing: 10) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("暂无歌词")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+            } else {
+                ProgressView().controlSize(.small).tint(.white)
+            }
         } else if player.lyrics?.isInstrumental == true {
             VStack(spacing: 10) {
                 Image(systemName: "music.quarternote.3")

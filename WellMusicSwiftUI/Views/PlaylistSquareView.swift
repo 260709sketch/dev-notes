@@ -41,7 +41,7 @@ struct PlaylistSquareView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Color.clear.frame(height: 0).id("well-page-top")
+                    WellScrollTopReporter(space: "well-square-scroll").id("well-page-top")
                     categoryBar
 
                 if failed && playlists.isEmpty && toplists.isEmpty {

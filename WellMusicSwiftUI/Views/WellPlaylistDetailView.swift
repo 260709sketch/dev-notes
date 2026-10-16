@@ -115,7 +115,7 @@ struct WellPlaylistDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        Color.clear.frame(height: 0).id("well-page-top")
+                        WellScrollTopReporter(space: "well-playlist-scroll").id("well-page-top")
                         heroCover
                         titleBlock
                         controlsRow
@@ -233,6 +233,8 @@ struct WellPlaylistDetailView: View {
                 .clipped()
                 // ★ 2026-10-14 用户问题4：大封面四角改圆角，参考发现页歌单卡片圆角（10）
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // ★ 2026-10-16 第十轮问题12：居中留白样式的大封面加投影
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 28)
         case .fullWidth:

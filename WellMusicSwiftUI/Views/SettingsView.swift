@@ -205,6 +205,31 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                 }
 
+                Section("搜索") {
+                    // ★ 2026-10-16 第十轮问题16：优先搜索平台（搜索页默认用它）
+                    Picker("优先搜索平台", selection: Binding(
+                        get: {
+                            let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
+                                ?? WellSearchPlatform.netease.rawValue
+                            return WellSearchPlatform(rawValue: raw) ?? .netease
+                        },
+                        set: { platform in
+                            UserDefaults.standard.set(platform.rawValue,
+                                                      forKey: "wellmusic.search.preferredPlatform")
+                        }
+                    )) {
+                        ForEach(WellSearchPlatform.allCases) { platform in
+                            Text(platform.rawValue).tag(platform)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                } header: {
+                    Text("搜索")
+                } footer: {
+                    Text("搜索页打开时默认选中该平台，可随时在搜索页切换。")
+                        .font(.system(size: 12))
+                }
+
                 Section("界面") {
                     // ★ 2026-10-15 用户：搜索框样式切换
                     //   开 = 旧版（系统搜索栏，进页折叠）；关 = 新版（页面顶部常驻搜索框）。
@@ -214,8 +239,8 @@ struct SettingsView: View {
 
                     Picker("主题", selection: $settings.appTheme) {
                         ForEach(WellAppTheme.allCases) { theme in
-                            Label(theme.displayName, systemImage: theme.symbolName)
-                                .tag(theme)
+                            // ★ 2026-10-16 第十轮问题13：去掉主题选项旁的图标（用户要求）
+                            Text(theme.displayName).tag(theme)
                         }
                     }
                     .pickerStyle(.navigationLink)

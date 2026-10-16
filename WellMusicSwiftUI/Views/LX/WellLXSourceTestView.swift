@@ -298,6 +298,21 @@ final class WellLXSourceTestModel: ObservableObject {
             origin: "应用内曲库")
     }
 
+    /// 单档取链（重试复用）。
+    private static func probeOnce(
+        songmid: String, song: ProbeSong, quality: String, timeout: TimeInterval
+    ) async throws -> (String, String) {
+        try await WellLXEngine.shared.musicURL(
+            songmid: songmid,
+            title: song.title,
+            artist: song.artist,
+            quality: quality,
+            mediaMid: song.mediaMid,
+            copyrightId: song.copyrightId,
+            timeout: timeout
+        )
+    }
+
     private func test(platform: Platform, keyword: String) async -> WellLXPlatformTestResult {
         var result = WellLXPlatformTestResult(id: platform.id, platformName: platform.name, keyword: keyword)
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -328,30 +343,42 @@ final class WellLXSourceTestModel: ObservableObject {
 
         for quality in Self.qualityLevels {
             if stopRequested { break }
+            // ★ 2026-10-16 第十轮问题1：档位之间加间隔 —— 很多音源脚本内置
+            //   「2 秒内仅允许 N 次解析」的自限流，连打 4 档必然吃限流
+            //   （截图：网易「请求限流」、QQ/酷狗「未获取到有效播放链接」）。
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if stopRequested { break }
             let qualityStarted = Date()
             do {
-                let (url, actual) = try await WellLXEngine.shared.musicURL(
-                    songmid: songmid,
-                    title: song.title,
-                    artist: song.artist,
-                    quality: quality,
-                    mediaMid: song.mediaMid,
-                    copyrightId: song.copyrightId,
-                    timeout: TimeInterval(qualityTimeoutSeconds)
-                )
+                let (url, actual) = try await Self.probeOnce(
+                    songmid: songmid, song: song, quality: quality,
+                    timeout: TimeInterval(qualityTimeoutSeconds))
                 guard !url.isEmpty else { throw WellLXEngineError.invalidResponse }
                 let used = Date().timeIntervalSince(qualityStarted)
                 if maxQuality == nil { maxQuality = actual }
                 details.append("\(wellLXQualityLabel(quality)) ✓ \(String(format: "%.1fs", used))")
-                append("[\(platform.name)] \(wellLXQualityLabel(quality)) 可用（\(String(format: "%.1fs", used))）")
                 if showDowngrades, actual != quality {
                     downgrades.append("\(wellLXQualityLabel(quality))→\(wellLXQualityLabel(actual))")
                 }
             } catch {
                 let text = errorText(error)
-                details.append("\(wellLXQualityLabel(quality)) ✗")
-                errors.append("\(wellLXQualityLabel(quality))：\(text)")
-                append("[\(platform.name)] \(wellLXQualityLabel(quality)) 失败：\(text)")
+                // 限流识别：等 2.5s 重试一次；重试仍限流则明确标注（不误导为不可用）
+                if text.contains("限流") || text.contains("过于频繁") {
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    if let retry = try? await Self.probeOnce(
+                        songmid: songmid, song: song, quality: quality,
+                        timeout: TimeInterval(qualityTimeoutSeconds)),
+                       !retry.0.isEmpty {
+                        if maxQuality == nil { maxQuality = retry.1 }
+                        details.append("\(wellLXQualityLabel(quality)) ✓ 重试成功")
+                        continue
+                    }
+                    details.append("\(wellLXQualityLabel(quality)) ⏳ 限流")
+                    errors.append("\(wellLXQualityLabel(quality))：音源限流，稍后再试")
+                } else {
+                    details.append("\(wellLXQualityLabel(quality)) ✗")
+                    errors.append("\(wellLXQualityLabel(quality))：\(text)")
+                }
             }
         }
 

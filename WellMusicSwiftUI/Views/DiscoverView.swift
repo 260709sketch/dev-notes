@@ -83,12 +83,16 @@ struct DiscoverView: View {
         async let artistsTask = loadArtists()
 
         let (daily, recs, albums, arts) = await (dailyTask, recsTask, albumsTask, artistsTask)
-        dailySongs = daily ?? []
-        recommendedPlaylists = recs ?? []
-        newAlbums = albums ?? []
-        artists = arts ?? []
+        // ★ 2026-10-16 第十轮问题4：下拉刷新偶发接口全空时**不再清空已加载内容**
+        //   （原实现 `= daily ?? []` 无脑覆盖 → 整页变「加载失败」白屏，就是
+        //   用户截图那种「下滑刷新变成失败图」）。失败 = 保留旧数据。
+        if let daily { dailySongs = daily }
+        if let recs { recommendedPlaylists = recs }
+        if let albums { newAlbums = albums }
+        if let arts { artists = arts }
         isLoading = false
 
+        // 仅当**全空且确实没拿到任何数据**时才报错（旧内容在则不报）
         if dailySongs.isEmpty && recommendedPlaylists.isEmpty && newAlbums.isEmpty && artists.isEmpty {
             errorMessage = "内容加载失败，请下拉重试"
         }

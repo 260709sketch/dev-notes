@@ -380,6 +380,10 @@ final class WellLXSourceStore: ObservableObject {
             lastError = nil
             defaults.set(source.id, forKey: activeKey)
             Self.log.info("激活音源 \(source.name, privacy: .public)，可用平台 \(capabilities.count)")
+            // ★ 2026-10-16 第十轮问题2：激活即异步检查一次更新（12 小时/源节流）
+            //   —— 用户「在别的平台用这个老音源都提醒更新」的路径就是切到该源时弹；
+            //   脚本自检之外再兜一层应用侧检查，保证切源必查。
+            scheduleUpdateCheckAfterActivation(for: source)
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             lastError = message
@@ -590,6 +594,31 @@ final class WellLXSourceStore: ObservableObject {
         persistSources()
         if activeSourceID == source.id {
             await activate(sources.first(where: { $0.id == source.id }) ?? source)
+        }
+    }
+
+    /// 激活后的更新检查（12 小时/源节流；弹窗复用 pendingUpdateAlert 底部卡片）。
+    private func scheduleUpdateCheckAfterActivation(for source: WellLXSourceInfo) {
+        let d = UserDefaults.standard
+        guard (d.object(forKey: WellLXSourceUpdateConfig.autoCheckUpdateKey) as? Bool) ?? true else { return }
+        let stampKey = "well.lx.lastActivateCheck.\(source.id)"
+        let last = d.double(forKey: stampKey)
+        guard Date().timeIntervalSince1970 - last > 12 * 3600 else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let result = await self.checkUpdate(for: source)
+            d.set(Date().timeIntervalSince1970, forKey: stampKey)
+            guard case .newer(let version, let script) = result else { return }
+            if self.pendingUpdateAlert == nil {
+                let srcURL = self.scriptText(for: source).flatMap { WellLXProtocol.extractSrcUrl(from: $0) } ?? ""
+                self.pendingUpdateAlert = WellLXUpdateNotice(
+                    sourceID: source.id,
+                    sourceName: source.name,
+                    log: "发现新版本 v\(version)（当前 v\(source.version)）",
+                    updateUrl: srcURL,
+                    inAppUpdateScript: script
+                )
+            }
         }
     }
 

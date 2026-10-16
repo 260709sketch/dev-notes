@@ -1342,7 +1342,7 @@ struct AppleMusicPlayerView: View {
         } label: {
             VStack(alignment: align, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    if lyricAlignment == 2 { Spacer(minLength: 0) }
+                    if lyricAlignment != 1 { Spacer(minLength: 0) }
                     Text(line.text.isEmpty ? " " : line.text)
                         .font(.system(size: isFocused ? 27 : 23, weight: isFocused ? .bold : .semibold))
                         .foregroundStyle(primaryColor.opacity(isFocused ? 1 : 0.36))
@@ -1353,8 +1353,7 @@ struct AppleMusicPlayerView: View {
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(secondaryColor.opacity(0.82))
                     }
-                    if lyricAlignment == 0 { Spacer(minLength: 0) }
-                    if lyricAlignment == 1 { Spacer(minLength: 0) }
+                    if lyricAlignment != 2 { Spacer(minLength: 0) }
                 }
                 if isFocused, let translation = line.translation, !translation.isEmpty {
                     Text(translation)

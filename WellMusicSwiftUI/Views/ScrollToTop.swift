@@ -13,18 +13,24 @@ struct WellScrollOffsetKey: PreferenceKey {
     }
 }
 
-/// 给 ScrollView 的内容挂上偏移上报（配合 `.coordinateSpace(name:)` 使用）。
-struct WellScrollOffsetTracker: ViewModifier {
+/// 滚动偏移上报锚点（放在 ScrollView 内容**最顶部**）。
+/// ⚠️ 2026-10-16 第十轮修复：探针必须挂在**内容**上 —— 之前直接挂在 ScrollView
+/// 自身（background GeometryReader），测到的是不动的容器 → 偏移恒 0 → 浮钮永不出现
+/// （用户原话「一键回顶的按钮在哪里」）。
+struct WellScrollTopReporter: View {
     let space: String
-    func body(content: Content) -> some View {
-        content.background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: WellScrollOffsetKey.self,
-                    value: -geo.frame(in: .named(space)).minY
-                )
-            }
-        )
+
+    var body: some View {
+        Color.clear
+            .frame(height: 0)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: WellScrollOffsetKey.self,
+                        value: -geo.frame(in: .named(space)).minY
+                    )
+                }
+            )
     }
 }
 
@@ -32,8 +38,8 @@ struct WellScrollOffsetTracker: ViewModifier {
 /// * 上滑超过 400pt 且继续上滑 → 浮现；下滑 → 消失；接近顶部 → 消失；
 /// * 浮现后 3.5 秒不点击自动消失（用户指定）。
 struct WellScrollToTopModifier: ViewModifier {
-    /// 上方页面底部留白（170）之上、dock 之下
-    var bottomInset: CGFloat = 120
+    /// 浮钮距页面底部的距离（2026-10-16 用户：弄到迷你播放器上面一点）
+    var bottomInset: CGFloat = 152
     let onScrollOffset: (CGFloat) -> Void
 
     @State private var visible = false
@@ -134,7 +140,6 @@ struct WellScrollToTopPageModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .modifier(WellScrollOffsetTracker(space: space))
             .modifier(WellScrollToTopModifier { box.value = $0 })
             .onReceive(NotificationCenter.default.publisher(for: .wellScrollToTop)) { _ in
                 withAnimation(.easeInOut(duration: 0.3)) {

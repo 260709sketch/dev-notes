@@ -5,7 +5,16 @@ import AVKit
 
 @MainActor
 final class WellSearchViewModel: ObservableObject {
-    @Published var platform: WellSearchPlatform = .netease
+    /// 初始平台（2026-10-16 第十轮问题16）：设置里可设「优先搜索平台」
+    @Published var platform: WellSearchPlatform = WellSearchViewModel.preferredPlatform {
+        didSet { UserDefaults.standard.set(true, forKey: "wellmusic.search.userPickedPlatform") }
+    }
+    /// 设置 → 优先搜索平台（三大平台之一；rawValue 即展示名）
+    static var preferredPlatform: WellSearchPlatform {
+        let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
+            ?? WellSearchPlatform.netease.rawValue
+        return WellSearchPlatform(rawValue: raw) ?? .netease
+    }
     @Published var type: WellSearchType = .all
     @Published var result = WellSearchResult()
     @Published var isLoading = false
@@ -163,7 +172,7 @@ struct SearchView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Color.clear.frame(height: 0).id("well-page-top")
+                    WellScrollTopReporter(space: "well-search-scroll").id("well-page-top")
                     // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
                     if !legacySearchUI {
                         searchBar

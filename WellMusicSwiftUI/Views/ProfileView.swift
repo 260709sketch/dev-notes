@@ -1025,6 +1025,14 @@ struct NeteaseLikedSongsView: View {
                 return
             }
         } catch {}
+        // ★ 2026-10-16 第十轮问题6：歌单界面封面独立补齐 —— kumone 式走
+        //   /user/playlist 里 specialType==5 那条的官方封面（前面通道给空则补上）
+        if (coverURL ?? "").isEmpty,
+           let lists = try? await NeteaseMusicAPI.shared.userPlaylists(uid: Int(uid) ?? 0),
+           let liked = lists.first(where: { $0.isLoved }) ?? lists.first,
+           let c = liked.coverURL, !c.isEmpty {
+            coverURL = c
+        }
         // 兜底：红心 id 列表 + 分块详情（顺序不定，仅保证不空）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
             tracks = songs
