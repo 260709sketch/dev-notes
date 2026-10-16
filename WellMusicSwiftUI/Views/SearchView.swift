@@ -116,6 +116,9 @@ struct SearchView: View {
     @StateObject private var model = WellSearchViewModel()
     @State private var searchText = ""
     @State private var committedQuery = ""
+    /// ★ 2026-10-16 用户：输入联想关键词（打一个字就出候选）
+    @State private var suggestions: [String] = []
+    @State private var suggestTask: Task<Void, Never>?
 
     private var hasQuery: Bool {
         !committedQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -141,6 +144,7 @@ struct SearchView: View {
                     }
                     .onChange(of: searchText) { newValue in
                         applyDebounce(newValue)
+                        scheduleSuggestions(for: newValue)
                     }
             } else {
                 mainScroll
@@ -168,6 +172,10 @@ struct SearchView: View {
                     // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
                     if !legacySearchUI {
                         searchBar
+                        // ★ 2026-10-16 用户：输入联想（打一个字就有关键词候选）
+                        if !suggestions.isEmpty, searchText != committedQuery {
+                            suggestionList
+                        }
                     }
 
                     if hasQuery {
@@ -200,6 +208,61 @@ struct SearchView: View {
         }
     }
 
+    /// 联想候选（点按 = 直接搜这个词）
+    private var suggestionList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions, id: \.self) { keyword in
+                Button {
+                    WellHaptics.tap()
+                    searchText = keyword
+                    committedQuery = keyword
+                    suggestions = []
+                    hideKeyboard()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.tertiary)
+                        Text(keyword)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if keyword != suggestions.last {
+                    Divider().padding(.leading, 23)
+                }
+            }
+        }
+        .padding(.horizontal, WellSearchLayout.contentInset)
+    }
+
+    /// 350ms 防抖拉联想（清空输入立即清候选）
+    private func scheduleSuggestions(for value: String) {
+        suggestTask?.cancel()
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { suggestions = []; return }
+        suggestTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            let result = await NeteaseMusicAPI.shared.searchSuggestions(for: trimmed)
+            guard !Task.isCancelled else { return }
+            if searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+                suggestions = result
+            }
+        }
+    }
+
+    /// 收起键盘（点按候选后）
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+
     /// 400ms 防抖（自绘搜索框与系统 searchable 共用）。
     private func applyDebounce(_ value: String) {
         Task {
@@ -221,7 +284,7 @@ struct SearchView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
-                .onSubmit { committedQuery = searchText }
+                .onSubmit { committedQuery = searchText; suggestions = [] }
                 .onChange(of: searchText) { newValue in
                     applyDebounce(newValue)   // 400ms 防抖：输入过程中不逐字打接口
                 }

@@ -623,6 +623,29 @@ final class NeteaseMusicAPI {
         }
     }
 
+    /// 搜索关键词联想（`api/search/suggest/web`）——输入即出候选词
+    /// （2026-10-16 用户：像平台那样打一个字就有关键词）。
+    /// 返回去重后的候选：歌手名 + 歌名，最多 8 条。
+    func searchSuggestions(for keyword: String) async -> [String] {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let params: [String: Any] = ["s": trimmed, "limit": 8]
+        guard let resp: SuggestResponse = try? await Self.apiRequest(
+            "api/search/suggest/web", params: params, type: SuggestResponse.self) else { return [] }
+        var out: [String] = []
+        func push(_ v: String?) {
+            guard let v0 = v?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !v0.isEmpty, !out.contains(v0), out.count < 8 else { return }
+            out.append(v0)
+        }
+        for a in resp.result?.artists ?? [] { push(a.name) }
+        for song in resp.result?.songs ?? [] {
+            push(song.artists?.first?.name)
+            push(song.name)
+        }
+        return out
+    }
+
     /// 用搜索建议接口纠正关键词：优先取歌手建议名（playboicarti → Playboi Carti）。
     /// 仅当纠正词与原词**只在空格/大小写上不同**（或原词完全无结果）时才采用，
     /// 避免把正常关键词替换成撞词结果。
