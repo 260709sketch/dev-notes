@@ -221,7 +221,7 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                 }
 
-                Section("搜索") {
+                Section {
                     // ★ 2026-10-16 第十轮问题16：优先搜索平台（搜索页默认用它）
                     Picker("优先搜索平台", selection: preferredPlatformBinding) {
                         ForEach(WellSearchPlatform.allCases) { platform in
