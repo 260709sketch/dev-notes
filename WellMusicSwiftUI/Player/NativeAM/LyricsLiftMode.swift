@@ -9,9 +9,9 @@ enum LyricsLiftMode: String, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .word:
-            L10n.string("ui.settings.lyrics.lift.word")
+            "按词"
         case .character:
-            L10n.string("ui.settings.lyrics.lift.character")
+            "按字"
         }
     }
 }

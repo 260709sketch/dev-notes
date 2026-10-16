@@ -13,12 +13,12 @@ enum LyricsFontWeight: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .light: L10n.string("ui.settings.font_weight.light")
-        case .regular: L10n.string("ui.settings.font_weight.regular")
-        case .medium: L10n.string("ui.settings.font_weight.medium")
-        case .semibold: L10n.string("ui.settings.font_weight.semibold")
-        case .bold: L10n.string("ui.settings.font_weight.bold")
-        case .heavy: L10n.string("ui.settings.font_weight.heavy")
+        case .light: "细体"
+        case .regular: "常规"
+        case .medium: "中等"
+        case .semibold: "半粗"
+        case .bold: "粗体"
+        case .heavy: "特粗"
         }
     }
 

@@ -9,9 +9,9 @@ enum LyricsTranslationDisplayMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .focusedLine:
-            L10n.string("ui.settings.lyrics.auxiliary.focused_line")
+            "仅焦点行"
         case .allLines:
-            L10n.string("ui.settings.lyrics.auxiliary.all_lines")
+            "全部行"
         }
     }
 }

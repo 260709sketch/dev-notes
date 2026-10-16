@@ -16,22 +16,22 @@ enum LyricsInterludePresentationMode:
     var title: String {
         switch self {
         case .hidden:
-            L10n.string("ui.common.off")
+            "关闭"
         case .preciseTiming:
-            L10n.string("ui.settings.lyrics.interlude.precise")
+            "精确"
         case .automatic:
-            L10n.string("ui.settings.lyrics.interlude.automatic")
+            "自动"
         }
     }
 
     var description: String {
         switch self {
         case .hidden:
-            L10n.string("ui.settings.lyrics.interlude.hidden.detail")
+            "不显示间奏标记"
         case .preciseTiming:
-            L10n.string("ui.settings.lyrics.interlude.precise.detail")
+            "按歌词空档精确推断"
         case .automatic:
-            L10n.string("ui.settings.lyrics.interlude.automatic.detail")
+            "根据节拍自动推断"
         }
     }
 

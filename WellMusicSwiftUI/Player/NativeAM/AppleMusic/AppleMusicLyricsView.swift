@@ -3150,9 +3150,9 @@ struct AppleMusicLyricsView: View {
         isBrowsingFocus: Bool
     ) -> String {
         switch (isPlaybackLine, isBrowsingFocus) {
-        case (true, true): L10n.string("ui.lyrics.current_browse_focus")
-        case (true, false): L10n.string("ui.player.now_playing")
-        case (false, true): L10n.string("ui.lyrics.browse_focus")
+        case (true, true): "当前浏览焦点"
+        case (true, false): "正在播放"
+        case (false, true): "浏览焦点"
         case (false, false): ""
         }
     }
@@ -3544,13 +3544,13 @@ struct AppleMusicLyricsView: View {
             settings.lyricsLongPressToShare && allowsShare
         ) {
         case (true, true):
-            L10n.string("ui.lyrics.tap_seek_long_press_share")
+            "点按跳转 · 长按分享"
         case (true, false):
-            L10n.string("ui.lyrics.tap_seek_hint")
+            "点按跳转"
         case (false, true):
-            L10n.string("ui.lyrics.long_press_share_hint")
+            "长按分享歌词"
         case (false, false):
-            L10n.string("ui.lyrics.interaction_disabled_hint")
+            "歌词交互已禁用"
         }
     }
 

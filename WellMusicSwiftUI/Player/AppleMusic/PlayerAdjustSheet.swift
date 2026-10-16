@@ -13,8 +13,6 @@ import SwiftUI
 ///  * 歌词：AMLL 位置 + 字体，另含歌词页歌曲名/歌手字号。
 struct PlayerAdjustSheet: View {
     @EnvironmentObject private var settings: SettingsManager
-    /// ★ 节拍分析服务（单例；此处订阅其状态用于展示）
-    @ObservedObject private var beatService = WellBeatAnalysisService.shared
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject private var layout = AppleMusicLayoutStore.shared
@@ -30,7 +28,6 @@ struct PlayerAdjustSheet: View {
                 amllLyricSection
                 lyricAlignmentSection
                 lowPerfSection
-                beatAnalysisSection
                 amllFontSection
             }
             .navigationTitle("播放器调整")
@@ -266,8 +263,11 @@ struct PlayerAdjustSheet: View {
                 get: { settings.appleMusicLyricAlignment },
                 set: { settings.appleMusicLyricAlignment = $0 }
             )) {
-                Text("居中").tag(0)
+                // ★★ 2026-10-16 用户截图指正：分段控制的**排列顺序**应为
+                //   左 | 居中 | 右（此前是 居中|左|右，「左」选项在中间位置）。
+                //   仅调整展示顺序；tag 语义不变（0 居中 / 1 左 / 2 右）。
                 Text("左").tag(1)
+                Text("居中").tag(0)
                 Text("右").tag(2)
             }
             .pickerStyle(.segmented)
@@ -290,55 +290,6 @@ struct PlayerAdjustSheet: View {
             Text("关闭歌词模糊与弹簧动画，降低 CPU/GPU 占用（低配设备更流畅，动画变为简单过渡）。")
                 .font(.system(size: 12))
         }
-    }
-
-    /// ★ 2026-10-16 第一节拍分析（从 MeloX 的 BeatNet 管线移植；一期仅展示）：
-    /// 识别当前歌曲的 BPM / 拍数 / 下拍数；后续期数接入智能自动混音。
-    private var beatAnalysisSection: some View {
-        Section {
-            HStack {
-                Text("当前歌曲")
-                Spacer()
-                Text(beatPhaseText)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            Button {
-                let core = PlayerCore.shared
-                guard let url = core.currentStreamURL else {
-                    ToastCenter.shared.show("先播放一首歌再分析")
-                    return
-                }
-                beatService.analyze(
-                    songID: abs(core.currentItem?.keyOf.hashValue ?? 0),
-                    url: url,
-                    duration: core.duration
-                )
-            } label: {
-                Label("分析当前歌曲节拍", systemImage: "waveform.path.ecg")
-            }
-            .disabled(isBeatAnalyzing)
-        } header: {
-            Text("节拍分析（Beta）")
-        } footer: {
-            Text("识别 BPM 与节拍表（一期仅展示，后续用于智能自动混音）。分析需下载整首歌，会消耗流量。")
-                .font(.system(size: 12))
-        }
-    }
-
-    private var beatPhaseText: String {
-        switch beatService.phase {
-        case .idle: return "未分析"
-        case .analyzing: return "分析中…"
-        case .done(let bpm, let confidence, let beatCount, _):
-            return String(format: "%.0f BPM · 置信 %.0f%% · %d 拍", bpm, confidence * 100, beatCount)
-        case .failed: return "分析失败"
-        }
-    }
-
-    private var isBeatAnalyzing: Bool {
-        if case .analyzing = beatService.phase { return true }
-        return false
     }
 
     // MARK: - AMLL 歌词字体（大小 / 字重）
