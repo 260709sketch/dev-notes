@@ -142,7 +142,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             initialAlignCSS = "right"
             initialDotsLeft = "auto"; initialDotsRight = "0"
             initialDotsML = "0"; initialDotsMR = "0"
-        default:/n            initialAlignCSS = "center"
+        default:            initialAlignCSS = "center"
             initialDotsLeft = "0"; initialDotsRight = "0"
             initialDotsML = "auto"; initialDotsMR = "auto"
         }
