@@ -551,18 +551,25 @@ struct WellPlaylistDetailView: View {
             }
         }
 
-        // 查看歌手（取第一个歌手名）
+        // 查看歌手（★ 2026-10-16 用户：多名歌手就每位一个入口）
         if let artist = item.artist, !artist.isEmpty {
-            Button {
-                NowPlayingNavigator.shared.request(NowPlayingDestination(
-                    kind: .artist,
-                    platformId: item.platformId ?? "",
-                    name: artist,
-                    coverURL: nil,
-                    platform: item.source,
-                    artistName: ""))
-            } label: {
-                Label("查看歌手", systemImage: "person")
+            let names = artist
+                .components(separatedBy: CharacterSet(charactersIn: "/、,&"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            ForEach(Array(names.enumerated()), id: \.offset) { _, name in
+                Button {
+                    NowPlayingNavigator.shared.request(NowPlayingDestination(
+                        kind: .artist,
+                        platformId: item.platformId ?? "",
+                        name: name,
+                        coverURL: nil,
+                        platform: item.source,
+                        artistName: ""))
+                } label: {
+                    Label(names.count > 1 ? "查看歌手：\(name)" : "查看歌手",
+                          systemImage: "person")
+                }
             }
         }
 

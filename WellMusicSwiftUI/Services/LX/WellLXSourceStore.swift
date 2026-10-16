@@ -551,7 +551,7 @@ final class WellLXSourceStore: ObservableObject {
                     sourceName: source.name,
                     log: "发现新版本 v\(version)（当前 v\(source.version)）",
                     updateUrl: srcURL,
-                    inAppUpdateScript: script
+                    inAppUpdateScript: script.isEmpty ? nil : script
                 )
                 // 一次只弹一条，后续源等用户处理完再说
                 return
@@ -570,16 +570,37 @@ final class WellLXSourceStore: ObservableObject {
         guard let remote = try? await fetchScript(from: url) else {
             return .failed
         }
-        let remoteVersion = WellLXProtocol.parseScriptInfo(remote).version
+        var remoteVersion = WellLXProtocol.parseScriptInfo(remote).version
+        var scriptForUpdate = remote
+        if remoteVersion.isEmpty, remote.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+            // ★ 2026-10-16 用户：老音源的 update_url 是 JSON（如念心 wubian.json）
+            //   —— 从 JSON 取版本与脚本地址，再拉脚本本体。
+            if let data = remote.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let v = obj["version"] ?? obj["Version"] { remoteVersion = "\(v)" }
+                if let candidate = (obj["srcUrl"] ?? obj["url"] ?? obj["scriptUrl"] ?? obj["download"]) as? String,
+                   let u = Self.normalizedScriptURL(candidate),
+                   let fresh = try? await fetchScript(from: u),
+                   fresh.contains("@name") || fresh.contains("lx_setup") || fresh.contains("globalThis") {
+                    scriptForUpdate = fresh
+                    let freshVersion = WellLXProtocol.parseScriptInfo(fresh).version
+                    if !freshVersion.isEmpty { remoteVersion = freshVersion }
+                } else {
+                    scriptForUpdate = ""
+                }
+            }
+        }
         guard !remoteVersion.isEmpty, remoteVersion != source.version,
               Self.isNewer(remoteVersion, than: source.version) else {
             return .upToDate
         }
-        return .newer(version: remoteVersion, script: remote)
+        return .newer(version: remoteVersion, script: scriptForUpdate)
     }
 
     /// 用「检查更新」拿到的远端脚本覆盖本地（同名音源原地升级，保持 id 不变）。
     func applyUpdate(_ script: String, to source: WellLXSourceInfo) async throws {
+        // ★ 空脚本（JSON 更新页拿不到脚本本体）时只提示、不写文件
+        guard !script.isEmpty else { return }
         let meta = WellLXProtocol.parseScriptInfo(script)
         try script.write(to: scriptURL(for: source.id), atomically: true, encoding: .utf8)
         update(source.id) {

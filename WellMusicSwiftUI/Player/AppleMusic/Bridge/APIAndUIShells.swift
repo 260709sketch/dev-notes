@@ -210,7 +210,7 @@ private struct CommentRow: View {
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = ","
         let text = formatter.string(from: NSNumber(value: comment.likedCount)) ?? "\(comment.likedCount)"
-        return "\(text) 赞"
+        return text
     }
 
     var body: some View {
@@ -242,9 +242,14 @@ private struct CommentRow: View {
                         .foregroundStyle(.gray)
                     Spacer()
                     if comment.likedCount > 0 {
-                        Text(likedText)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.gray)
+                        // ★ 2026-10-16 用户：赞数后的「赞」字 → 爱心图标
+                        HStack(spacing: 3) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 10))
+                            Text(likedText)
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(.gray)
                     }
                 }
                 Text(comment.content)

@@ -511,7 +511,10 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(nowPlaying.isCurrent(track) ? Color.accentColor : .primary)
+                        // ★ 2026-10-16 用户：正在播放的歌名红 → 蓝
+                        .foregroundStyle(nowPlaying.isCurrent(track)
+                            ? Color(red: 0.25, green: 0.52, blue: 0.96)
+                            : .primary)
                         .lineLimit(1)
                     Text(likeSubtitle(track))
                         .font(.system(size: 12))

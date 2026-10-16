@@ -37,10 +37,10 @@ struct WellMyPlaylistDetailView: View {
 
     /// 页面主色（网易云红）
     private static let accent = Color(red: 0.925, green: 0.255, blue: 0.255)   // #EC4141
-    /// 「播放全部」胶囊渐变（取自参考实现的原值）
+    /// 「播放全部」胶囊渐变 —— ★ 2026-10-16 用户：红 → 蓝白渐变
     private static let playAllGradient = [
-        Color(red: 1.00, green: 0.42, blue: 0.42),   // #FF6B6B
-        Color(red: 0.84, green: 0.19, blue: 0.19),   // #D63031
+        Color(red: 0.20, green: 0.44, blue: 0.99),   // 蓝
+        Color(red: 0.93, green: 0.96, blue: 1.00),   // near-white
     ]
 
     // MARK: 内容（本地歌单在 init 就绪；网易云歌单异步拉）
@@ -252,7 +252,8 @@ struct WellMyPlaylistDetailView: View {
                 Text("播放全部 (\(trackTotal))")
                     .font(.system(size: 15, weight: .semibold))
             }
-            .foregroundStyle(.white)
+            // 蓝白渐变上改深色文字（对比度）
+            .foregroundStyle(Color(red: 0.08, green: 0.15, blue: 0.38))
             .frame(maxWidth: .infinity)
             .frame(height: Metrics.playAllHeight)
             .background(

@@ -151,9 +151,27 @@ enum WellLXProtocol {
 
     /// 提取脚本内声明的 srcUrl（在线更新地址）
     static func extractSrcUrl(from script: String) -> String? {
-        guard let m = regex(script, #"srcUrl\s*[:=]\s*['"`]([^'"`]+)['"`]"#),
-              let r = Range(m.range(at: 1), in: script) else { return nil }
-        return String(script[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let m = regex(script, #"srcUrl\s*[:=]\s*['"`]([^'"`]+)['"`]"#),
+           let r = Range(m.range(at: 1), in: script) {
+            return String(script[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // ★ 2026-10-16 用户：老音源用头注释声明更新地址（念心 `@update_url ...`），
+        //   此前只认 `srcUrl:` → 「拉取不到地址也不弹窗更新」。
+        let patterns = [
+            #"@update_url\s+(https?://\S+)"#,
+            #"@updateUrl\s+(https?://\S+)"#,
+            #"@update\s+(https?://\S+)"#,
+            #"音源地址[^\n]*?(https?://\S+)"#,
+            #"更新地址[^\n]*?(https?://\S+)"#,
+        ]
+        for pattern in patterns {
+            if let m = regex(script, pattern), let r = Range(m.range(at: 1), in: script) {
+                var value = String(script[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+                while let last = value.last, ".,;)]}\"'".contains(last) { value.removeLast() }
+                if !value.isEmpty { return value }
+            }
+        }
+        return nil
     }
 
     // MARK: 平台前缀解析
