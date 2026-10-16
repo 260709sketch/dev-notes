@@ -151,7 +151,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         let alignScript = """
         (function(){
           var st = document.createElement('style');
-          st.textContent = ':root{--wellLyricAlign:\('initialAlignCSS);--wellJustify:\('initialJustifyCSS);\('initialDotsCSS)}'
+          st.textContent = ':root{--wellLyricAlign:\(initialAlignCSS);--wellJustify:\(initialJustifyCSS);\(initialDotsCSS)}'
             + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
             + '{text-align:var(--wellLyricAlign)!important;justify-content:var(--wellJustify)!important}'
             // ★ 间奏点：官方组件由 JS 每次布局写**内联 style** 定位 —— 只有带
