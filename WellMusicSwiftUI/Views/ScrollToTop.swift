@@ -43,8 +43,11 @@ struct WellScrollToTopModifier: ViewModifier {
     let onScrollOffset: (CGFloat) -> Void
 
     @State private var visible = false
-    @State private var lastOffset: CGFloat = 0
-    @State private var hideTask: Task<Void, Never>?
+    /// ⚠️⚠️ 性能铁律（2026-10-16 第十一轮实亏一版）：上一版把每帧变化的
+    /// `lastOffset` 与 `hideTask` 直接写进 @State —— 滚动时整页每帧重算 →
+    /// LazyVStack 布局抖动，专辑/歌单页表现成「下滑和上滑来回撞上面的墙」。
+    /// 高频值一律进**不可观察引用盒**。
+    @State private var deltaBox = ScrollDeltaBox()
 
     func body(content: Content) -> some View {
         content
@@ -65,24 +68,27 @@ struct WellScrollToTopModifier: ViewModifier {
                     }
                     .buttonStyle(.plain)
                     .padding(.bottom, bottomInset)
+                    // 动画只作用在浮钮自身，不挂在整页容器上
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .animation(.easeInOut(duration: 0.2), value: visible)
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: visible)
             .onPreferenceChange(WellScrollOffsetKey.self) { offset in
                 onScrollOffset(offset)
                 updateVisibility(offset: offset)
             }
-            .onDisappear { hideTask?.cancel() }
+            .onDisappear { deltaBox.hideTask?.cancel() }
     }
 
     private func updateVisibility(offset: CGFloat) {
-        let delta = offset - lastOffset
-        lastOffset = offset
+        let previous = deltaBox.lastOffset
+        deltaBox.lastOffset = offset
+        let delta = offset - previous
         if offset < 120 {
             if visible { hide() }
             return
         }
+        // 只有「显示/隐藏」真正翻转时才写 @State；其余帧零状态写入
         if delta > 0.5, !visible {
             show()
         } else if delta < -0.5, visible {
@@ -100,19 +106,26 @@ struct WellScrollToTopModifier: ViewModifier {
 
     private func hide() {
         visible = false
-        hideTask?.cancel()
-        hideTask = nil
+        deltaBox.hideTask?.cancel()
+        deltaBox.hideTask = nil
     }
 
-    /// 3.5 秒不点击自动消失（用户指定）
+    /// 3.5 秒不点击自动消失（用户指定）。⚠️ hideTask 存引用盒 —— 滚动时每帧
+    /// 重排计时也不能写 @State。
     private func scheduleHide() {
-        hideTask?.cancel()
-        hideTask = Task {
+        deltaBox.hideTask?.cancel()
+        deltaBox.hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_500_000_000)
             guard !Task.isCancelled else { return }
             visible = false
         }
     }
+}
+
+/// 滚动浮钮的高频状态盒（不参与 SwiftUI 观察，避免每帧视图失效）
+final class ScrollDeltaBox {
+    var lastOffset: CGFloat = 0
+    var hideTask: Task<Void, Never>?
 }
 
 /// 页面内「回到顶部」动作广播：页面 ScrollView 收到后自行滚顶。
