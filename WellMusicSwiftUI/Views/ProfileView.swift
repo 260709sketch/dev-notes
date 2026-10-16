@@ -215,6 +215,8 @@ struct ProfileView: View {
                 }
                 .padding(.top, 0)
             }
+            // ★ 2026-10-16 用户：我的页移除右侧滚动条（与发现页一致）
+            .scrollIndicators(.hidden)
             .background(AppTheme.background)
             .navigationTitle("我的")
             .navigationBarTitleDisplayMode(.large)
