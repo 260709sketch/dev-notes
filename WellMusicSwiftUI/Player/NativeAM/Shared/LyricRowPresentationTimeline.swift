@@ -6,8 +6,8 @@ struct LyricRowPresentationTimeline<Content: View>: View {
     @Environment(\.effectiveLyricsRefreshRate)
     private var effectiveLyricsRefreshRate
 
-    let lyricID: LyricLine.ID
-    let focusedLyricID: LyricLine.ID?
+    let lyricID: WMLyricLine.ID
+    let focusedLyricID: WMLyricLine.ID?
     let movementPhase: LyricMovementPhase
     let focusTransition: LyricFocusColorTransition?
     let isActive: Bool

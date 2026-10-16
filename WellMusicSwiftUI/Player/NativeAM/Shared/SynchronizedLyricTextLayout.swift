@@ -13,7 +13,7 @@ struct SynchronizedLyricTextLayout {
     let primaryTrailingVisualOverflow: CGFloat
 
     private struct Key: Hashable {
-        let lineID: LyricLine.ID
+        let lineID: WMLyricLine.ID
         let usesPseudoTiming: Bool
         let fontSize: CGFloat
         let romanizationFontSize: CGFloat
@@ -28,7 +28,7 @@ struct SynchronizedLyricTextLayout {
     }
 
     private struct Entry {
-        let line: LyricLine
+        let line: WMLyricLine
         let layout: SynchronizedLyricTextLayout
     }
 
@@ -36,7 +36,7 @@ struct SynchronizedLyricTextLayout {
     private static let capacity = 256
 
     static func resolve(
-        line: LyricLine,
+        line: WMLyricLine,
         usesPseudoTiming: Bool,
         fontSize: CGFloat,
         romanizationFontSize: CGFloat,
@@ -88,7 +88,7 @@ struct SynchronizedLyricTextLayout {
     }
 
     private init(
-        line: LyricLine,
+        line: WMLyricLine,
         usesPseudoTiming: Bool,
         fontSize: CGFloat,
         romanizationFontSize: CGFloat,

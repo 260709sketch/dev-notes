@@ -41,7 +41,7 @@ enum LyricVocalistsType: Hashable, Sendable {
     case duet
     case group
 
-    static func resolve(in lines: [LyricLine]) -> LyricVocalistsType {
+    static func resolve(in lines: [WMLyricLine]) -> LyricVocalistsType {
         let agents = lines.compactMap(\.agent)
         let personIdentifiers = Set(
             agents
@@ -70,10 +70,10 @@ struct LyricBackgroundVocal: Hashable, Sendable {
     let position: LyricBackgroundVocalsPosition
 
     func lyricLine(
-        parentID: LyricLine.ID,
+        parentID: WMLyricLine.ID,
         agent: LyricAgent?
-    ) -> LyricLine {
-        LyricLine(
+    ) -> WMLyricLine {
+        WMLyricLine(
             id: "\(parentID):background-vocal",
             time: time,
             duration: duration,
@@ -85,7 +85,7 @@ struct LyricBackgroundVocal: Hashable, Sendable {
     }
 }
 
-struct LyricLine: Identifiable, Hashable, Sendable {
+struct WMLyricLine: Identifiable, Hashable, Sendable {
     let id: String
     let time: TimeInterval
     let duration: TimeInterval?
@@ -129,7 +129,7 @@ struct LyricLine: Identifiable, Hashable, Sendable {
 
     init(
         id: String,
-        copying line: LyricLine
+        copying line: WMLyricLine
     ) {
         self.init(
             id: id,
@@ -199,8 +199,8 @@ struct LyricLine: Identifiable, Hashable, Sendable {
         }
     }
 
-    func attachingTranslation(_ translation: String?) -> LyricLine {
-        LyricLine(
+    func attachingTranslation(_ translation: String?) -> WMLyricLine {
+        WMLyricLine(
             id: id,
             time: time,
             duration: duration,
@@ -218,8 +218,8 @@ struct LyricLine: Identifiable, Hashable, Sendable {
     func attachingRomanization(
         _ romanization: String?,
         romanizationSyllables: [LyricSyllable] = []
-    ) -> LyricLine {
-        LyricLine(
+    ) -> WMLyricLine {
+        WMLyricLine(
             id: id,
             time: time,
             duration: duration,
@@ -238,8 +238,8 @@ struct LyricLine: Identifiable, Hashable, Sendable {
         _ agent: LyricAgent?,
         text: String? = nil,
         syllables: [LyricSyllable]? = nil
-    ) -> LyricLine {
-        LyricLine(
+    ) -> WMLyricLine {
+        WMLyricLine(
             id: id,
             time: time,
             duration: duration,

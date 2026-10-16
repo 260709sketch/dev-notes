@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum AppleMusicLyricsPlaybackFocus: Hashable {
-    case lyric(LyricLine.ID)
+    case lyric(WMLyricLine.ID)
     case interlude(LyricInterlude.ID)
 
-    var lyricID: LyricLine.ID? {
+    var lyricID: WMLyricLine.ID? {
         guard case let .lyric(id) = self else { return nil }
         return id
     }
@@ -19,20 +19,20 @@ struct AppleMusicLyricsFocusCoordinator: View {
     @Environment(PlayerStore.self) private var player
     @Environment(AppSettings.self) private var settings
 
-    let lyrics: [LyricLine]
+    let lyrics: [WMLyricLine]
     let interludes: [LyricInterlude]
     let isActive: Bool
     @Binding var playbackFocus: AppleMusicLyricsPlaybackFocus?
     @Binding var visibleInterludeID: LyricInterlude.ID?
-    @Binding var activePlaybackLyricIDs: Set<LyricLine.ID>
+    @Binding var activePlaybackLyricIDs: Set<WMLyricLine.ID>
 
     init(
-        lyrics: [LyricLine],
+        lyrics: [WMLyricLine],
         interludes: [LyricInterlude],
         isActive: Bool = true,
         playbackFocus: Binding<AppleMusicLyricsPlaybackFocus?>,
         visibleInterludeID: Binding<LyricInterlude.ID?>,
-        activePlaybackLyricIDs: Binding<Set<LyricLine.ID>>
+        activePlaybackLyricIDs: Binding<Set<WMLyricLine.ID>>
     ) {
         self.lyrics = lyrics
         self.interludes = interludes
@@ -299,8 +299,8 @@ private struct AppleMusicLyricsFocusSynchronizationTrigger: Hashable {
     let minimumInferredGapDuration: TimeInterval
     let advanceTime: TimeInterval
     let lyricCount: Int
-    let firstLyricID: LyricLine.ID?
-    let lastLyricID: LyricLine.ID?
+    let firstLyricID: WMLyricLine.ID?
+    let lastLyricID: WMLyricLine.ID?
     let interludeCount: Int
     let firstInterludeID: LyricInterlude.ID?
     let lastInterludeID: LyricInterlude.ID?
@@ -309,6 +309,6 @@ private struct AppleMusicLyricsFocusSynchronizationTrigger: Hashable {
 private struct AppleMusicLyricsPlaybackFocusPosition {
     let focus: AppleMusicLyricsPlaybackFocus?
     let visibleInterludeID: LyricInterlude.ID?
-    let activeLyricIDs: Set<LyricLine.ID>
+    let activeLyricIDs: Set<WMLyricLine.ID>
     let nextTransitionTime: TimeInterval?
 }

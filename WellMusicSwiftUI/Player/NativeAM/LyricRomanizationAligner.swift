@@ -16,7 +16,7 @@ enum LyricRomanizationAligner {
     private static let cache = LyricRomanizationAlignmentCache()
 
     static func units(
-        for line: LyricLine,
+        for line: WMLyricLine,
         activeSyllables: [LyricSyllable]
     ) -> [LyricRubyUnit] {
         guard let romanization = normalizedAnnotation(line.romanization) else {

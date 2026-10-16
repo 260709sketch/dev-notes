@@ -39,7 +39,7 @@ enum SynchronizedLyricTextAlignment: Equatable {
     }
 
     static func resolved(
-        for line: LyricLine,
+        for line: WMLyricLine,
         duetLayoutEnabled: Bool
     ) -> SynchronizedLyricTextAlignment {
         guard duetLayoutEnabled,
@@ -61,7 +61,7 @@ struct SynchronizedLyricText: View {
     @Environment(PlayerStore.self) private var player
     @Environment(AppSettings.self) private var settings
 
-    let line: LyricLine
+    let line: WMLyricLine
     let isPlaybackLine: Bool
     let isVocalActive: Bool
     let isAnimationActive: Bool
@@ -102,7 +102,7 @@ struct SynchronizedLyricText: View {
     private let primaryTrailingVisualOverflow: CGFloat
 
     init(
-        line: LyricLine,
+        line: WMLyricLine,
         isPlaybackLine: Bool,
         isVocalActive: Bool? = nil,
         isAnimationActive: Bool = true,

@@ -213,21 +213,21 @@ enum LyricMovementPhase: Equatable {
 
 struct LyricMovementTransition: Equatable {
     let id: UUID
-    let focusID: LyricLine.ID
-    let initialOffsetsByID: [LyricLine.ID: CGFloat]
-    let destinationOffsetsByID: [LyricLine.ID: CGFloat]
+    let focusID: WMLyricLine.ID
+    let initialOffsetsByID: [WMLyricLine.ID: CGFloat]
+    let destinationOffsetsByID: [WMLyricLine.ID: CGFloat]
     let animationByID: [
-        LyricLine.ID: LyricMovementAnimationConfiguration
+        WMLyricLine.ID: LyricMovementAnimationConfiguration
     ]
     let startedAt: Date?
 
     init(
         id: UUID = UUID(),
-        focusID: LyricLine.ID,
-        initialOffsetsByID: [LyricLine.ID: CGFloat],
-        destinationOffsetsByID: [LyricLine.ID: CGFloat] = [:],
+        focusID: WMLyricLine.ID,
+        initialOffsetsByID: [WMLyricLine.ID: CGFloat],
+        destinationOffsetsByID: [WMLyricLine.ID: CGFloat] = [:],
         animationByID: [
-            LyricLine.ID: LyricMovementAnimationConfiguration
+            WMLyricLine.ID: LyricMovementAnimationConfiguration
         ] = [:],
         startedAt: Date? = nil
     ) {
@@ -241,7 +241,7 @@ struct LyricMovementTransition: Equatable {
 
     func starting(
         with animationByID: [
-            LyricLine.ID: LyricMovementAnimationConfiguration
+            WMLyricLine.ID: LyricMovementAnimationConfiguration
         ],
         at date: Date
     ) -> Self {
@@ -273,7 +273,7 @@ struct LyricMovementTransition: Equatable {
 
     func presentationStates(
         at date: Date
-    ) -> [LyricLine.ID: LyricMovementPresentation] {
+    ) -> [WMLyricLine.ID: LyricMovementPresentation] {
         guard let startedAt else {
             return initialOffsetsByID.mapValues {
                 LyricMovementPresentation(offset: $0, velocity: 0)
@@ -305,7 +305,7 @@ struct LyricMovementTransition: Equatable {
     }
 
     func phase(
-        for id: LyricLine.ID,
+        for id: WMLyricLine.ID,
         fallbackOffset: CGFloat
     ) -> LyricMovementPhase {
         guard let startedAt,

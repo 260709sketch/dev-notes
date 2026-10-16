@@ -3,7 +3,7 @@ import UIKit
 
 struct AppleMusicLyricsView: View {
     private typealias RetainedCascadeLyric =
-        AppleMusicRetainedViewportPlanner.RetainedLyric<LyricLine.ID>
+        AppleMusicRetainedViewportPlanner.RetainedLyric<WMLyricLine.ID>
 
     private static let customBottomPreloadLineCount = 2
     private static let customFutureCascadeSafetyLineCount = 6
@@ -14,16 +14,16 @@ struct AppleMusicLyricsView: View {
     private static let expandedBottomDistanceScale: CGFloat = 0.68
 
     private enum PositionCascadeLineID: Hashable {
-        case lyric(LyricLine.ID)
+        case lyric(WMLyricLine.ID)
         case interlude(LyricInterlude.ID)
     }
 
     private struct LyricRowVisualContext {
-        let activePlaybackLyricIDs: Set<LyricLine.ID>
-        let visualScaleFocusLyricID: LyricLine.ID?
-        let precedingFocusLyricID: LyricLine.ID?
-        let followingFocusLyricID: LyricLine.ID?
-        let retainedCascadeLyricIDs: Set<LyricLine.ID>
+        let activePlaybackLyricIDs: Set<WMLyricLine.ID>
+        let visualScaleFocusLyricID: WMLyricLine.ID?
+        let precedingFocusLyricID: WMLyricLine.ID?
+        let followingFocusLyricID: WMLyricLine.ID?
+        let retainedCascadeLyricIDs: Set<WMLyricLine.ID>
         let usesPseudoTiming: Bool
         let romanizationFontSize: CGFloat
         let reservesAnnotationSpace: Bool
@@ -72,16 +72,16 @@ struct AppleMusicLyricsView: View {
     @Environment(PlayerStore.self) private var player
     @Environment(AppSettings.self) private var settings
 
-    let lyrics: [LyricLine]
+    let lyrics: [WMLyricLine]
     let errorMessage: String?
-    let highlightedLyricID: LyricLine.ID?
+    let highlightedLyricID: WMLyricLine.ID?
     let isActive: Bool
     let isInterfaceHidden: Bool
     let bottomOverlayHeight: CGFloat
     let onInterfaceInteraction: (() -> Void)?
     let onInterfaceVisibilityChange: ((Bool) -> Void)?
     let onInitialFocusPrepared: (() -> Void)?
-    private let lyricIndexByID: [LyricLine.ID: Int]
+    private let lyricIndexByID: [WMLyricLine.ID: Int]
     private let hasSyllableSyncedLyrics: Bool
     private let hasTranslations: Bool
     private let hasRomanizations: Bool
@@ -89,22 +89,22 @@ struct AppleMusicLyricsView: View {
 
     // The coordinator publishes only vocal-boundary changes, keeping the
     // scrolling hierarchy independent of the player's progress ticks.
-    @State private var activePlaybackLyricIDs: Set<LyricLine.ID> = []
+    @State private var activePlaybackLyricIDs: Set<WMLyricLine.ID> = []
 
-    @State private var scrollPositionID: LyricLine.ID?
+    @State private var scrollPositionID: WMLyricLine.ID?
     @State private var isBrowsingLyrics = false
     @State private var browsingGeneration = 0
     @State private var followRequest: LyricFollowRequest?
     @State private var playbackFocusRequestGeneration = 0
     @State private var isPreparingInitialFocus = true
-    @State private var visualHighlightedLyricID: LyricLine.ID?
+    @State private var visualHighlightedLyricID: WMLyricLine.ID?
     @State private var lyricFocusColorTransition:
         LyricFocusColorTransition?
-    @State private var visualCascadeFocusLyricID: LyricLine.ID?
+    @State private var visualCascadeFocusLyricID: WMLyricLine.ID?
     @State private var lyricGeometryCache =
         AppleMusicLyricsGeometryCache()
     @State private var lyricLayoutRevision = 0
-    @State private var lyricMovementOffsetByID: [LyricLine.ID: CGFloat] = [:]
+    @State private var lyricMovementOffsetByID: [WMLyricLine.ID: CGFloat] = [:]
     @State private var lyricMovementTransition: LyricMovementTransition?
     @State private var retainedCascadeLyrics: [RetainedCascadeLyric] = []
     @State private var retainedInterlude:
@@ -119,9 +119,9 @@ struct AppleMusicLyricsView: View {
     @State private var seekFeedback: LyricSeekFeedback?
 
     init(
-        lyrics: [LyricLine],
+        lyrics: [WMLyricLine],
         errorMessage: String?,
-        highlightedLyricID: LyricLine.ID?,
+        highlightedLyricID: WMLyricLine.ID?,
         isActive: Bool = true,
         isInterfaceHidden: Bool = false,
         bottomOverlayHeight: CGFloat = 0,
@@ -526,7 +526,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func lyricRow(
-        _ line: LyricLine,
+        _ line: WMLyricLine,
         context: LyricRowVisualContext
     ) -> some View {
         let isPlaybackLine = line.id == visualHighlightedLyricID
@@ -1025,7 +1025,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func handleHighlightedLyricChange(
-        _ highlightedLyricID: LyricLine.ID?
+        _ highlightedLyricID: WMLyricLine.ID?
     ) {
         guard highlightedLyricID == nil else { return }
         startFocusColorTransition(to: nil)
@@ -1633,7 +1633,7 @@ struct AppleMusicLyricsView: View {
 
     private func recordLyricGeometry(
         _ measurement: LyricGeometryMeasurement,
-        for id: LyricLine.ID
+        for id: WMLyricLine.ID
     ) {
         let frame = measurement.frame
         let layoutHeight = measurement.layoutHeight
@@ -1689,7 +1689,7 @@ struct AppleMusicLyricsView: View {
 
     private func recordAnnotationHeight(
         _ height: CGFloat,
-        for id: LyricLine.ID
+        for id: WMLyricLine.ID
     ) {
         guard height.isFinite, height > 0 else { return }
         let normalizedHeight = max(height, 0)
@@ -1733,8 +1733,8 @@ struct AppleMusicLyricsView: View {
     }
 
     private func focusedLineFollowingOffsets(
-        for focusedLyricID: LyricLine.ID?
-    ) -> [LyricLine.ID: CGFloat] {
+        for focusedLyricID: WMLyricLine.ID?
+    ) -> [WMLyricLine.ID: CGFloat] {
         guard let focusedLyricID,
               let focusedIndex = lyricIndexByID[focusedLyricID],
               focusedIndex + 1 < lyrics.endIndex else {
@@ -1920,14 +1920,14 @@ struct AppleMusicLyricsView: View {
         )
     }
 
-    private var requestedFocusLyricID: LyricLine.ID? {
+    private var requestedFocusLyricID: WMLyricLine.ID? {
         seekFeedback?.lyricID
             ?? playbackFocus?.lyricID
             ?? highlightedLyricID
     }
 
     private func lyricFocusEffectAnimation(
-        for highlightedLyricID: LyricLine.ID?
+        for highlightedLyricID: WMLyricLine.ID?
     ) -> Animation? {
         guard !accessibilityReduceMotion else { return nil }
         let movementDuration = LyricPlaybackTimeline.focusAnimationDuration(
@@ -1954,7 +1954,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func remainingFocusDuration(
-        for highlightedLyricID: LyricLine.ID
+        for highlightedLyricID: WMLyricLine.ID
     ) -> TimeInterval? {
         guard player.isPlaying else { return nil }
         return LyricPlaybackTimeline.remainingFocusDuration(
@@ -1966,7 +1966,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func waitForLyricFrame(
-        for id: LyricLine.ID
+        for id: WMLyricLine.ID
     ) async -> CGRect? {
         for attempt in 0..<30 {
             if let frame = lyricGeometryCache.frames[id] {
@@ -1983,7 +1983,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func waitForPreparedFocus(
-        id: LyricLine.ID,
+        id: WMLyricLine.ID,
         viewportAnchorY: CGFloat,
         focusPosition: CGFloat
     ) async -> Bool {
@@ -2006,7 +2006,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func cascadeMoveFocus(
-        to highlightedLyricID: LyricLine.ID?,
+        to highlightedLyricID: WMLyricLine.ID?,
         viewportWidth: CGFloat,
         viewportHeight: CGFloat,
         visibleViewportHeight: CGFloat,
@@ -2140,7 +2140,7 @@ struct AppleMusicLyricsView: View {
         }
 
         var carriedMovementOffsets = lyricMovementOffsetByID
-        var carriedMovementVelocities: [LyricLine.ID: CGFloat] = [:]
+        var carriedMovementVelocities: [WMLyricLine.ID: CGFloat] = [:]
         if let presentationStates = lyricMovementTransition?
             .presentationStates(at: .now) {
             carriedMovementOffsets.merge(
@@ -2388,7 +2388,7 @@ struct AppleMusicLyricsView: View {
             highlightedIndex - 1,
             lyrics.startIndex
         )
-        let chaseOrderByID: [LyricLine.ID: Int] = Dictionary(
+        let chaseOrderByID: [WMLyricLine.ID: Int] = Dictionary(
             uniqueKeysWithValues: orderedMovingIDs.compactMap { id in
                 guard let lineIndex = lyricIndexByID[id],
                       lineIndex >= firstChasingIndex else {
@@ -2436,7 +2436,7 @@ struct AppleMusicLyricsView: View {
     /// Preserve a fixed copy only for an interrupted/forced handoff that lands
     /// inside the cue-out window, then move the resident stack underneath it.
     private func moveFocusFromInterlude(
-        to id: LyricLine.ID,
+        to id: WMLyricLine.ID,
         viewportWidth: CGFloat,
         viewportHeight: CGFloat
     ) async {
@@ -2537,7 +2537,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func waitForFocusAlignment(
-        to id: LyricLine.ID,
+        to id: WMLyricLine.ID,
         viewportHeight: CGFloat
     ) async {
         let focusPosition = lyricsFocusPosition(for: viewportHeight)
@@ -2557,14 +2557,14 @@ struct AppleMusicLyricsView: View {
     }
 
     private func animatePreparedCascade(
-        _ orderedMovingIDs: [LyricLine.ID],
-        to highlightedLyricID: LyricLine.ID,
-        movementOrderByID: [LyricLine.ID: Int],
-        chaseOrderByID: [LyricLine.ID: Int],
+        _ orderedMovingIDs: [WMLyricLine.ID],
+        to highlightedLyricID: WMLyricLine.ID,
+        movementOrderByID: [WMLyricLine.ID: Int],
+        chaseOrderByID: [WMLyricLine.ID: Int],
         maximumChaseOrder: Int,
         cascadeTiming: LyricFocusCascadeTiming,
         focusColorLeadTime: TimeInterval,
-        carriedVelocityByID: [LyricLine.ID: CGFloat],
+        carriedVelocityByID: [WMLyricLine.ID: CGFloat],
         transition: LyricMovementTransition
     ) async {
         let usesBounce = cascadeTiming.usesBounce
@@ -2697,14 +2697,14 @@ struct AppleMusicLyricsView: View {
                 PositionCascadeLineID
             >
         ],
-        to highlightedLyricID: LyricLine.ID,
+        to highlightedLyricID: WMLyricLine.ID,
         profile: AppleMusicLyricsMotionProfile,
         timedWordTransitionSourceDuration: TimeInterval?,
         transition: LyricMovementTransition
     ) async {
         let animationByID = plan.reduce(
             into: [
-                LyricLine.ID: LyricMovementAnimationConfiguration
+                WMLyricLine.ID: LyricMovementAnimationConfiguration
             ]()
         ) { animations, line in
             guard case let .lyric(lyricID) = line.id else { return }
@@ -2775,8 +2775,8 @@ struct AppleMusicLyricsView: View {
     }
 
     private func appleMusicTimedWordTransitionSourceDuration(
-        from previousLyricID: LyricLine.ID?,
-        to highlightedLyricID: LyricLine.ID
+        from previousLyricID: WMLyricLine.ID?,
+        to highlightedLyricID: WMLyricLine.ID
     ) -> TimeInterval? {
         guard hasSyllableSyncedLyrics,
               let previousLyricID,
@@ -2833,7 +2833,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func lyricMovementPhase(
-        for id: LyricLine.ID
+        for id: WMLyricLine.ID
     ) -> LyricMovementPhase {
         let fallbackOffset = lyricMovementOffsetByID[id, default: 0]
         guard !accessibilityReduceMotion,
@@ -2847,15 +2847,15 @@ struct AppleMusicLyricsView: View {
     }
 
     private func startFocusColorTransition(
-        to highlightedLyricID: LyricLine.ID?
+        to highlightedLyricID: WMLyricLine.ID?
     ) {
         guard visualHighlightedLyricID != highlightedLyricID else {
             return
         }
         let now = Date.now
-        let initialColorProgressByID: [LyricLine.ID: CGFloat]
-        let initialColorVelocityByID: [LyricLine.ID: CGFloat]
-        let initialBlurProgressByID: [LyricLine.ID: CGFloat]
+        let initialColorProgressByID: [WMLyricLine.ID: CGFloat]
+        let initialColorVelocityByID: [WMLyricLine.ID: CGFloat]
+        let initialBlurProgressByID: [WMLyricLine.ID: CGFloat]
         if let lyricFocusColorTransition {
             initialColorProgressByID =
                 lyricFocusColorTransition
@@ -2950,8 +2950,8 @@ struct AppleMusicLyricsView: View {
     }
 
     private func isAdjacentFocusTransition(
-        from currentID: LyricLine.ID?,
-        to nextID: LyricLine.ID
+        from currentID: WMLyricLine.ID?,
+        to nextID: WMLyricLine.ID
     ) -> Bool {
         guard let currentID,
               let currentIndex = lyricIndexByID[currentID],
@@ -2962,8 +2962,8 @@ struct AppleMusicLyricsView: View {
     }
 
     private func isNonAdjacentFocusTransition(
-        from currentID: LyricLine.ID?,
-        to nextID: LyricLine.ID
+        from currentID: WMLyricLine.ID?,
+        to nextID: WMLyricLine.ID
     ) -> Bool {
         guard let currentID,
               let currentIndex = lyricIndexByID[currentID],
@@ -2974,8 +2974,8 @@ struct AppleMusicLyricsView: View {
     }
 
     private func isReverseFocusTransition(
-        from currentID: LyricLine.ID?,
-        to nextID: LyricLine.ID
+        from currentID: WMLyricLine.ID?,
+        to nextID: WMLyricLine.ID
     ) -> Bool {
         guard let currentID,
               let currentIndex = lyricIndexByID[currentID],
@@ -2986,7 +2986,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func moveFocusWithoutCascade(
-        to id: LyricLine.ID,
+        to id: WMLyricLine.ID,
         viewportHeight: CGFloat
     ) async {
         resetMovementOffsets()
@@ -3048,7 +3048,7 @@ struct AppleMusicLyricsView: View {
         startFocusColorTransition(to: nil)
     }
 
-    private func completeCascadeMovement(to id: LyricLine.ID) {
+    private func completeCascadeMovement(to id: WMLyricLine.ID) {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -3078,10 +3078,10 @@ struct AppleMusicLyricsView: View {
     }
 
     private func lyricNeighborIDs(
-        around focusedLyricID: LyricLine.ID?
+        around focusedLyricID: WMLyricLine.ID?
     ) -> (
-        preceding: LyricLine.ID?,
-        following: LyricLine.ID?
+        preceding: WMLyricLine.ID?,
+        following: WMLyricLine.ID?
     ) {
         guard let focusedLyricID,
               let focusIndex = lyricIndexByID[focusedLyricID] else {
@@ -3099,7 +3099,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func measuredLyricAnchorStride(
-        around focusedLyricID: LyricLine.ID?,
+        around focusedLyricID: WMLyricLine.ID?,
         lineSpacing: CGFloat,
         fallback: CGFloat
     ) -> CGFloat {
@@ -3426,7 +3426,7 @@ struct AppleMusicLyricsView: View {
         }
     }
 
-    private func seek(to line: LyricLine) {
+    private func seek(to line: WMLyricLine) {
         guard settings.lyricsTapToSeek else { return }
         seekFeedback = LyricSeekFeedback(
             lyricID: line.id,
@@ -3527,7 +3527,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func completeSeekFeedbackIfNeeded(
-        for lyricID: LyricLine.ID
+        for lyricID: WMLyricLine.ID
     ) {
         guard let feedback = seekFeedback,
               feedback.lyricID == lyricID else {
@@ -3554,7 +3554,7 @@ struct AppleMusicLyricsView: View {
         }
     }
 
-    private func presentShare(for line: LyricLine) {
+    private func presentShare(for line: WMLyricLine) {
         guard settings.lyricsLongPressToShare,
               line.text.count
                 <= LyricsSelectionManager.defaultCharacterLimit,
@@ -3569,7 +3569,7 @@ struct AppleMusicLyricsView: View {
         )
     }
 
-    private func moveFocus(to id: LyricLine.ID, animated: Bool) {
+    private func moveFocus(to id: WMLyricLine.ID, animated: Bool) {
         let update = {
             scrollPositionID = id
         }
@@ -3602,7 +3602,7 @@ struct AppleMusicLyricsView: View {
     }
 
     private func ensureFocusAlignment(
-        to id: LyricLine.ID,
+        to id: WMLyricLine.ID,
         viewportHeight: CGFloat,
         animated: Bool
     ) async {
@@ -3644,7 +3644,7 @@ struct AppleMusicLyricsView: View {
 
 private enum AppleMusicLyricsDisplayItem: Identifiable {
     case interlude(LyricInterlude)
-    case lyric(LyricLine)
+    case lyric(WMLyricLine)
 
     var id: String {
         switch self {
@@ -3657,7 +3657,7 @@ private enum AppleMusicLyricsDisplayItem: Identifiable {
 }
 
 private struct LyricFocusMovementTrigger: Hashable {
-    let highlightedLyricID: LyricLine.ID?
+    let highlightedLyricID: WMLyricLine.ID?
     let interludeID: LyricInterlude.ID?
     let visibleInterludeID: LyricInterlude.ID?
     let isActive: Bool
@@ -3673,8 +3673,8 @@ private struct LyricFollowRequest: Hashable {
 
 private struct LyricSeekFeedback: Hashable {
     let token = UUID()
-    let lyricID: LyricLine.ID
-    let previousFocusLyricID: LyricLine.ID?
+    let lyricID: WMLyricLine.ID
+    let previousFocusLyricID: WMLyricLine.ID?
     let playerSeekRevision: Int
     let startedAt: Date
     let minimumHoldDuration: TimeInterval

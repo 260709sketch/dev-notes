@@ -13,11 +13,11 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
     }
 
     let id: UUID
-    let initialColorProgressByID: [LyricLine.ID: CGFloat]
+    let initialColorProgressByID: [WMLyricLine.ID: CGFloat]
     /// Absolute focus-progress velocity in progress units per second.
-    let initialColorVelocityByID: [LyricLine.ID: CGFloat]
-    let initialBlurProgressByID: [LyricLine.ID: CGFloat]
-    let destinationLyricID: LyricLine.ID?
+    let initialColorVelocityByID: [WMLyricLine.ID: CGFloat]
+    let initialBlurProgressByID: [WMLyricLine.ID: CGFloat]
+    let destinationLyricID: WMLyricLine.ID?
     let startedAt: Date
     let colorDuration: TimeInterval
     let blurDuration: TimeInterval
@@ -26,10 +26,10 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
 
     init(
         id: UUID = UUID(),
-        initialColorProgressByID: [LyricLine.ID: CGFloat],
-        initialColorVelocityByID: [LyricLine.ID: CGFloat],
-        initialBlurProgressByID: [LyricLine.ID: CGFloat],
-        destinationLyricID: LyricLine.ID?,
+        initialColorProgressByID: [WMLyricLine.ID: CGFloat],
+        initialColorVelocityByID: [WMLyricLine.ID: CGFloat],
+        initialBlurProgressByID: [WMLyricLine.ID: CGFloat],
+        destinationLyricID: WMLyricLine.ID?,
         startedAt: Date,
         colorDuration: TimeInterval,
         blurDuration: TimeInterval,
@@ -64,9 +64,9 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
     }
 
     static func settlingDuration(
-        initialProgressByID: [LyricLine.ID: CGFloat],
-        initialVelocityByID: [LyricLine.ID: CGFloat],
-        destinationLyricID: LyricLine.ID?,
+        initialProgressByID: [WMLyricLine.ID: CGFloat],
+        initialVelocityByID: [WMLyricLine.ID: CGFloat],
+        destinationLyricID: WMLyricLine.ID?,
         parameters: LyricPhysicalSpringParameters
     ) -> TimeInterval {
         let spring = Spring(
@@ -97,7 +97,7 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
         }
     }
 
-    func includes(_ lyricID: LyricLine.ID) -> Bool {
+    func includes(_ lyricID: WMLyricLine.ID) -> Bool {
         initialColorProgressByID[lyricID] != nil
             || initialColorVelocityByID[lyricID] != nil
             || initialBlurProgressByID[lyricID] != nil
@@ -105,14 +105,14 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
     }
 
     func colorProgress(
-        for lyricID: LyricLine.ID,
+        for lyricID: WMLyricLine.ID,
         at date: Date
     ) -> CGFloat {
         colorPresentation(for: lyricID, at: date).progress
     }
 
     private func colorPresentation(
-        for lyricID: LyricLine.ID,
+        for lyricID: WMLyricLine.ID,
         at date: Date
     ) -> LyricFocusColorPresentation {
         guard case let .physicalSpring(parameters) = colorTimingCurve else {
@@ -180,7 +180,7 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
     }
 
     func blurProgress(
-        for lyricID: LyricLine.ID,
+        for lyricID: WMLyricLine.ID,
         at date: Date
     ) -> CGFloat {
         progress(
@@ -193,8 +193,8 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
     }
 
     private func progress(
-        for lyricID: LyricLine.ID,
-        initialProgressByID: [LyricLine.ID: CGFloat],
+        for lyricID: WMLyricLine.ID,
+        initialProgressByID: [WMLyricLine.ID: CGFloat],
         timingCurve: TimingCurve,
         duration: TimeInterval,
         at date: Date
@@ -215,13 +215,13 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
 
     func presentationColorProgressByID(
         at date: Date
-    ) -> [LyricLine.ID: CGFloat] {
+    ) -> [WMLyricLine.ID: CGFloat] {
         presentationProgressByID(at: date, usesBlurProgress: false)
     }
 
     func presentationColorVelocityByID(
         at date: Date
-    ) -> [LyricLine.ID: CGFloat] {
+    ) -> [WMLyricLine.ID: CGFloat] {
         var lyricIDs = Set(initialColorProgressByID.keys)
         lyricIDs.formUnion(initialColorVelocityByID.keys)
         if let destinationLyricID {
@@ -240,14 +240,14 @@ struct LyricFocusColorTransition: Equatable, Identifiable {
 
     func presentationBlurProgressByID(
         at date: Date
-    ) -> [LyricLine.ID: CGFloat] {
+    ) -> [WMLyricLine.ID: CGFloat] {
         presentationProgressByID(at: date, usesBlurProgress: true)
     }
 
     private func presentationProgressByID(
         at date: Date,
         usesBlurProgress: Bool
-    ) -> [LyricLine.ID: CGFloat] {
+    ) -> [WMLyricLine.ID: CGFloat] {
         var lyricIDs = Set(
             usesBlurProgress
                 ? initialBlurProgressByID.keys

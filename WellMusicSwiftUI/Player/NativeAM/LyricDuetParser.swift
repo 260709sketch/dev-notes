@@ -35,7 +35,7 @@ enum LyricDuetParser {
         let role: RoleLabel
     }
 
-    static func apply(lrc: String, to lines: [LyricLine]) -> [LyricLine] {
+    static func apply(lrc: String, to lines: [WMLyricLine]) -> [WMLyricLine] {
         guard !lrc.isEmpty, !lines.isEmpty else { return lines }
 
         let sourceLines = parseSourceLines(lrc)
@@ -331,7 +331,7 @@ enum LyricDuetParser {
     }
 
     private static func sourceRole(
-        for line: LyricLine,
+        for line: WMLyricLine,
         displayText: String,
         assignments: [SourceAssignment]
     ) -> RoleLabel? {
@@ -360,7 +360,7 @@ enum LyricDuetParser {
     }
 
     private static func isStandaloneMarker(
-        _ line: LyricLine,
+        _ line: WMLyricLine,
         recognizedIdentifiers: Set<String>
     ) -> Bool {
         guard let role = parseStandaloneRole(line.text) else { return false }

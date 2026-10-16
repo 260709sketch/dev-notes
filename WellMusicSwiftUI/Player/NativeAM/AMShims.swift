@@ -54,8 +54,6 @@ final class AppSettings {
     var font = LyricsFontPrefs()
 
     var appleMusicLyricsScrollHideThreshold: Double = 44
-    var appleMusicLyricsMotionProfile = AppleMusicLyricsMotionProfile.iOS26_6
-    var appleMusicLyricsTypographyProfile = AppleMusicLyricsTypographyProfile.iOS26_6
 
     // effective*（默认值取 Apple Music 观感；后续可按设置联动）
     var effectiveAppleMusicLyricsCascadeDelay: Double { 0.10 }

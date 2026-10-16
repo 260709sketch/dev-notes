@@ -19,9 +19,9 @@ enum LyricInterludeDetectionPolicy: Hashable, Sendable {
 struct LyricInterlude: Identifiable, Hashable {
     let startTime: TimeInterval
     let countdownEndTime: TimeInterval
-    let precedingLyricID: LyricLine.ID?
-    let followingLyricID: LyricLine.ID
-    let displayBeforeLyricID: LyricLine.ID
+    let precedingLyricID: WMLyricLine.ID?
+    let followingLyricID: WMLyricLine.ID
+    let displayBeforeLyricID: WMLyricLine.ID
     let timingSource: LyricInterludeTimingSource
 
     var id: String {
@@ -57,7 +57,7 @@ struct LyricInterludePlaybackPosition: Equatable {
 
     /// The lyric promoted after the dots have disappeared, but before its
     /// authored start timestamp.
-    let promotedLyricID: LyricLine.ID?
+    let promotedLyricID: WMLyricLine.ID?
 
     let nextTransitionTime: TimeInterval?
 }
@@ -71,7 +71,7 @@ enum LyricInterludeTimeline {
 
     /// Build timing candidates once. Presentation policy can then be changed
     /// without reparsing lyrics or estimating vocal tails on every frame.
-    static func candidates(in lyrics: [LyricLine]) -> [LyricInterlude] {
+    static func candidates(in lyrics: [WMLyricLine]) -> [LyricInterlude] {
         guard let firstLyric = lyrics.first else { return [] }
 
         var result: [LyricInterlude] = []
@@ -113,7 +113,7 @@ enum LyricInterludeTimeline {
     }
 
     static func interludes(
-        in lyrics: [LyricLine],
+        in lyrics: [WMLyricLine],
         detectionPolicy: LyricInterludeDetectionPolicy
     ) -> [LyricInterlude] {
         interludes(
@@ -203,9 +203,9 @@ enum LyricInterludeTimeline {
 
     private static func makeInterlude(
         startTime: TimeInterval,
-        precedingLyricID: LyricLine.ID?,
-        followingLyric: LyricLine,
-        displayBeforeLyricID: LyricLine.ID,
+        precedingLyricID: WMLyricLine.ID?,
+        followingLyric: WMLyricLine,
+        displayBeforeLyricID: WMLyricLine.ID,
         timingSource: LyricInterludeTimingSource
     ) -> LyricInterlude? {
         guard startTime.isFinite,
@@ -227,7 +227,7 @@ enum LyricInterludeTimeline {
     }
 
     private static func contentEndTime(
-        for lyric: LyricLine
+        for lyric: WMLyricLine
     ) -> TimeInterval? {
         if lyric.timingKind == .lineSynchronized {
             let estimatedDuration =

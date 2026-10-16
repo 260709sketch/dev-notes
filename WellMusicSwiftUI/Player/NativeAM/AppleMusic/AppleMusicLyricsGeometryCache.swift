@@ -5,12 +5,12 @@ import CoreGraphics
 /// lyrics view on every scroll tick.
 @MainActor
 final class AppleMusicLyricsGeometryCache {
-    var frames: [LyricLine.ID: CGRect] = [:]
-    var layoutHeights: [LyricLine.ID: CGFloat] = [:]
-    var annotationHeights: [LyricLine.ID: CGFloat] = [:]
+    var frames: [WMLyricLine.ID: CGRect] = [:]
+    var layoutHeights: [WMLyricLine.ID: CGFloat] = [:]
+    var annotationHeights: [WMLyricLine.ID: CGFloat] = [:]
     var interludeFrames: [LyricInterlude.ID: CGRect] = [:]
 
-    func remove(_ id: LyricLine.ID) {
+    func remove(_ id: WMLyricLine.ID) {
         frames.removeValue(forKey: id)
         layoutHeights.removeValue(forKey: id)
         annotationHeights.removeValue(forKey: id)
