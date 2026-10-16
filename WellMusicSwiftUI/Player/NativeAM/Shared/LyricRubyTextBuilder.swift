@@ -41,7 +41,7 @@ enum LyricRubyTextBuilder {
             && syllables.map(\.text).joined() == source
     }
 
-    private static func timedText(
+    private nonisolated static func timedText(
         syllables: [LyricSyllable]
     ) -> LyricAttributedText {
         syllables.filter { !$0.text.isEmpty }.reduce(into:

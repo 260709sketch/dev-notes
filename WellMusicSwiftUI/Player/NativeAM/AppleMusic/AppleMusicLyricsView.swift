@@ -210,6 +210,17 @@ struct AppleMusicLyricsView: View {
     @ViewBuilder
     private var lyricsContent: some View {
         if lyrics.isEmpty {
+            lyricsEmptyState
+        } else {
+            lyricsLoadedState
+        }
+    }
+
+    // ★ 2026-10-16：从 lyricsContent 拆出（原巨型 @ViewBuilder 让类型检查器超时）
+    @ViewBuilder
+    private var lyricsEmptyState: some View {
+
+        if lyrics.isEmpty {
             if let errorMessage {
                 // ★ 2026-10-16：原 ContentUnavailableView 泛型 init 让类型检查器超时，
                 //   改为等价手写（视觉一致）。
@@ -227,7 +238,10 @@ struct AppleMusicLyricsView: View {
                 .onTapGesture {
                     onInterfaceInteraction?()
                 }
-            } else {
+    }
+
+    @ViewBuilder
+    private var lyricsLoadedState: some View {
                 ProgressView("ui.lyrics.loading")
                     .tint(.white)
                     .foregroundStyle(.white)
