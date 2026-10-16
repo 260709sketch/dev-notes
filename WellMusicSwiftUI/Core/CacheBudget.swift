@@ -83,7 +83,11 @@ enum CacheBudget {
     /// 三类缓存合计占用（存储页展示用）。
     static func totalUsage() async -> (audio: Int64, image: Int64, artist: Int64) {
         let audio = AudioCacheManager.shared.totalSize()
-        let image = WellImageCache.shared.diskUsage()
+        // ⚠️ `WellImageCache` 是 actor，且 `diskUsage()` **不是** nonisolated
+        //    （只有 `diskEntries()` 标了 nonisolated）—— 这里必须 await，
+        //    否则 CI 报「actor-isolated instance method 'diskUsage()' cannot be
+        //    called from outside of the actor」。
+        let image = await WellImageCache.shared.diskUsage()
         let artist = WellArtistHomeCache.shared.diskUsage()
         return (audio, image, artist)
     }
