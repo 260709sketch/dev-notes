@@ -259,8 +259,7 @@ struct WellMyPlaylistDetailView: View {
         let isPlaying = playingKey != nil && item.keyOf == playingKey
         return Button {
             play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
-        } label: {
-            HStack(spacing: 12) {
+        } label: {            HStack(spacing: 12) {
                 ArtworkView(url: item.albumCoverURL, size: Metrics.rowCover,
                             cornerRadius: Metrics.rowCoverRadius)
 

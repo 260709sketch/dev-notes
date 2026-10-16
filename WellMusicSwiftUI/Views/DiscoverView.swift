@@ -37,8 +37,7 @@ struct DiscoverView: View {
     var body: some View {
         // ⚠️ 不带 NavigationStack：导航容器由 MainTabView 的 page() 统一提供（11:10 架构）。
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                if let errorMessage {
+            VStack(alignment: .leading, spacing: 26) {                if let errorMessage {
                     errorState(errorMessage)
                 } else if isLoading {
                     loadingState
@@ -55,6 +54,8 @@ struct DiscoverView: View {
             }
             .padding(.top, 8)
         }
+        // ★ 第十一轮问题4：发现页滑动隐藏右侧滚动条
+        .scrollIndicators(.hidden)
         .navigationTitle("发现")
         .navigationBarTitleDisplayMode(.large)
         .task { await load() }

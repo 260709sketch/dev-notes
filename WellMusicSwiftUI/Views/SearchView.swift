@@ -5,10 +5,9 @@ import AVKit
 
 @MainActor
 final class WellSearchViewModel: ObservableObject {
-    /// 初始平台（2026-10-16 第十轮问题16）：设置里可设「优先搜索平台」
-    @Published var platform: WellSearchPlatform = WellSearchViewModel.preferredPlatform {
-        didSet { UserDefaults.standard.set(true, forKey: "wellmusic.search.userPickedPlatform") }
-    }
+    /// 初始平台（2026-10-16 第十一轮按用户要求回退：只保留「创建/进页时读一次
+    /// 优先平台」；不要在每次 onAppear 重写用户在当前页面手选的平台）
+    @Published var platform: WellSearchPlatform = WellSearchViewModel.preferredPlatform
     /// 设置 → 优先搜索平台（三大平台之一；rawValue 即展示名）
     static var preferredPlatform: WellSearchPlatform {
         let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
@@ -154,12 +153,6 @@ struct SearchView: View {
             }
         }
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
-        // ★ 2026-10-16 用户：「优先搜索平台没用」—— 模型只在创建时读一次设置，
-        //   之后进页不再应用。每次进搜索页都套用设置里的偏好平台。
-        .onAppear {
-            let preferred = WellSearchViewModel.preferredPlatform
-            if model.platform != preferred { model.platform = preferred }
-        }
         // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
         // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
         // ⚠️ 不在 task 里 clear()：清空缓存标记会让「从详情页返回」也重新请求。

@@ -2118,8 +2118,8 @@ final class NeteaseMusicAPI {
     }
 
     private static func artistSubtitle(musicSize: Int?, albumSize: Int?) -> String? {
+        // ★ 2026-10-16 第十一轮问题9：热门歌手卡副标题去掉「N 张专辑」（用户要求）
         guard let musicSize, musicSize > 0 else { return nil }
-        if let albumSize, albumSize > 0 { return "\(musicSize) 首单曲 · \(albumSize) 张专辑" }
         return "\(musicSize) 首单曲"
     }
 

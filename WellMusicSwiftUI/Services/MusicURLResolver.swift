@@ -106,8 +106,12 @@ final class MusicURLResolver {
                 isFallbackSource: true)
         }
         // 解析源失败 → 官方通道（可能仅试听）：提示区分，便于用户理解「30 秒」的来源
+        // ★ 第十一轮问题3：这两条提示同样受「内置音源播放提醒」开关控制
+        let reminderOn = (UserDefaults.standard.object(forKey: Self.builtinReminderKey) as? Bool) ?? true
         let url = try await PlatformSongResolver.shared.resolve(item: item, quality: quality)
-        await ToastCenter.shared.show("内置音源解析失败，已用官方音源")
+        if reminderOn {
+            await ToastCenter.shared.show("内置音源解析失败，已用官方音源")
+        }
         return ResolvedPlayback(
             url: url,
             headers: WellLXPlaybackHeaders.requestHeaders(

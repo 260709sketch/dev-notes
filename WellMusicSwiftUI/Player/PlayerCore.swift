@@ -334,7 +334,13 @@ final class PlayerCore: NSObject, ObservableObject {
                     return
                 }
                 if resolved.isFallbackSource, let name = resolved.fromCustomSource {
-                    await MainActor.run { ToastCenter.shared.show("自动换源：\(name)") }
+                    // ★ 第十一轮问题3：「自动换源：内置音源」也受内置音源提醒开关控制
+                    let isBuiltin = name.contains("内置")
+                    let reminderOn = (UserDefaults.standard.object(
+                        forKey: MusicURLResolver.builtinReminderKey) as? Bool) ?? true
+                    if !isBuiltin || reminderOn {
+                        await MainActor.run { ToastCenter.shared.show("自动换源：\(name)") }
+                    }
                 }
                 await MainActor.run {
                     // 唤醒音频会话：App 启动时 setActive 可能失败（系统繁忙/被其他
