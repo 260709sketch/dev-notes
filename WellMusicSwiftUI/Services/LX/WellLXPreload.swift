@@ -214,6 +214,20 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
     if (!targetRequest) return
     requestQueue.delete(requestKey)
     targetRequest.requestInfo.aborted = true
+    // ★★ 2026-10-16 第十一轮实源修复（关键）：权威版会按响应头 content-type
+    //   **把 JSON 响应体解析成对象**再交给脚本 —— 大量第三方源（聆澜/玉宁熙/
+    //   念心…）直接用 `body.code` / `body.url` 取值，字符串 body 会让它们全部
+    //   「unknown error」秒失败（其他平台能播、我们不行）。
+    if (error == null && response && typeof response.body == 'string') {
+      const responseHeaders = response.headers || {}
+      let responseContentType = ''
+      for (const k in responseHeaders) {
+        if (String(k).toLowerCase() == 'content-type') { responseContentType = String(responseHeaders[k]); break }
+      }
+      if (/json/i.test(responseContentType)) {
+        try { response.body = JSON.parse(response.body) } catch (e) { /* 保留原文 */ }
+      }
+    }
     if (error == null) targetRequest.callback(null, response)
     else targetRequest.callback(new Error(error), null)
   }
