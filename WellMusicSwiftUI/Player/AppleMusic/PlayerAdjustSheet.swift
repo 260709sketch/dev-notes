@@ -26,7 +26,6 @@ struct PlayerAdjustSheet: View {
                 backgroundSection
                 topBarSection
                 amllLyricSection
-                lyricEngineSection
                 lyricAlignmentSection
                 lowPerfSection
                 amllFontSection
@@ -258,33 +257,14 @@ struct PlayerAdjustSheet: View {
 
     // MARK: - 歌词对齐（2026-10-16 用户问题11：iOS 原生分段控制）
 
-    /// ★ 歌词引擎切换（2026-10-16）：现版 AMLL / 原生 Apple Music（MeloX 移植）
-    private var lyricEngineSection: some View {
-        Section {
-            Picker("歌词引擎", selection: Binding(
-                get: { settings.appleMusicLyricsEngine },
-                set: { settings.appleMusicLyricsEngine = $0 }
-            )) {
-                Text("现版").tag("amll")
-                Text("Apple Music 原生").tag("native")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        } footer: {
-            Text("现版 = WebView 歌词（AMLL）；Apple Music 原生 = 移植 MeloX 的原生渲染（逐字/间奏点/弹簧动画）。")
-                .font(.system(size: 12))
-        }
-    }
-
     private var lyricAlignmentSection: some View {
         Section {
             Picker("歌词对齐", selection: Binding(
                 get: { settings.appleMusicLyricAlignment },
                 set: { settings.appleMusicLyricAlignment = $0 }
             )) {
-                // ★★ 2026-10-16 用户截图指正：分段控制的**排列顺序**应为
-                //   左 | 居中 | 右（此前是 居中|左|右，「左」选项在中间位置）。
-                //   仅调整展示顺序；tag 语义不变（0 居中 / 1 左 / 2 右）。
+                // ★ 2026-10-16 用户截图指正：排列顺序应为 左 | 居中 | 右
+                //  （tag 语义不变：0 居中 / 1 左 / 2 右）
                 Text("左").tag(1)
                 Text("居中").tag(0)
                 Text("右").tag(2)

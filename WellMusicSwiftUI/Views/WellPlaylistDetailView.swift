@@ -229,16 +229,15 @@ struct WellPlaylistDetailView: View {
     private var heroCover: some View {
         switch coverStyle {
         case .centered:
-            // ★ 2026-10-16 MeloX 移植（StandardMusicCollectionDetailHero）：封面宽
-            //   min(屏宽×0.68, 300)、圆角 12、阴影 black 18% / r18 / y10。
             WellRemoteImage(url: headerCoverURL, displaySize: 720)
-                .frame(width: min(UIScreen.main.bounds.width * 0.68, 300),
-                       height: min(UIScreen.main.bounds.width * 0.68, 300))
+                .frame(width: ScreenAdapter.w(304), height: ScreenAdapter.w(304))
                 .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .shadow(color: .black.opacity(0.18), radius: 18, y: 10)
+                // ★ 2026-10-14 用户问题4：大封面四角改圆角，参考发现页歌单卡片圆角（10）
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // ★ 2026-10-16 第十轮问题12：居中留白样式的大封面加投影
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
                 .frame(maxWidth: .infinity)
-                .padding(.top, 24)
+                .padding(.top, 28)
         case .fullWidth:
             // ⚠️ 2026-10-15 深夜回退说明：「封面顶到导航栏下」曾用 GeometryReader
             //   与 offset 负安全区两种方式实现，分别在 LazyVStack（塌陷不渲染）与
@@ -464,8 +463,7 @@ struct WellPlaylistDetailView: View {
                 ForEach(Array(displayedTracks.enumerated()), id: \.element.id) { index, item in
                     appleMusicSongRow(index: index, item: item)
                         .padding(.horizontal, 20)
-                        // ★ 2026-10-16 MeloX 移植：榜单/歌单行 8、专辑行 11
-                        .padding(.vertical, isAlbumSource ? 11 : 8)
+                        .padding(.vertical, 6)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             PlayerCore.shared.play(queue: orderedTracks,
@@ -485,30 +483,17 @@ struct WellPlaylistDetailView: View {
     }
 
     private func appleMusicSongRow(index: Int, item: MusicItem) -> some View {
-        // ★★ 2026-10-16 MeloX 完整移植（PlaylistTrackList 语义反转）：
-        //   榜单/歌单行 = 48pt 小封面 + 单行标题 + 歌手副标题（无封面者不显示歌手的反向规则见下）；
-        //   专辑行 = 无封面 → 播放中显示状态圆环（圆环 + 播放/暂停图标），非播放中显示序号；
-        //   专辑行标题最多两行、**不显示歌手**。
         HStack(spacing: 12) {
+            // ★ 2026-10-15 用户：专辑页歌曲列表对齐官方（Apple Music）——
+            //   专辑页整页都是同一张专辑，行内封面冗余：序号 + 歌名/歌手 + 时长，无封面。
             if isAlbumSource {
-                if nowPlaying.isCurrent(item) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.primary.opacity(0.60), lineWidth: 1.5)
-                        Image(systemName: PlayerCore.shared.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .frame(width: 26, height: 26)
-                    .frame(width: 30, alignment: .leading)
-                } else {
-                    Text("\(index + 1)")
-                        .font(.system(size: 15).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30, alignment: .center)
-                }
+                Text("\(index + 1)")
+                    .font(.system(size: 15).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, alignment: .leading)
             } else {
-                WellRemoteImage(url: item.albumCoverURL, displaySize: 48)
-                    .frame(width: 48, height: 48)
+                WellRemoteImage(url: item.albumCoverURL, displaySize: 44)
+                    .frame(width: 44, height: 44)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
 
@@ -518,13 +503,11 @@ struct WellPlaylistDetailView: View {
                     .foregroundStyle(nowPlaying.isCurrent(item)
                         ? Color(red: 0.25, green: 0.52, blue: 0.96)
                         : .primary)
-                    .lineLimit(isAlbumSource ? 2 : 1)
-                if !isAlbumSource {
-                    Text(item.artist ?? "未知歌手")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                    .lineLimit(1)
+                Text(item.artist ?? "未知歌手")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

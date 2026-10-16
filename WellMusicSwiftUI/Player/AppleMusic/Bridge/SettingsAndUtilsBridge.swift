@@ -358,8 +358,6 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.appleMusic.lyricAlignment") var appleMusicLyricAlignment: Int = 0
     /// ★ 低性能歌词模式（2026-10-16，参照 AMLL 官方性能标注：关歌词模糊 + 关弹簧动画）
     @AppStorage("wellmusic.appleMusic.amllLowPerf") var appleMusicAmllLowPerf: Bool = false
-    /// ★ 歌词引擎（2026-10-16）：amll = 现版 WebView 歌词；native = 移植的 Apple Music 原生渲染
-    @AppStorage("wellmusic.appleMusic.lyricsEngine") var appleMusicLyricsEngine: String = "amll"
 
     /// 是否隐藏大封面状态顶部的小横条指示器（下滑关闭手势仍然可用）。
     @AppStorage("wellmusic.appleMusic.hideTopIndicator") var appleMusicHideTopIndicator: Bool = false

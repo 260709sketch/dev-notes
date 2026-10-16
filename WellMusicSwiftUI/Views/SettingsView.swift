@@ -220,6 +220,16 @@ struct SettingsView: View {
                         Text("全宽铺满（榜单风）").tag("fullWidth")
                     }
                     .pickerStyle(.navigationLink)
+                    Picker("播放视觉风格", selection: .constant("appleMusic")) {
+                        Text("Apple Music 风").tag("appleMusic")
+                    }
+                    .pickerStyle(.navigationLink)
+                    Picker("播放器背景", selection: $settings.appleMusicBackgroundStyle) {
+                        Text("Apple Music 背景").tag("appleMusicBackdrop")
+                        Text("流动光").tag("flowingLight")
+                        Text("封面模糊").tag("blurredArtwork")
+                    }
+                    .pickerStyle(.navigationLink)
                 } header: {
                     Text("外观")
                 } footer: {

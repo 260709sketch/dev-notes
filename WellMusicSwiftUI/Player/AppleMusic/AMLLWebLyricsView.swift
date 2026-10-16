@@ -126,36 +126,35 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         // ★ 问题6：注入对齐 CSS（变量由 updateUIView 实时改；页面重绘的行也跟随）
-        // ★★ 2026-10-16 根因修复（用户实测「选居左仍居中」）：此前初始值写死
-        //   center，真实值靠 applyAlignment 一次性下发；而 updateUIView 会**先于
-        //   页面加载**执行（打在空白页上），之后一次性门控拦住重发 → 永远居中。
-        //   现在把**当前设置值直接拼进 documentStart 脚本**，首载即正确；
-        //   后续变化再由 applyAlignment 补发（已去门控）+ ready 后强制重发。
+        // ★ 2026-10-16 时序修复①：初值 = 当前设置（此前写死 center，是
+        //   「选左仍居中」根因之一——首帧渲染前下发可能打在未加载页面上）
         let initialAlignCSS: String
-        let initialJustifyCSS: String
-        let initialDotsCSS: String
+        let initialDotsLeft: String
+        let initialDotsRight: String
+        let initialDotsML: String
+        let initialDotsMR: String
         switch textAlignment {
         case 1:
             initialAlignCSS = "left"
-            initialJustifyCSS = "flex-start"
-            initialDotsCSS = "--wellDotsLeft:0;--wellDotsRight:auto;--wellDotsML:0;--wellDotsMR:0"
+            initialDotsLeft = "0"; initialDotsRight = "auto"
+            initialDotsML = "0"; initialDotsMR = "0"
         case 2:
             initialAlignCSS = "right"
-            initialJustifyCSS = "flex-end"
-            initialDotsCSS = "--wellDotsLeft:auto;--wellDotsRight:0;--wellDotsML:0;--wellDotsMR:0"
-        default:
-            initialAlignCSS = "center"
-            initialJustifyCSS = "center"
-            initialDotsCSS = "--wellDotsLeft:0;--wellDotsRight:0;--wellDotsML:auto;--wellDotsMR:auto"
+            initialDotsLeft = "auto"; initialDotsRight = "0"
+            initialDotsML = "0"; initialDotsMR = "0"
+        default:/n            initialAlignCSS = "center"
+            initialDotsLeft = "0"; initialDotsRight = "0"
+            initialDotsML = "auto"; initialDotsMR = "auto"
         }
         let alignScript = """
         (function(){
           var st = document.createElement('style');
-          st.textContent = ':root{--wellLyricAlign:\(initialAlignCSS);--wellJustify:\(initialJustifyCSS);\(initialDotsCSS)}'
+          st.textContent = ':root{--wellLyricAlign:\(initialAlignCSS);--wellDotsLeft:\(initialDotsLeft);--wellDotsRight:\(initialDotsRight);--wellDotsML:\(initialDotsML);--wellDotsMR:\(initialDotsMR)}'
             + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
-            + '{text-align:var(--wellLyricAlign)!important;justify-content:var(--wellJustify)!important}'
+            + '{text-align:var(--wellLyricAlign)!important}'
             // ★ 间奏点：官方组件由 JS 每次布局写**内联 style** 定位 —— 只有带
-            //   !important 的样式表能压过它。位置由 CSS 变量驱动，随对齐设置变化。
+            //   !important 的样式表能压过它（内联改法必被覆盖，这就是还居左的原因）。
+            //   位置由 CSS 变量驱动，随对齐设置变化。
             + '.interludeDots{left:var(--wellDotsLeft)!important;right:var(--wellDotsRight)!important;'
             + 'margin-left:var(--wellDotsML)!important;margin-right:var(--wellDotsMR)!important}';
           document.documentElement.appendChild(st);
@@ -227,7 +226,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var pending: (lyrics: ParsedLyrics, translation: Bool, romaji: Bool, signature: Int)?
         private var fontSize: CGFloat = 30
         private var fontWeight: Int = 600
-        /// 上次下发的歌词对齐（-1 = 未下发过；现已去门控，仅作记录）
+        /// 上次下发的歌词对齐（-1 = 未下发过）
         private var lastAlignment: Int = -1
         /// 目标对齐值（ready 后强制补发用）
         private var lastAlignmentValue = 0
@@ -258,39 +257,33 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 唯一稳的做法：把定位抽成 **CSS 变量**，由带 `!important` 的样式表消费
         /// （样式表 !important 压过页面的内联写入）。只设置变量，不碰元素本体。
         func applyAlignment(_ alignment: Int, web: WKWebView) {
-            // ★ 根因修复：**不再门控**。此前一次性下发 + 页面未加载时打在空白页上
-            //   = 设置永远不生效。每次下发幂等，代价一次 JS 调用。
+            // ★ 时序修复②：不再门控（幂等重发；此前一次性下发+页面未加载=永不生效）
             lastAlignment = alignment
             lastAlignmentValue = alignment
             let css: String
-            let justify: String
             switch alignment {
-            case 1: css = "left"; justify = "flex-start"
-            case 2: css = "right"; justify = "flex-end"
-            default: css = "center"; justify = "center"
+            case 1: css = "left"
+            case 2: css = "right"
+            default: css = "center"
             }
             // 间奏点四变量：居中=左右都 0 + 双 auto 外边距；右=靠右；左=靠左
-            let dotsLeft: String
-            let dotsRight: String
-            let dotsML: String
-            let dotsMR: String
+            let dotsVars: String
             switch alignment {
-            case 1:
-                dotsLeft = "0"; dotsRight = "auto"; dotsML = "0"; dotsMR = "0"
-            case 2:
-                dotsLeft = "auto"; dotsRight = "0"; dotsML = "0"; dotsMR = "0"
-            default:
-                dotsLeft = "0"; dotsRight = "0"; dotsML = "auto"; dotsMR = "auto"
+            case 1: dotsVars = "--wellDotsLeft:0;--wellDotsRight:auto;--wellDotsML:0;--wellDotsMR:0;"
+            case 2: dotsVars = "--wellDotsLeft:auto;--wellDotsRight:0;--wellDotsML:0;--wellDotsMR:0;"
+            default: dotsVars = "--wellDotsLeft:0;--wellDotsRight:0;--wellDotsML:auto;--wellDotsMR:auto;"
             }
             let js = """
             (function(){
               var r = document.documentElement.style;
               r.setProperty('--wellLyricAlign','\(css)');
-              r.setProperty('--wellJustify','\(justify)');
-              r.setProperty('--wellDotsLeft','\(dotsLeft)');
-              r.setProperty('--wellDotsRight','\(dotsRight)');
-              r.setProperty('--wellDotsML','\(dotsML)');
-              r.setProperty('--wellDotsMR','\(dotsMR)');
+              var vars = '\(dotsVars)'.split(';');
+              for (var i = 0; i < vars.length; i++) {
+                var kv = vars[i];
+                if (!kv) continue;
+                var idx = kv.indexOf(':');
+                r.setProperty(kv.slice(0, idx), kv.slice(idx + 1));
+              }
             })();
             """
             web.evaluateJavaScript(js, completionHandler: nil)
@@ -618,8 +611,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                 if let w = web {
                     lastLowPerf = nil
                     applyLowPerformance(lastLowPerfValue, web: w)
-                    // ★ 根因修复：页面就绪后强制补发对齐（首载 docStart 已带正确初值，
-                    //   这里再兜一层，覆盖页面重载/设置中途变更的一切时序）
+                    // ★ 时序修复③：页面就绪后强制补发对齐（覆盖一切时序）
                     lastAlignment = -1
                     applyAlignment(lastAlignmentValue, web: w)
                 }

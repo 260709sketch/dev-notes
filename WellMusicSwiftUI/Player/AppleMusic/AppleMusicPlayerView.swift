@@ -689,6 +689,20 @@ struct AppleMusicPlayerView: View {
     ///
     /// 抽成独立子视图后，只要下面这几个参数没变，SwiftUI 就**跳过**该子视图的
     /// `body` 重算，WebView 完全不受本视图重算的影响。
+    /// ★ 2026-10-16 外观分组「播放器背景」三选：
+    /// appleMusicBackdrop = 现状（跟随「流体背景」开关）；flowingLight = 强制流体并提亮；
+    /// blurredArtwork = 强制封面模糊。
+    private var backgroundStyleUsesFluid: Bool {
+        switch settings.appleMusicBackgroundStyle {
+        case "flowingLight": return true
+        case "blurredArtwork": return false
+        default: return settings.appleMusicFluidBackground
+        }
+    }
+    private var backgroundStyleDimScale: CGFloat {
+        settings.appleMusicBackgroundStyle == "flowingLight" ? 0.55 : 1
+    }
+
     @ViewBuilder
     private var playerBackground: some View {
         AppleMusicPlayerBackground(
@@ -696,11 +710,10 @@ struct AppleMusicPlayerView: View {
             // ★ 下方参数见 backgroundStyleUsesFluid / backgroundStyleDimScale
             // 压暗/提亮遮罩的强度，由「播放器调整」里的「背景暗度」控制。
             // 默认 0.48 —— 白字在暗底上清晰，同时封面还留得住细节。
-            dim: CGFloat(min(max(bgDim, 0), 1)),
-            usesFluidBackground: settings.appleMusicFluidBackground,
+            dim: CGFloat(min(max(bgDim, 0), 1)) * backgroundStyleDimScale,
+            usesFluidBackground: backgroundStyleUsesFluid,
             usesAMLL: settings.appleMusicUseAMLL,
             showsLyrics: showLyrics,
-            lyricsEngineNative: settings.appleMusicLyricsEngine == "native",
             coverURL: coverURL,
             amllTopPadding: ScreenAdapter.h(CGFloat(amllTopPx)),
             // ★ 2026-10-16 第十轮问题10：歌词页下滑收起底部控制后，歌词一直铺到
@@ -1640,8 +1653,6 @@ private struct AppleMusicPlayerBackground: View {
     let usesFluidBackground: Bool
     let usesAMLL: Bool
     let showsLyrics: Bool
-    /// ★ 歌词引擎：true = 原生 AppleMusic（移植版）
-    let lyricsEngineNative: Bool
     let coverURL: URL?
     let amllTopPadding: CGFloat
     let amllBottomPadding: CGFloat
@@ -1678,21 +1689,11 @@ private struct AppleMusicPlayerBackground: View {
             // 的直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复「点开
             // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
             if usesAMLL && showsLyrics {
-                // ★ 2026-10-16：歌词引擎二选一（播放器调整 → 歌词引擎）
-                if lyricsEngineNative {
-                    WellNativeLyricsHost(
-                        topPadding: amllTopPadding,
-                        bottomPadding: amllBottomPadding,
-                        horizontalPadding: amllHorizontalPadding
-                    )
+                AMLLWebLyricsView(useAppleMusicSettings: true)
                     .ignoresSafeArea()
-                } else {
-                    AMLLWebLyricsView(useAppleMusicSettings: true)
-                        .ignoresSafeArea()
-                        .padding(.top, amllTopPadding)
-                        .padding(.bottom, amllBottomPadding)
-                        .padding(.horizontal, amllHorizontalPadding)
-                }
+                    .padding(.top, amllTopPadding)
+                    .padding(.bottom, amllBottomPadding)
+                    .padding(.horizontal, amllHorizontalPadding)
             }
         }
     }
