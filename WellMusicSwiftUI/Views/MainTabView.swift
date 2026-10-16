@@ -11,8 +11,6 @@ import UIKit
 /// 落到本地 @State 即可。
 struct MainTabView: View {
     @EnvironmentObject private var settings: SettingsManager
-    /// 自定义音源仓库：仅用于展示「音源脚本上报更新」的弹窗（低频，无性能风险）。
-    @ObservedObject private var lxStore = WellLXSourceStore.shared
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
@@ -39,27 +37,11 @@ struct MainTabView: View {
         tabInterface
             .modifier(HiddenChromeBackgroundModifier())
             .overlay(alignment: .top) { WellToastView() }
-            // 自定义音源脚本上报更新 → 弹窗询问是否去更新（每音源开关见音源管理页）
-            .alert(
-                Text("音源更新提示"),
-                isPresented: Binding(
-                    get: { lxStore.pendingUpdateAlert != nil },
-                    set: { newValue in if !newValue { lxStore.dismissUpdateAlert() } }
-                ),
-                presenting: lxStore.pendingUpdateAlert
-            ) { notice in
-                if notice.hasLink, let url = URL(string: notice.updateUrl) {
-                    Button("打开更新链接") {
-                        UIApplication.shared.open(url)
-                        lxStore.dismissUpdateAlert()
-                    }
-                }
-                Button("关闭", role: .cancel) { lxStore.dismissUpdateAlert() }
-            } message: { notice in
-                Text([notice.sourceName + " 有更新", notice.log]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n"))
-            }
+            // 自定义音源脚本上报更新 → 弹窗询问是否去更新。
+            // ⚠️ 交给独立叶视图渲染，**不要**在这里 @ObservedObject 订阅音源仓库：
+            //    该仓库每次成功取链都会 appendLog（requestLogs 是 @Published），
+            //    在根部订阅就等于「每解析一首歌就重算整棵 Tab 树」。
+            .overlay { WellLXUpdateAlertPresenter() }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }
@@ -285,6 +267,42 @@ extension MainTabView {
         .init(tab: .search, title: "搜索", icon: "magnifyingglass"),
         .init(tab: .profile, title: "我的", icon: "person.crop.circle"),
     ]
+}
+
+/// 音源更新提示的挂载点（问题11）。
+///
+/// ⚠️ 单独做成一个**叶视图**，不要在 `MainTabView` 里直接 `@ObservedObject` 订阅
+/// `WellLXSourceStore` —— 该仓库每次成功取链都会 `appendLog`（`requestLogs` 是 @Published），
+/// 在根部订阅就等于「每解析一首歌就把整棵 Tab 树重算一遍」，
+/// 正是本项目反复踩过的「高频 publisher 别在根部订阅」。
+/// 放在这里，重算范围只有这个空视图本身。
+struct WellLXUpdateAlertPresenter: View {
+    @ObservedObject private var store = WellLXSourceStore.shared
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .alert(
+                Text("音源更新提示"),
+                isPresented: Binding(
+                    get: { store.pendingUpdateAlert != nil },
+                    set: { newValue in if !newValue { store.dismissUpdateAlert() } }
+                ),
+                presenting: store.pendingUpdateAlert
+            ) { notice in
+                if notice.hasLink, let url = URL(string: notice.updateUrl) {
+                    Button("打开更新链接") {
+                        UIApplication.shared.open(url)
+                        store.dismissUpdateAlert()
+                    }
+                }
+                Button("关闭", role: .cancel) { store.dismissUpdateAlert() }
+            } message: { notice in
+                Text([notice.sourceName + " 有更新", notice.log]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n"))
+            }
+    }
 }
 
 /// 全局轻提示（自动换源等）
