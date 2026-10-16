@@ -689,14 +689,29 @@ struct AppleMusicPlayerView: View {
     ///
     /// 抽成独立子视图后，只要下面这几个参数没变，SwiftUI 就**跳过**该子视图的
     /// `body` 重算，WebView 完全不受本视图重算的影响。
+    /// ★ 2026-10-16 外观分组「播放器背景」三选：
+    /// appleMusicBackdrop = 现状（跟随「流体背景」开关）；flowingLight = 强制流体并提亮；
+    /// blurredArtwork = 强制封面模糊。
+    private var backgroundStyleUsesFluid: Bool {
+        switch settings.appleMusicBackgroundStyle {
+        case "flowingLight": return true
+        case "blurredArtwork": return false
+        default: return settings.appleMusicFluidBackground
+        }
+    }
+    private var backgroundStyleDimScale: CGFloat {
+        settings.appleMusicBackgroundStyle == "flowingLight" ? 0.55 : 1
+    }
+
     @ViewBuilder
     private var playerBackground: some View {
         AppleMusicPlayerBackground(
             isDark: bgMode == .dark,
+            // ★ 下方参数见 backgroundStyleUsesFluid / backgroundStyleDimScale
             // 压暗/提亮遮罩的强度，由「播放器调整」里的「背景暗度」控制。
             // 默认 0.48 —— 白字在暗底上清晰，同时封面还留得住细节。
-            dim: CGFloat(min(max(bgDim, 0), 1)),
-            usesFluidBackground: settings.appleMusicFluidBackground,
+            dim: CGFloat(min(max(bgDim, 0), 1)) * backgroundStyleDimScale,
+            usesFluidBackground: backgroundStyleUsesFluid,
             usesAMLL: settings.appleMusicUseAMLL,
             showsLyrics: showLyrics,
             coverURL: coverURL,

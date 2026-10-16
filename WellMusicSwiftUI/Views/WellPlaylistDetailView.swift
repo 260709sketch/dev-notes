@@ -206,7 +206,14 @@ struct WellPlaylistDetailView: View {
     // MARK: - 封面（两版式，设置可切换）
 
     /// 封面版式（设置 → 界面 →「歌单封面样式」；默认新版居中留白）。
-    @AppStorage("wellmusic.playlist.coverStyle") private var coverStyle: WellPlaylistCoverStyle = .centered
+    /// ★ 2026-10-16 外观分组：版式按页面生效 —— 歌单页默认全宽铺满（榜单风）、
+    ///   专辑页默认居中留白（标准风）；旧全局开关不再直接读取（保留存储兼容）。
+    @AppStorage("wellmusic.appearance.playlistLayout") private var playlistLayoutRaw: String = "fullWidth"
+    @AppStorage("wellmusic.appearance.albumLayout") private var albumLayoutRaw: String = "centered"
+    private var coverStyle: WellPlaylistCoverStyle {
+        let raw = isAlbumSource ? albumLayoutRaw : playlistLayoutRaw
+        return raw == "centered" ? .centered : .fullWidth
+    }
 
     /// 封面两版式（2026-10-14 用户设计稿 IMG_3955）：
     /// * `.centered`（新版，默认）：**居中留白**方图 —— 尺寸量自设计稿
@@ -299,9 +306,8 @@ struct WellPlaylistDetailView: View {
                 Image(systemName: "shuffle")
                     .font(.system(size: 17, weight: .semibold))
                     .frame(width: 48, height: 48)
-                    .background(.ultraThinMaterial, in: Circle())
             }
-            .buttonStyle(.plain)
+            .modifier(WellGlassCircleButtonModifier())
             .disabled(orderedTracks.isEmpty)
 
             // 播放（反色大胶囊：深底白字白胶囊 / 浅底黑字黑胶囊 —— 见 `playCapsule*`）
@@ -326,9 +332,8 @@ struct WellPlaylistDetailView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 19, weight: .semibold))
                     .frame(width: 48, height: 48)
-                    .background(.ultraThinMaterial, in: Circle())
             }
-            .buttonStyle(.plain)
+            .modifier(WellGlassCircleButtonModifier())
             .disabled(tracks.isEmpty)
         }
         .padding(.horizontal, 20)
@@ -349,6 +354,25 @@ struct WellPlaylistDetailView: View {
     private var playCapsuleForeground: Color { pageIsDark ? .black : .white }
 
     // MARK: - 简介（两行截断 + 「更多」展开，Apple Music 同款）
+
+    // MARK: - 外观（★ 2026-10-16）：圆钮玻璃样式
+
+    /// 圆钮玻璃（用户要求）：iOS 26 用**系统液态玻璃**；iOS 16–25 用与 dock 栏
+    /// 同款的磨砂玻璃（ultraThinMaterial）。
+    private struct WellGlassCircleButtonModifier: ViewModifier {
+        @ViewBuilder
+        func body(content: Content) -> some View {
+            if #available(iOS 26.0, *) {
+                content
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+            } else {
+                content
+                    .buttonStyle(.plain)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+        }
+    }
 
     // MARK: - 简介（点击文本展开 / 再点收起）
 

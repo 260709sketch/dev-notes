@@ -206,6 +206,37 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                 }
 
+                Section {
+                    // ★ 2026-10-16 用户：外观分组 —— 歌单/专辑页版式按页面拆分（默认：
+                    //   歌单=全宽铺满榜单风、专辑=居中留白标准风）+ 播放视觉风格 +
+                    //   播放器背景三选。iOS 26 上系统自动渲染液态玻璃。
+                    Picker("歌单页版式", selection: $settings.appearancePlaylistLayout) {
+                        Text("全宽铺满（榜单风）").tag("fullWidth")
+                        Text("居中留白（标准风）").tag("centered")
+                    }
+                    .pickerStyle(.navigationLink)
+                    Picker("专辑页版式", selection: $settings.appearanceAlbumLayout) {
+                        Text("居中留白（标准风）").tag("centered")
+                        Text("全宽铺满（榜单风）").tag("fullWidth")
+                    }
+                    .pickerStyle(.navigationLink)
+                    Picker("播放视觉风格", selection: .constant("appleMusic")) {
+                        Text("Apple Music 风").tag("appleMusic")
+                    }
+                    .pickerStyle(.navigationLink)
+                    Picker("播放器背景", selection: $settings.appleMusicBackgroundStyle) {
+                        Text("Apple Music 背景").tag("appleMusicBackdrop")
+                        Text("流动光").tag("flowingLight")
+                        Text("封面模糊").tag("blurredArtwork")
+                    }
+                    .pickerStyle(.navigationLink)
+                } header: {
+                    Text("外观")
+                } footer: {
+                    Text("歌单与专辑页版式可分别选择；播放器背景即时生效。iOS 26 起底部栏与按钮自动使用系统液态玻璃。")
+                        .font(.system(size: 12))
+                }
+
                 Section("界面") {
                     // ★ 2026-10-15 用户：搜索框样式切换
                     //   开 = 旧版（系统搜索栏，进页折叠）；关 = 新版（页面顶部常驻搜索框）。
@@ -224,14 +255,6 @@ struct SettingsView: View {
                     // 发现页「每日推荐 / 私人漫游 / 心动模式」入口卡样式（2026-10-14）
                     Picker("发现页入口卡", selection: $settings.dailyCardStyle) {
                         ForEach(WellDailyCardStyle.allCases) { style in
-                            Text(style.displayName).tag(style)
-                        }
-                    }
-                    .pickerStyle(.navigationLink)
-
-                    // 歌单封面样式（2026-10-14 用户设计稿：新版居中留白 / 旧版全宽铺满）
-                    Picker("歌单封面样式", selection: $settings.playlistCoverStyle) {
-                        ForEach(WellPlaylistCoverStyle.allCases) { style in
                             Text(style.displayName).tag(style)
                         }
                     }

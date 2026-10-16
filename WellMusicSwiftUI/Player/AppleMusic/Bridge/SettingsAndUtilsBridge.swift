@@ -294,6 +294,11 @@ final class SettingsManager: ObservableObject {
 
     /// 歌单/专辑详情页封面样式（2026-10-14 用户设计稿：默认新版居中留白，旧版全宽可切回）。
     @AppStorage("wellmusic.playlist.coverStyle") var playlistCoverStyle: WellPlaylistCoverStyle = .centered
+    /// ★ 2026-10-16 外观分组：歌单/专辑页版式（按页面拆分；歌单默认全宽/榜单风，专辑默认居中/标准风）
+    @AppStorage("wellmusic.appearance.playlistLayout") var appearancePlaylistLayout: String = "fullWidth"
+    @AppStorage("wellmusic.appearance.albumLayout") var appearanceAlbumLayout: String = "centered"
+    /// ★ 外观分组「播放器背景」三选：appleMusicBackdrop / flowingLight / blurredArtwork
+    @AppStorage("wellmusic.appleMusic.backgroundStyle") var appleMusicBackgroundStyle: String = "appleMusicBackdrop"
 
     // MARK: - Lyrics
 
