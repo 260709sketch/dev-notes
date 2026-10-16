@@ -410,6 +410,83 @@ struct AppleMusicLyricsView: View {
                 .interactionBackgroundVisualOverflow
         )
 
+        return lyricsLoadedGeometry(
+            blurFocusLyricID,
+            focusNeighborIDs,
+            focusEffectAnimation,
+            visualScaleFocusLyricID,
+            usesPseudoTiming,
+            appleMusicMotionProfile,
+            showsTranslations,
+            showsRomanizations,
+            showsAnnotations,
+            retainedCascadeLyricIDs,
+            reservesAnnotationSpace,
+            lineSpacing,
+            supplementalTextProfile,
+            title3Font,
+            calloutFont,
+            romanizationFontSize,
+            romanizationHeight,
+            translationHeight,
+            annotationHeight,
+            fallbackLyricStride,
+            lyricStride,
+            blurIntensity,
+            usesUniformBrowsingDimming,
+            bypassesPresetBlurForIncreasedContrast,
+            activeBlurIntensity,
+            distanceBlurScale,
+            hiddenInterfaceBlurScale,
+            activeHiddenInterfaceProgress,
+            dimAmount,
+            distanceDimAmount,
+            currentLineScale,
+            usesPresetGlow,
+            glowOverflow,
+            horizontalVisualOverflow
+        )
+    }
+
+    // ★ 2026-10-16：主态视图拆成独立 func（原巨型表达式让类型检查器超时）。
+    //   lets 以无标签参数透传，函数体内文本零改动。
+    @ViewBuilder
+    private func lyricsLoadedGeometry(
+        _ blurFocusLyricID: WMLyricLine.ID?,
+        _ focusNeighborIDs: Set<WMLyricLine.ID>,
+        _ focusEffectAnimation: Animation?,
+        _ visualScaleFocusLyricID: WMLyricLine.ID?,
+        _ usesPseudoTiming: Bool,
+        _ appleMusicMotionProfile: AppleMusicLyricsMotionProfile?,
+        _ showsTranslations: Bool,
+        _ showsRomanizations: Bool,
+        _ showsAnnotations: Bool,
+        _ retainedCascadeLyricIDs: Set<WMLyricLine.ID>,
+        _ reservesAnnotationSpace: Bool,
+        _ lineSpacing: CGFloat,
+        _ supplementalTextProfile: AppleMusicLyricsSupplementalTextProfile?,
+        _ title3Font: UIFont,
+        _ calloutFont: UIFont,
+        _ romanizationFontSize: CGFloat,
+        _ romanizationHeight: CGFloat,
+        _ translationHeight: CGFloat,
+        _ annotationHeight: CGFloat,
+        _ fallbackLyricStride: CGFloat,
+        _ lyricStride: CGFloat,
+        _ blurIntensity: CGFloat,
+        _ usesUniformBrowsingDimming: Bool,
+        _ bypassesPresetBlurForIncreasedContrast: Bool,
+        _ activeBlurIntensity: CGFloat,
+        _ distanceBlurScale: CGFloat,
+        _ hiddenInterfaceBlurScale: CGFloat,
+        _ activeHiddenInterfaceProgress: CGFloat,
+        _ dimAmount: CGFloat,
+        _ distanceDimAmount: CGFloat,
+        _ currentLineScale: CGFloat,
+        _ usesPresetGlow: Bool,
+        _ glowOverflow: CGFloat,
+        _ horizontalVisualOverflow: CGFloat
+    ) -> some View {
         GeometryReader { proxy in
             let focusPosition = lyricsFocusPosition(
                 for: proxy.size.height
