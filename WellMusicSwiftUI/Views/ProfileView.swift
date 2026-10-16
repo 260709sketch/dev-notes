@@ -1015,7 +1015,7 @@ struct NeteaseLikedSongsView: View {
         do {
             let imported = try await NeteaseMusicAPI.shared.playlistForImport(id: "\(uid)")
             if !imported.tracks.isEmpty {
-                tracks = imported.tracks
+                tracks = Array(imported.tracks.reversed())
                 if !imported.name.isEmpty { name = imported.name }
                 coverURL = imported.coverURL
                 // ★ 2026-10-16 第十轮问题6（实机复测仍灰心图）：主通道成功但封面为
@@ -1037,7 +1037,7 @@ struct NeteaseLikedSongsView: View {
         }
         // 兜底：红心 id 列表 + 分块详情（顺序不定，仅保证不空）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
-            tracks = songs
+            tracks = Array(songs.reversed())
             if (coverURL ?? "").isEmpty {
                 coverURL = await likedCoverFallback(uid: Int(uid) ?? 0)
             }

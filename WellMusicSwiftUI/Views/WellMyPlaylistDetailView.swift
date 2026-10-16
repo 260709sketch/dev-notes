@@ -291,6 +291,20 @@ struct WellMyPlaylistDetailView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // ★ 2026-10-16 第十一轮问题7：我的歌单长按也有菜单（此前只有专辑页有）
+        .contextMenu {
+            Button {
+                play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
+            } label: {
+                Label("播放", systemImage: "play.fill")
+            }
+            let isFav = AppState.shared.isFavorite(item)
+            Button {
+                AppState.shared.toggleFavorite(item)
+            } label: {
+                Label(isFav ? "取消收藏" : "收藏", systemImage: isFav ? "star.slash" : "star")
+            }
+        }
     }
 
     /// 平台行图标（用户 2026-10-15）：
