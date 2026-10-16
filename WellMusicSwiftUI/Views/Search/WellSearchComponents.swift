@@ -340,10 +340,12 @@ struct WellVipBadge: View {
 }
 
 /// 歌曲行（封面56 / 歌名+VIP / 歌手 / 红心·仅收藏显示 / 时长）。
+/// ★ 2026-10-16 问题8：当前播放行显示音条动画。
 struct WellSearchTrackRow: View {
     let item: MusicItem
 
     @ObservedObject private var appState = AppState.shared
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     var body: some View {
         HStack(spacing: 12) {
@@ -355,7 +357,7 @@ struct WellSearchTrackRow: View {
                 HStack(spacing: 6) {
                     Text(item.title)
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
                         .lineLimit(1)
                     if item.isVip {
                         WellVipBadge()
@@ -374,10 +376,14 @@ struct WellSearchTrackRow: View {
                     .foregroundStyle(Color(red: 0.98, green: 0.30, blue: 0.35))
             }
 
-            Text(item.durationText)
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
+            if nowPlaying.isNowPlaying(item) {
+                NowPlayingIndicator()
+            } else {
+                Text(item.durationText)
+                    .font(.system(size: 13).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            }
         }
         .frame(minHeight: 68)
         .contentShape(Rectangle())

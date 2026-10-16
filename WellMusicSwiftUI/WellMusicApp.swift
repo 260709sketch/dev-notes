@@ -76,6 +76,10 @@ struct WellMusicApp: App {
                     // 启动恢复上次播放（设置里可开关；默认关）。恢复列表与位置，
                     // 播放地址会重新解析（不会用过期的音源链接）。
                     PlayerCore.shared.restorePlaybackIfNeeded()
+                    // 启动时自动检查音源更新（2026-10-16 问题4；高级功能里可关）。
+                    // 稍等几秒，别跟首屏网络与音源激活抢通道。
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    await WellLXSourceStore.shared.runLaunchUpdateCheckIfNeeded()
                 }
         }
     }

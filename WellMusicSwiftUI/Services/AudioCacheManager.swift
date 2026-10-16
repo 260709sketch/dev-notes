@@ -64,11 +64,25 @@ final class AudioCacheManager {
 
     // MARK: - 命中
 
+    /// 小于该体积的「音频」基本是错误响应页（HTML/JSON），不是歌。
+    private static let minValidAudioBytes = 64_000
+
     /// 本地缓存文件（命中返回；同时刷新修改时间用于 LRU）。
+    ///
+    /// ★ 2026-10-16 用户问题7（云盘播不了）：早期版本曾把 HTTP 错误响应页
+    /// 当音频落盘（downloadTask 对非 2xx 不报错），此后每次点播都命中这个
+    /// 坏缓存、把 HTML 交给 mpv，静默失败且永不重新解析。命中侧加一道
+    /// 完整性兜底：过小的文件视为坏缓存，删除并返回 nil 让链路重新取链。
     func cachedFileURL(for item: MusicItem) -> URL? {
         guard Self.isEnabled else { return nil }
         let url = fileURL(for: item)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if size < Self.minValidAudioBytes {
+            // 坏缓存：删除，交给上层重新解析
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
         try? FileManager.default.setAttributes([.modificationDate: Date()],
                                                ofItemAtPath: url.path)
         return url
@@ -94,10 +108,18 @@ final class AudioCacheManager {
             request.setValue(value, forHTTPHeaderField: name)
         }
 
-        URLSession.shared.downloadTask(with: request) { tempURL, _, _ in
+        // ★ 2026-10-16 问题7：校验 HTTP 状态码与最小体积 —— downloadTask 对
+        //   非 2xx **不报错**，原先错误响应页会被原样落盘成 .audio 缓存，
+        //   之后每次命中坏缓存永不自愈（云盘歌首当其冲：直链时效短最易中招）。
+        URLSession.shared.downloadTask(with: request) { tempURL, response, _ in
             Task { @MainActor in
                 defer { self.inflight.remove(key) }
-                guard let tempURL else { return }
+                guard let tempURL,
+                      let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode),
+                      ((try? tempURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                          >= Self.minValidAudioBytes
+                else { return }
                 try? FileManager.default.removeItem(at: destination)
                 try? FileManager.default.moveItem(at: tempURL, to: destination)
                 // ★ 2026-10-16 问题15：容量检查改成**总预算**（歌曲 + 图片 + 歌手主页缓存合计），

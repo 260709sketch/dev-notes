@@ -51,6 +51,10 @@ enum CacheBudget {
     }
 
     /// 立即执行一次预算检查（用户改上限 / 冷启动 / 用户手动清理时用）。
+    ///
+    /// ★ 2026-10-16 用户截图：合计 4.05GB > 上限 4GB —— 淘汰只回到「正好等于上限」，
+    ///   检查间隔内新写入的文件立刻又把它顶过线。改成淘汰到 **95% 上限**留出缓冲，
+    ///   并让存储页进入时顺手触发一次检查（页面数字 = 检查后的口径）。
     static func enforce() async {
         guard !running else { return }
         running = true
@@ -58,17 +62,19 @@ enum CacheBudget {
 
         let limit = limitBytes
         guard limit > 0 else { return }
+        // 淘汰目标：留 5% 缓冲，避免检查间隔内的正常写入又立刻超限
+        let target = Int64(Double(limit) * 0.95)
 
         var entries = AudioCacheManager.shared.diskEntries()
         entries += WellImageCache.shared.diskEntries()
         entries += WellArtistHomeCache.shared.diskEntries()
 
         var total = entries.reduce(Int64(0)) { $0 + $1.size }
-        guard total > limit else { return }
+        guard total > target else { return }
 
         var evictedImageFiles = false
         for entry in entries.sorted(by: { $0.date < $1.date }) {
-            guard total > limit else { break }
+            guard total > target else { break }
             try? FileManager.default.removeItem(at: entry.url)
             total -= entry.size
             if entry.kind == .image { evictedImageFiles = true }

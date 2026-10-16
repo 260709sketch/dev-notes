@@ -8,13 +8,14 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var lxStore = WellLXSourceStore.shared
     /// 播放/暂停淡入淡出开关（2026-10-16 用户；未开启时不显示档位调节）
     @AppStorage(PlayerCore.fadeEnabledKey) private var fadeEnabled = false
     /// 淡入淡出时长（毫秒；300 / 500 / 1000 三档）
     /// ⚠️ 类型必须显式 `Double`：整数字面量 `500` 会被推断成 `AppStorage<Int>`，
     /// 与 `PlayFadeDuration(rawValue: Double)` 对不上（2026-10-16 CI 教训）。
     @AppStorage(PlayerCore.fadeDurationKey) private var fadeDurationMs: Double = 500
+    /// 自愿赞助（2026-10-16 用户问题8：展示收款码）
+    @State private var showingSupportSheet = false
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
@@ -51,6 +52,16 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // ★ 2026-10-16 用户问题8：账号分组上面加一个普通的「自愿赞助」设置项，
+                //   点击后从底部弹出窗口（收款码后续按用户要求再放）。
+                Section("支持") {
+                    Button {
+                        showingSupportSheet = true
+                    } label: {
+                        Text("自愿赞助")
+                    }
+                }
+
                 // ★ 2026-10-14 用户：账号分组放在播放分组上面
                 Section("账号") {
                     NavigationLink {
@@ -132,44 +143,16 @@ struct SettingsView: View {
                     }
                 }
 
-                // ★ 2026-10-16 用户问题12：「在我们设置新增高级功能，用收纳这些功能，
-                //   包含现有的内置音源」。
-                //   → 高级功能分组 = 内置音源开关 + 当前音源 + 自定义音源管理/状态/测试。
+                // ★ 2026-10-16 用户问题3：「高级功能不是分组是一个（入口）……
+                //   点击进去之后才是高级功能的设置，包括分组啥的」。
                 Section {
-                    HStack {
-                        Text("当前音源")
-                        Spacer()
-                        Text(lxStore.activeSource?.name ?? "未启用")
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    // ★ 2026-10-15 用户：内置音源（默认关）。
-                    //   开启后：未导入自定义音源、或全部音源解析失败时，
-                    //   用官方平台通道兜底播放并提示「使用内置音源播放」。
-                    Toggle("内置音源", isOn: Binding(
-                        get: { UserDefaults.standard.bool(forKey: MusicURLResolver.builtinSourceKey) },
-                        set: { UserDefaults.standard.set($0, forKey: MusicURLResolver.builtinSourceKey) }
-                    ))
                     NavigationLink {
-                        WellLXSourceManageView()
+                        WellAdvancedFeaturesView()
                     } label: {
-                        Label("自定义音源", systemImage: "square.stack.3d.up")
-                    }
-                    NavigationLink {
-                        WellLXSourceTestView()
-                    } label: {
-                        Label("音源测试", systemImage: "stethoscope")
-                    }
-                    NavigationLink {
-                        WellLXSourceStatusView()
-                    } label: {
-                        Label("音源状态", systemImage: "waveform.path.ecg")
+                        Label("高级功能", systemImage: "sparkles")
                     }
                 } header: {
                     Text("高级功能")
-                } footer: {
-                    Text("开启「内置音源」后，未导入自定义音源（或全部音源解析失败）时，自动通过第三方解析获取完整音频（含 320k 高码率）。受版权限制的个别歌曲解析不到时回退官方通道（可能仅试听 30 秒）——这类歌可导入自定义音源解决。")
-                        .font(.system(size: 12))
                 }
 
                 // ★ 2026-10-16 用户问题14/15：「设置新增存储分组，数据备份和存储移出来放到
@@ -304,6 +287,10 @@ struct SettingsView: View {
                     Button("完成") { dismiss() }
                 }
             }
+            // 自愿赞助：展示收款码（2026-10-16 问题8）
+            .sheet(isPresented: $showingSupportSheet) {
+                WellSupportSheet()
+            }
             // 有新版本时的详情弹窗（含发布页入口，点「前往下载」用系统浏览器打开）
             .sheet(isPresented: $showingUpdateSheet) {
                 if let info = updateInfo {
@@ -357,4 +344,39 @@ struct SettingsView: View {
 
 #Preview {
     SettingsView()
+}
+
+/// 赞助弹层（2026-10-16 问题8，用户后续口令：就一个普通设置项，底部弹出窗口，
+/// 二维码「后续我会叫你加」）—— 图片从 Assets 读 `SupportQRCode`，
+/// 没放图时只显示占位文字，不白屏。
+struct WellSupportSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                if let uiImage = UIImage(named: "SupportQRCode") {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 300, maxHeight: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                } else {
+                    Text("收款码待放置")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .padding()
+            .navigationTitle("自愿赞助")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
 }

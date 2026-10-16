@@ -280,17 +280,28 @@ final class NeteaseMusicAPI {
     private struct Song: Decodable {
         var id: Int?
         var name: String?
+        // weapi 通道用 ar/al；明文 api/song/detail 用 artists/album（2026-10-16 问题1：
+        // 只认 al/ar 时，明文兜底回来的歌「有回包但封面/歌手全 nil」，
+        // 发现页「我喜欢的音乐」卡因此永远落在默认灰心图上）。
         var ar: [Artist]?
+        var artists: [Artist]?
         var al: Album?
+        var album: Album?
         var dt: Int?
         /// 网易云付费标记：1 = VIP 歌曲、4 = 购买专辑、8 = 低音质免费。仅用于列表行 VIP 徽章。
         var fee: Int?
+        /// MV id（0 = 无 MV；2026-10-16 用户问题6）
+        var mv: Int?
         struct Artist: Decodable { var name: String? }
         struct Album: Decodable {
             var id: Int?
             var name: String?
             var picUrl: String?
         }
+
+        /// weapi 优先，明文兜底。
+        var effectiveAlbum: Album? { al ?? album }
+        var effectiveArtists: [Artist]? { (ar?.isEmpty == false) ? ar : artists }
     }
 
     private struct ArtistItem: Decodable {
@@ -812,11 +823,22 @@ final class NeteaseMusicAPI {
         if let first = resp.playlist?.tracks?.first?.al?.picUrl, !first.isEmpty {
             return first
         }
-        // 内嵌 tracks 为空：用 trackIds 首项补一次歌曲详情
-        if let firstId = resp.playlist?.trackIds?.first?.id,
-           let songs = try? await songDetails(ids: ["\(firstId)"]),
-           let cover = songs.first?.albumCoverURL, !cover.isEmpty {
-            return cover
+        // 内嵌 tracks 为空（大歌单服务端不内嵌，只给 trackIds）：用首项补一次歌曲详情。
+        // 2026-10-16 问题1：原实现只走 `songDetails`（weapi 优先）——部分登录态下 weapi
+        // 会被风控拒掉，整级失败后落到第③级「歌单默认灰心图」，用户看起来就是「没封面」。
+        // 这里补一条与 `playlistForImport` 补齐路径同款的**明文 v3** 通道（真机已验证可用）。
+        if let firstId = resp.playlist?.trackIds?.first?.id {
+            if let songs = try? await songDetails(ids: ["\(firstId)"]),
+               let cover = songs.first?.albumCoverURL, !cover.isEmpty {
+                return cover
+            }
+            if let detail: SongsDetailResponse = try? await Self.apiRequest(
+                "api/v3/song/detail",
+                params: ["c": "[{\"id\":\(firstId)}]", "csrf_token": ""],
+                type: SongsDetailResponse.self),
+               let pic = detail.songs?.first?.effectiveAlbum?.picUrl, !pic.isEmpty {
+                return pic
+            }
         }
         return resp.playlist?.coverImgUrl
     }
@@ -1973,8 +1995,21 @@ final class NeteaseMusicAPI {
         }
 
         // ① 云盘曲目：先走「按码率」的老端点 —— 云盘文件不带档位信息，命中率最高。
+        // ★ 2026-10-16 问题7：weapi（带设备指纹）优先 —— 云盘 id 是账号私有资源、
+        //   风控重点；裸明文会话 Cookie 被风控时服务端回 200 + url:null（不报错），
+        //   表面看就是「没数据」，三条通道全空后只剩一句 noData。weapi 失败再退明文。
         if item.isCloudDisk {
             for br in quality.neteaseBitrateLadder {
+                if let resp: URLResponse = try? await Self.weapiRequest(
+                    "/api/song/enhance/player/url",
+                    params: ["id": idValue, "ids": idString, "br": br],
+                    type: URLResponse.self) {
+                    if resp.isRiskControl {
+                        riskMessage = resp.message
+                    } else if let address = extractURL(from: resp) {
+                        return address
+                    }
+                }
                 if let resp: URLResponse = try? await Self.apiRequest(
                     "api/song/enhance/player/url",
                     params: ["id": idValue, "ids": idString, "br": br, "csrf_token": ""],
@@ -2067,17 +2102,18 @@ final class NeteaseMusicAPI {
 
     private static func mapSong(_ song: Song) -> MusicItem? {
         guard let id = song.id, let name = song.name else { return nil }
-        let artistNames = song.ar?.compactMap { $0.name }.joined(separator: "/")
+        let artistNames = song.effectiveArtists?.compactMap { $0.name }.joined(separator: "/")
         return MusicItem(
             source: .netease,
             title: name,
             artist: artistNames?.isEmpty == false ? artistNames : "未知歌手",
-            album: song.al?.name,
-            albumCoverURL: neteaseCover(song.al?.picUrl, size: 500),
+            album: song.effectiveAlbum?.name,
+            albumCoverURL: neteaseCover(song.effectiveAlbum?.picUrl, size: 500),
             duration: TimeInterval(song.dt ?? 0) / 1000,
             isVip: (song.fee ?? 0) == 1 || (song.fee ?? 0) == 4,
             neteaseId: "\(id)",
-            platformAlbumId: song.al?.id.map { "\($0)" }
+            platformAlbumId: song.effectiveAlbum?.id.map { "\($0)" },
+            neteaseMvId: (song.mv ?? 0) > 0 ? "\(song.mv!)" : nil
         )
     }
 

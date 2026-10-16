@@ -55,7 +55,14 @@ struct WellStorageView: View {
             }
         }
         .navigationTitle(mode.title)
-        .task { await refreshCacheSizes() }
+        .task {
+            // ★ 2026-10-16 用户截图（合计 4.05GB > 上限 4GB）：进页先触发一次预算
+            //   检查（淘汰到 95% 上限），再读数 —— 页面数字 = 检查后的口径。
+            if mode == .cache {
+                await CacheBudget.enforce()
+            }
+            await refreshCacheSizes()
+        }
         .sheet(isPresented: $showingExporter) {
             if let url = exportingURL {
                 ShareSheetView(items: [url])

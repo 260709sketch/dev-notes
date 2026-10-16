@@ -264,6 +264,11 @@ final class QQMusicAPI {
                 item.qqMediaMid = mediaMid
             }
             if !albumMid.isEmpty { item.qqAlbumMid = albumMid; item.platformAlbumId = albumMid }
+            // MV vid（2026-10-16 用户问题6）
+            if let mvDict = dict["mv"] as? [String: Any],
+               let vid = mvDict["vid"] as? String, !vid.isEmpty {
+                item.qqMvVid = vid
+            }
             return item
         }
     }
@@ -300,6 +305,13 @@ final class QQMusicAPI {
         )
         if !mediaMid.isEmpty { item.qqMediaMid = mediaMid }
         if !albumMid.isEmpty { item.qqAlbumMid = albumMid; item.platformAlbumId = albumMid }
+        // MV vid（2026-10-16 用户问题6；mv 可能是字典或直接字符串 vid）
+        if let mvDict = dict["mv"] as? [String: Any],
+           let vid = mvDict["vid"] as? String, !vid.isEmpty {
+            item.qqMvVid = vid
+        } else if let vid = dict["vid"] as? String, !vid.isEmpty {
+            item.qqMvVid = vid
+        }
         return item
     }
 
@@ -616,6 +628,93 @@ final class QQMusicAPI {
             list = (try? await searchItems(keyword, searchType: 2, limit: limit, page: 1, key: "item_album")) ?? []
         }
         return list.compactMap { parseMobileAlbum($0) }
+    }
+
+    // MARK: - MV（2026-10-16 用户问题6：接网易云+QQ MV 接口）
+
+    /// MV 搜索（searchType 4 = MV，结果在 `req.data.body.item_mv`）。
+    /// 主通道移动端签名接口；失败回退老 web 接口（t=4）。
+    func searchMVs(keyword: String, limit: Int = 30) async throws -> [WellMVSummary] {
+        var list: [[String: Any]] = []
+        list = (try? await searchItems(keyword, searchType: 4, limit: limit, page: 1, key: "item_mv")) ?? []
+        if list.isEmpty {
+            list = await webSearchItems(keyword, type: 4, limit: limit, key: "item_mv")
+        }
+        return list.compactMap { dict in
+            let vid = (dict["vid"] as? String) ?? (dict["v_id"] as? String) ?? ""
+            guard !vid.isEmpty else { return nil }
+            let name = (dict["vname"] as? String) ?? (dict["title"] as? String)
+                ?? (dict["mvname"] as? String) ?? "MV"
+            let cover = (dict["cover_pic"] as? String) ?? (dict["pic"] as? String) ?? (dict["vid_pic"] as? String)
+            let singers = (dict["singers"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+            let duration = TimeInterval(Self.intValue(dict["interval"]) ?? 0)
+            return WellMVSummary(
+                id: vid,
+                name: name,
+                coverURL: (cover?.isEmpty == false) ? cover : nil,
+                artistName: singers.isEmpty ? nil : singers.joined(separator: "/"),
+                duration: duration,
+                playCount: Self.intValue(dict["playcnt"]) ?? Self.intValue(dict["play_count"]) ?? 0,
+                platform: .qq
+            )
+        }
+    }
+
+    /// MV 播放地址（`music.stream.MvUrlProxy / GetMvUrls`，与参考实现
+    /// LX-Y `tx/mv.js` 同构）。`mp4[]` 数组**下标越靠后清晰度越高**，
+    /// 从尾往前找 `code == 0` 且 `freeflow_url` 里有 https 直链的一条。
+    func mvURL(vid: String) async throws -> String? {
+        let payload: OrderedJSON = .object([
+            ("comm", mobileComm()),
+            ("req_0", .object([
+                ("module", .string("music.stream.MvUrlProxy")),
+                ("method", .string("GetMvUrls")),
+                ("param", .object([
+                    ("vids", .array([.string(vid)])),
+                    ("request_typet", .int(10003)),
+                    ("request_type", .int(10003)),
+                    ("guid", .string(Self.mvGuid())),
+                    ("videoformat", .int(1)),
+                    ("format", .int(265)),
+                    ("dolby", .int(1)),
+                    ("use_new_domain", .int(1)),
+                    ("use_ipv6", .int(1)),
+                ])),
+            ])),
+        ])
+        guard let json = try await signedRequest(payload) else { return nil }
+        return Self.extractMvURL(from: json, vid: vid)
+    }
+
+    /// 从 GetMvUrls 回包里择优取直链（`req_0.data[vid].mp4[]` 尾部优先；
+    /// 兼容 `data` 为数组 / 字典两种形态）。
+    private static func extractMvURL(from json: [String: Any], vid: String) -> String? {
+        guard let req0 = json["req_0"] as? [String: Any],
+              let data = req0["data"] else { return nil }
+        var entry: Any?
+        if let dict = data as? [String: Any] {
+            entry = dict[vid]
+        } else if let arr = data as? [[String: Any]] {
+            entry = arr.first { ($0["vid"] as? String) == vid }
+        }
+        guard let entryDict = entry as? [String: Any],
+              let mp4 = entryDict["mp4"] as? [[String: Any]] else { return nil }
+        for item in mp4.reversed() {
+            guard (item["code"] as? Int) == 0 || item["code"] == nil,
+                  let urls = item["freeflow_url"] as? [String] else { continue }
+            if let https = urls.first(where: { $0.hasPrefix("https://") }) { return https }
+            if let any = urls.first { return any }
+        }
+        return nil
+    }
+
+    /// MV 模块用的 guid（稳定随机即可，服务端只要求非空）。
+    private static func mvGuid() -> String {
+        let saved = UserDefaults.standard.string(forKey: "wellmusic.qq.mvGuid")
+        if let saved { return saved }
+        let guid = String(format: "%08x%08x", arc4random(), arc4random())
+        UserDefaults.standard.set(guid, forKey: "wellmusic.qq.mvGuid")
+        return guid
     }
 
     // MARK: - 歌单搜索（client_music_search_songlist）

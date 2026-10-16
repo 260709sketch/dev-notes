@@ -105,8 +105,15 @@ final class SearchService {
     /// MV 搜索（当前仅网易通道提供关键词搜索；其余平台返回空）。
     private func mvs(_ key: String, platform: WellSearchPlatform, limit: Int) async -> WellSearchResult {
         var out = WellSearchResult()
-        guard platform == .netease else { return out }
-        out.mvs = (try? await NeteaseMusicAPI.shared.searchMVs(keyword: key, limit: limit)) ?? []
+        switch platform {
+        case .netease:
+            out.mvs = (try? await NeteaseMusicAPI.shared.searchMVs(keyword: key, limit: limit)) ?? []
+        case .qq:
+            // ★ 2026-10-16 用户问题6：QQ MV 搜索接通（searchType 4 = MV）
+            out.mvs = (try? await QQMusicAPI.shared.searchMVs(keyword: key, limit: limit)) ?? []
+        default:
+            break
+        }
         return out
     }
 

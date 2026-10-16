@@ -63,6 +63,11 @@ struct MusicItem: Identifiable, Codable, Hashable {
     /// （见 `MusicURLResolver` 的云盘分支），否则表现为「云盘歌曲不能播放」。
     var isCloudDisk: Bool = false
 
+    /// 网易云 MV id（歌曲对象顶层 `mv` 字段，0 = 无 MV；2026-10-16 用户问题6）。
+    var neteaseMvId: String?
+    /// QQ 音乐 MV vid（歌曲对象 `mv.vid`；2026-10-16 用户问题6）。
+    var qqMvVid: String?
+
     /// 通用 id：不同平台用各自主 id
     var platformId: String? {
         switch source {
@@ -97,7 +102,9 @@ struct MusicItem: Identifiable, Codable, Hashable {
          platformAlbumId: String? = nil,
          playURL: String? = nil,
          localFilePath: String? = nil,
-         isCloudDisk: Bool = false) {
+         isCloudDisk: Bool = false,
+         neteaseMvId: String? = nil,
+         qqMvVid: String? = nil) {
         self.source = source
         self.title = title
         self.artist = artist
@@ -115,6 +122,8 @@ struct MusicItem: Identifiable, Codable, Hashable {
         self.playURL = playURL
         self.localFilePath = localFilePath
         self.isCloudDisk = isCloudDisk
+        self.neteaseMvId = neteaseMvId
+        self.qqMvVid = qqMvVid
     }
 
     // MARK: Codable
@@ -129,6 +138,7 @@ struct MusicItem: Identifiable, Codable, Hashable {
         case source, title, artist, album, albumCoverURL, duration, isVip
         case qqSongMid, qqMediaMid, qqAlbumMid, neteaseId, kugouHash, kuwoRid
         case platformAlbumId, playURL, localFilePath, isCloudDisk
+        case neteaseMvId, qqMvVid
     }
 
     init(from decoder: Decoder) throws {
@@ -150,6 +160,8 @@ struct MusicItem: Identifiable, Codable, Hashable {
         playURL = try c.decodeIfPresent(String.self, forKey: .playURL)
         localFilePath = try c.decodeIfPresent(String.self, forKey: .localFilePath)
         isCloudDisk = try c.decodeIfPresent(Bool.self, forKey: .isCloudDisk) ?? false
+        neteaseMvId = try c.decodeIfPresent(String.self, forKey: .neteaseMvId)
+        qqMvVid = try c.decodeIfPresent(String.self, forKey: .qqMvVid)
     }
 
     /// 判断是否为同一首歌（只比 id + 平台，与原版 isSameMediaItem 一致）

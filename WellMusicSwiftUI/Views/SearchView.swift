@@ -323,9 +323,9 @@ struct SearchView: View {
                     Image(systemName: "film")
                         .font(.system(size: 40, weight: .light))
                         .foregroundStyle(.tertiary)
-                    Text(model.platform == .netease
+                    Text(model.platform == .netease || model.platform == .qq
                          ? "没有找到相关 MV"
-                         : "QQ / 酷狗暂不支持 MV 搜索\n请切换到「网易云」再搜")
+                         : "该平台暂不支持 MV 搜索\n请切换到「网易云」或「QQ」再搜")
                         .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -602,7 +602,14 @@ struct WellMVPlayerView: View {
             // ★ 2026-10-15 用户：MV 起播记入「近期播放」MV 段（纯本地）
             AppState.shared.recordMVPlay(mv)
             // mvURL 返回 String?，try? 会再包一层 → ?? nil 展平
-            let link = (try? await NeteaseMusicAPI.shared.mvURL(id: mv.id)) ?? nil
+            // ★ 2026-10-16 问题6：按平台分流取 MV 地址（QQ 走 MvUrlProxy，其余走网易云）
+            let link: String?
+            switch mv.platform {
+            case .qq:
+                link = (try? await QQMusicAPI.shared.mvURL(vid: mv.id)) ?? nil
+            default:
+                link = (try? await NeteaseMusicAPI.shared.mvURL(id: mv.id)) ?? nil
+            }
             guard let link, let url = URL(string: link) else {
                 failed = true
                 return

@@ -134,6 +134,8 @@ struct WellLXUpdateNotice: Identifiable, Equatable {
     var log: String
     /// 更新链接（脚本未提供时为空）
     var updateUrl: String
+    /// 应用侧检查到新版本时附带的远端脚本全文（非 nil = 弹窗里可一键更新）
+    var inAppUpdateScript: String? = nil
 
     var hasLink: Bool { !updateUrl.isEmpty }
 }
@@ -146,6 +148,18 @@ enum WellLXUpdateCheckResult: Equatable {
     case failed
     case upToDate
     case newer(version: String, script: String)
+}
+
+/// 音源自动更新设置键。
+/// ⚠️ 必须放**文件级**：`WellLXSourceStore` 是 `@MainActor` 类，其 static 成员
+/// 同样被主 actor 隔离 —— 设置页 Binding 闭包是非隔离上下文，直接读
+/// `WellLXSourceStore.autoCheckUpdateKey` 会复现 2026-10-16 CI 的
+/// 「call to main actor-isolated static property」编译错误。
+enum WellLXSourceUpdateConfig {
+    /// 启动时自动检查音源更新（总开关，默认开）
+    static let autoCheckUpdateKey = "well.lx.autoCheckUpdate"
+    /// 发现新版本时自动覆盖本地脚本（默认关 = 弹窗让用户确认）
+    static let autoApplyUpdateKey = "well.lx.autoApplyUpdate"
 }
 
 /// 自定义音源（LX 脚本）仓库：负责导入、持久化、激活、测试与取链日志。
@@ -470,6 +484,75 @@ final class WellLXSourceStore: ObservableObject {
 
     func dismissUpdateAlert() {
         pendingUpdateAlert = nil
+    }
+
+    // MARK: 启动自动检查更新（2026-10-16 用户问题4）
+
+    /// 参考实现里更新提示由**脚本自行检查**（init 后查 srcUrl 再 `lx.send('showUpdateAlert')`），
+    /// 但很多老音源没写这段自检 —— 用户原话：「音源检查更新是启动应用的时候检查，
+    /// 不是手动检查的」+「自动更新替换本地包括关闭」。
+    /// → 应用启动后逐源比对 `@version`：开了「自动更新」静默覆盖本地脚本，
+    ///   否则弹窗提示（可在弹窗里一键更新）；两个开关都可在高级功能里关。
+
+    /// 启动时自动检查音源更新（总开关，默认开）
+    static let autoCheckUpdateKey = WellLXSourceUpdateConfig.autoCheckUpdateKey
+    /// 发现新版本时自动覆盖本地脚本（默认关 = 弹窗让用户确认）
+    static let autoApplyUpdateKey = WellLXSourceUpdateConfig.autoApplyUpdateKey
+
+    private var didLaunchUpdateCheck = false
+
+    /// 应用启动后调用一次：逐源在线检查更新。
+    func runLaunchUpdateCheckIfNeeded() async {
+        guard !didLaunchUpdateCheck else { return }
+        didLaunchUpdateCheck = true
+        let d = UserDefaults.standard
+        guard (d.object(forKey: WellLXSourceUpdateConfig.autoCheckUpdateKey) as? Bool) ?? true else { return }
+        guard !sources.isEmpty else { return }
+
+        for source in sources {
+            // 用户已关掉这个音源的更新提示 → 跳过，不打扰
+            guard allowsUpdateAlert(for: source.id) else { continue }
+            let result = await checkUpdate(for: source)
+            guard case .newer(let version, let script) = result else { continue }
+
+            if (d.object(forKey: WellLXSourceUpdateConfig.autoApplyUpdateKey) as? Bool) ?? false {
+                do {
+                    try await applyUpdate(script, to: source)
+                    appendLog(WellLXRequestLog(
+                        trackTitle: "音源自动更新",
+                        trackArtist: source.name,
+                        requestedQuality: "—",
+                        actualQuality: "—",
+                        url: "—",
+                        duration: 0,
+                        success: true,
+                        message: "\(source.name) 已自动更新到 v\(version)"
+                    ))
+                } catch {
+                    appendLog(WellLXRequestLog(
+                        trackTitle: "音源自动更新",
+                        trackArtist: source.name,
+                        requestedQuality: "—",
+                        actualQuality: "—",
+                        url: "—",
+                        duration: 0,
+                        success: false,
+                        message: "\(source.name) 自动更新失败：\((error as? LocalizedError)?.errorDescription ?? "\(error)")"
+                    ))
+                }
+            } else {
+                let srcURL = scriptText(for: source).flatMap { WellLXProtocol.extractSrcUrl(from: $0) } ?? ""
+                pendingUpdateAlert = WellLXUpdateNotice(
+                    sourceID: source.id,
+                    sourceName: source.name,
+                    log: "发现新版本 v\(version)（当前 v\(source.version)）",
+                    updateUrl: srcURL,
+                    inAppUpdateScript: script
+                )
+                // 一次只弹一条，后续源等用户处理完再说
+                return
+            }
+        }
     }
 
     /// 手动检查更新：拉取音源脚本自己声明的 `srcUrl`，比对头部 `@version`。

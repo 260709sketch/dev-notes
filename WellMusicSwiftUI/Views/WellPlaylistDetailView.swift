@@ -700,8 +700,10 @@ struct NativeNavigationBarBackground: ViewModifier {
 // MARK: - 详情歌曲行
 
 /// 详情页歌曲行（46 封面 + 歌名/歌手 + 右侧时长，行高 64，无分隔线）。
+/// ★ 2026-10-16 问题8：当前播放行右侧显示 Apple Music 风格音条动画。
 struct WellDetailSongRow: View {
     let item: MusicItem
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     var body: some View {
         HStack(spacing: 12) {
@@ -712,7 +714,7 @@ struct WellDetailSongRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Text(item.artist ?? "未知歌手")
                     .font(.system(size: 12))
@@ -721,9 +723,13 @@ struct WellDetailSongRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(item.durationText)
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(.tertiary)
+            if nowPlaying.isNowPlaying(item) {
+                NowPlayingIndicator()
+            } else {
+                Text(item.durationText)
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(height: 64)
         .contentShape(Rectangle())

@@ -290,6 +290,17 @@ struct WellLXUpdateAlertPresenter: View {
                 ),
                 presenting: store.pendingUpdateAlert
             ) { notice in
+                // 应用侧检查到的新版本：弹窗里直接一键更新（2026-10-16 问题4）
+                if let script = notice.inAppUpdateScript, let id = notice.sourceID {
+                    Button("立即更新") {
+                        Task {
+                            if let target = store.sources.first(where: { $0.id == id }) {
+                                try? await store.applyUpdate(script, to: target)
+                            }
+                            store.dismissUpdateAlert()
+                        }
+                    }
+                }
                 if notice.hasLink, let url = URL(string: notice.updateUrl) {
                     Button("打开更新链接") {
                         UIApplication.shared.open(url)

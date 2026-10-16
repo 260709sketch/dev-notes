@@ -445,28 +445,20 @@ struct ProfileView: View {
             if recentLikes.isEmpty {
                 emptyRow("还没有喜欢的歌曲")
             } else {
-                // ⚠️ 用内嵌 `List` 是为了 `swipeActions`（左滑取消收藏）——
-                //    SwiftUI 的左滑菜单只在 List 里生效；`scrollDisabled` 关掉它自己的
-                //    滚动（外层 ScrollView 负责滚），高度按行数精确给定。
-                List {
+                // ★ 2026-10-16 用户问题2「我的页上滑掉帧严重」：
+                //   原实现用**内嵌 List**（为了 swipeActions）—— List 自带一套
+                //   UICollectionView，嵌在 ScrollView 的 LazyVStack 里每屏都要
+                //   参与布局协商，是本页掉帧的主嫌疑。换成轻量自绘左滑行
+                //   （DragGesture + reveal 按钮），滚动路径上不再有嵌套集合视图。
+                VStack(spacing: 0) {
                     ForEach(Array(recentLikes.enumerated()), id: \.offset) { index, track in
-                        likeRow(track, index: index)
-                            .listRowInsets(EdgeInsets())
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    appState.toggleFavorite(track)
-                                } label: {
-                                    Label("取消收藏", systemImage: "heart.slash")
-                                }
-                            }
+                        WellLikeSwipeRow {
+                            likeRow(track, index: index)
+                        } onDelete: {
+                            appState.toggleFavorite(track)
+                        }
                     }
                 }
-                .listStyle(.plain)
-                .scrollDisabled(true)
-                .scrollContentBackground(.hidden)
-                .frame(height: CGFloat(recentLikes.count) * 64)
             }
         }
     }
@@ -656,6 +648,71 @@ struct ProfileView: View {
             // 进页面顺手校验一次票据：过期自动回到未登录态
             if session.isLoggedIn { await session.refreshAccount() }
         }
+    }
+}
+
+// MARK: - 轻量左滑行（最近喜欢「取消收藏」用）
+
+/// 自绘左滑行：DragGesture 横滑露出「取消收藏」，点按钮执行。
+/// 只在横向位移明显大于纵向时才接管手势，不影响外层竖向滚动。
+/// （2026-10-16 问题2：替代嵌套 List —— List 嵌在 ScrollView 的 LazyVStack 里
+///   自带一套 UICollectionView，是本页掉帧主嫌疑。）
+private struct WellLikeSwipeRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    let onDelete: () -> Void
+
+    @State private var offsetX: CGFloat = 0
+    @State private var revealed = false
+
+    private let revealWidth: CGFloat = 88
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                    revealed = false
+                    offsetX = 0
+                }
+                onDelete()
+            } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "heart.slash.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("取消收藏")
+                        .font(.system(size: 10.5, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .frame(width: revealWidth - 14)
+                .frame(maxHeight: .infinity)
+                .background(Color(red: 0.92, green: 0.28, blue: 0.32),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 16)
+            .opacity(offsetX < -6 ? 1 : 0)
+
+            content()
+                .background(AppTheme.background)
+                .offset(x: offsetX)
+                .gesture(drag)
+        }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                let t = value.translation
+                // 纵向位移更大 → 让给外层滚动
+                guard abs(t.width) > abs(t.height) else { return }
+                let base: CGFloat = revealed ? -revealWidth : 0
+                offsetX = min(0, max(-revealWidth - 30, base + t.width))
+            }
+            .onEnded { _ in
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+                    revealed = offsetX < -revealWidth / 2
+                    offsetX = revealed ? -revealWidth : 0
+                }
+            }
     }
 }
 

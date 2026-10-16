@@ -195,6 +195,8 @@ struct WellSearchSongRow: View {
     let item: MusicItem
 
     @ObservedObject private var appState = AppState.shared
+    /// ★ 2026-10-16 问题8：当前播放行显示音条动画（低频订阅，见 NowPlayingTracker）
+    @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
     var body: some View {
         HStack(spacing: 12) {
@@ -205,7 +207,7 @@ struct WellSearchSongRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Text(item.artist ?? "未知歌手")
                     .font(.footnote)
@@ -220,10 +222,14 @@ struct WellSearchSongRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Color(red: 0.98, green: 0.30, blue: 0.35))
                 }
-                Text(item.durationText)
-                    .font(.system(size: 11.5).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 36, alignment: .trailing)
+                if nowPlaying.isNowPlaying(item) {
+                    NowPlayingIndicator()
+                } else {
+                    Text(item.durationText)
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 36, alignment: .trailing)
+                }
             }
         }
         .padding(.horizontal, 10)

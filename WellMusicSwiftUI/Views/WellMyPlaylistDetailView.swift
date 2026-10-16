@@ -275,7 +275,8 @@ struct WellMyPlaylistDetailView: View {
                 Spacer(minLength: 8)
 
                 if isPlaying {
-                    NowPlayingBars(color: Self.accent)
+                    // ★ 2026-10-16 问题8：换成全局共享的 Apple Music 风格动画音条
+                    NowPlayingIndicator(color: Self.accent)
                 } else {
                     Text(Self.durationText(item.duration))
                         .font(.system(size: 13))
@@ -381,25 +382,6 @@ struct WellMyPlaylistDetailView: View {
 ///
 /// 刻意**不做动画**：参考实现是 `CADisplayLink` 驱动的三帧循环，而本页是长列表 ——
 /// 每行挂一个动画时钟会把「滑动掉帧」的老毛病带回来（详见项目里的高频轮询铁律）。
-private struct NowPlayingBars: View {
-    let color: Color
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 2) {
-            bar(0.55)
-            bar(1.0)
-            bar(0.75)
-        }
-        .frame(height: 13, alignment: .bottom)
-    }
-
-    private func bar(_ ratio: CGFloat) -> some View {
-        Capsule()
-            .fill(color)
-            .frame(width: 3, height: 13 * ratio)
-    }
-}
-
 /// 「我的歌单」里一个歌单的来源。
 enum WellMyPlaylistSource {
     /// 本地自建歌单（`AppState.playlists`）

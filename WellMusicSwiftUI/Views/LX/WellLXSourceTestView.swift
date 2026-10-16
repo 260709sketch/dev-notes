@@ -229,6 +229,72 @@ final class WellLXSourceTestModel: ObservableObject {
         capabilityRevision &+= 1
     }
 
+    /// 单个平台的定位结果（测试歌曲 + 取链元数据）。
+    private struct ProbeSong {
+        var songmid: String
+        var title: String
+        var artist: String
+        var mediaMid: String?
+        var copyrightId: String?
+        var origin: String
+    }
+
+    /// 定位测试歌曲。
+    ///
+    /// ★ 2026-10-16 用户问题5：「源测试没用，点击测试没反应/全部搜索为空」。
+    /// 根因：标准 LX 音源脚本的 request 处理器只实现了 `musicUrl / pic / lyric`，
+    /// **没有 `musicSearch`** —— 原实现第一步就向脚本要搜索，必然全平台空手而归。
+    /// 新流程：
+    ///   ① 先按 lx 协议试 `musicSearch`（个别音源支持就白赚）；
+    ///   ② 不支持/为空 → **用应用内各平台曲库搜索**定位真实歌曲（kw/kg/tx/wy
+    ///      都有现成通道），再拿真实 id 让音源逐档取链 —— 这才是要测的东西
+    ///      「音源能不能给各平台取到链接」。
+    private func probeSong(platform: Platform, keyword: String) async -> ProbeSong? {
+        // ① lx 协议搜索（尽力而为）
+        if let songs = try? await WellLXEngine.shared.search(
+            keyword: keyword, source: platform.id, page: 1, pageSize: 1,
+            timeout: TimeInterval(min(testTimeoutSeconds, 10))
+        ), let song = songs.first {
+            return ProbeSong(
+                songmid: song.songmid, title: song.title, artist: song.artist,
+                mediaMid: song.mediaMid, copyrightId: song.copyrightId,
+                origin: "音源搜索")
+        }
+
+        // ② 应用内曲库搜索（真实 id）
+        let item: MusicItem?
+        switch platform.id {
+        case "wy":
+            item = (try? await NeteaseMusicAPI.shared.search(keyword, limit: 5))?.first
+        case "tx":
+            item = (try? await QQMusicAPI.shared.search(keyword, limit: 5))?.first
+        case "kg":
+            item = (try? await KugouMusicAPI.shared.search(keyword, limit: 5))?.first
+        case "kw":
+            item = (try? await KuwoMusicAPI.shared.search(keyword, limit: 5))?.first
+        default:
+            item = nil
+        }
+        guard let item else { return nil }
+        let songmid: String?
+        let mediaMid: String?
+        switch platform.id {
+        case "wy": songmid = item.neteaseId; mediaMid = nil
+        case "tx": songmid = item.qqSongMid; mediaMid = item.qqMediaMid
+        case "kg": songmid = item.kugouHash; mediaMid = nil
+        case "kw": songmid = item.kuwoRid; mediaMid = nil
+        default: songmid = nil; mediaMid = nil
+        }
+        guard let songmid, !songmid.isEmpty else { return nil }
+        return ProbeSong(
+            songmid: songmid,
+            title: item.title,
+            artist: item.artist ?? "",
+            mediaMid: (mediaMid?.isEmpty == false) ? mediaMid : nil,
+            copyrightId: nil,
+            origin: "应用内曲库")
+    }
+
     private func test(platform: Platform, keyword: String) async -> WellLXPlatformTestResult {
         var result = WellLXPlatformTestResult(id: platform.id, platformName: platform.name, keyword: keyword)
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -240,30 +306,16 @@ final class WellLXSourceTestModel: ObservableObject {
         let started = Date()
         append("[\(platform.name)] 开始测试，关键词「\(trimmed)」")
 
-        let songs: [WellLXSongResult]
-        do {
-            songs = try await WellLXEngine.shared.search(
-                keyword: trimmed,
-                source: platform.id,
-                page: 1,
-                pageSize: 1,
-                timeout: TimeInterval(testTimeoutSeconds)
-            )
-        } catch {
+        guard let song = await probeSong(platform: platform, keyword: trimmed) else {
             result.state = .failed
-            result.message = "搜索失败：\(errorText(error))"
-            append("[\(platform.name)] \(result.message)")
-            return result
-        }
-
-        guard let song = songs.first else {
-            result.state = .failed
-            result.message = "搜索结果为空，该平台可能无此歌曲版权"
+            result.message = platform.id == "mg"
+                ? "无法定位测试歌曲（应用内无咪咕曲库通道，且当前音源不支持搜索）"
+                : "无法定位测试歌曲（音源与应用内曲库均未命中，换个关键词试试）"
             append("[\(platform.name)] \(result.message)")
             return result
         }
         result.searchedSong = "\(song.title) - \(song.artist)"
-        append("[\(platform.name)] 命中：\(result.searchedSong)")
+        append("[\(platform.name)] 测试歌曲（\(song.origin)）：\(result.searchedSong)")
 
         let songmid = "\(platform.id)_\(song.songmid)"
         var details: [String] = []
