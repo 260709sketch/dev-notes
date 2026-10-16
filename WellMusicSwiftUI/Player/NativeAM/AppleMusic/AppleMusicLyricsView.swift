@@ -219,11 +219,7 @@ struct AppleMusicLyricsView: View {
     // ★ 2026-10-16：从 lyricsContent 拆出（原巨型 @ViewBuilder 让类型检查器超时）
     @ViewBuilder
     private var lyricsEmptyState: some View {
-
-        if lyrics.isEmpty {
             if let errorMessage {
-                // ★ 2026-10-16：原 ContentUnavailableView 泛型 init 让类型检查器超时，
-                //   改为等价手写（视觉一致）。
                 VStack(spacing: 10) {
                     Image(systemName: "quote.bubble")
                         .font(.system(size: 34))
@@ -238,10 +234,7 @@ struct AppleMusicLyricsView: View {
                 .onTapGesture {
                     onInterfaceInteraction?()
                 }
-    }
-
-    @ViewBuilder
-    private var lyricsLoadedState: some View {
+            } else {
                 ProgressView("ui.lyrics.loading")
                     .tint(.white)
                     .foregroundStyle(.white)
@@ -251,7 +244,10 @@ struct AppleMusicLyricsView: View {
                         onInterfaceInteraction?()
                     }
             }
-        } else {
+    }
+
+    @ViewBuilder
+    private var lyricsLoadedState: some View {
             let blurFocusLyricID =
                 visualCascadeFocusLyricID
                 ?? highlightedLyricID
@@ -3169,9 +3165,9 @@ struct AppleMusicLyricsView: View {
         isBrowsingFocus: Bool
     ) -> String {
         switch (isPlaybackLine, isBrowsingFocus) {
-        case (true, true): "当前浏览焦点"
-        case (true, false): "正在播放"
-        case (false, true): "浏览焦点"
+        case (true, true): "current_browse_focus"
+        case (true, false): "now_playing"
+        case (false, true): "browse_focus"
         case (false, false): ""
         }
     }
@@ -3563,13 +3559,13 @@ struct AppleMusicLyricsView: View {
             settings.lyricsLongPressToShare && allowsShare
         ) {
         case (true, true):
-            "点按跳转 · 长按分享"
+            "tap_seek_long_press_share"
         case (true, false):
-            "点按跳转"
+            "tap_seek_hint"
         case (false, true):
-            "长按分享歌词"
+            "long_press_share_hint"
         case (false, false):
-            "歌词交互已禁用"
+            "interaction_disabled_hint"
         }
     }
 
@@ -3659,7 +3655,6 @@ struct AppleMusicLyricsView: View {
             }
         }
     }
-}
 
 private enum AppleMusicLyricsDisplayItem: Identifiable {
     case interlude(LyricInterlude)

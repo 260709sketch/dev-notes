@@ -1675,11 +1675,21 @@ private struct AppleMusicPlayerBackground: View {
             // 的直接元凶。现在页面已回退为轻量页（403KB、无 WebGL），恢复「点开
             // 歌词才创建」：打开播放器时根本不存在 WebView，从根上杜绝卡死。
             if usesAMLL && showsLyrics {
-                AMLLWebLyricsView(useAppleMusicSettings: true)
+                // ★ 2026-10-16：歌词引擎二选一（播放器调整 → 歌词引擎）
+                if settings.appleMusicLyricsEngine == "native" {
+                    WellNativeLyricsHost(
+                        topPadding: amllTopPadding,
+                        bottomPadding: amllBottomPadding,
+                        horizontalPadding: amllHorizontalPadding
+                    )
                     .ignoresSafeArea()
-                    .padding(.top, amllTopPadding)
-                    .padding(.bottom, amllBottomPadding)
-                    .padding(.horizontal, amllHorizontalPadding)
+                } else {
+                    AMLLWebLyricsView(useAppleMusicSettings: true)
+                        .ignoresSafeArea()
+                        .padding(.top, amllTopPadding)
+                        .padding(.bottom, amllBottomPadding)
+                        .padding(.horizontal, amllHorizontalPadding)
+                }
             }
         }
     }

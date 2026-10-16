@@ -52,6 +52,8 @@ final class PlayerStore {
 @MainActor
 @Observable
 final class AppSettings {
+    static let shared = AppSettings()
+
     var lyrics = LyricsPrefs()
     var lyricsInterlude = LyricsInterludePreferences()
     var appleMusicLyrics = AppleMusicLyricsPreferences()

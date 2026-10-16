@@ -26,6 +26,7 @@ struct PlayerAdjustSheet: View {
                 backgroundSection
                 topBarSection
                 amllLyricSection
+                lyricEngineSection
                 lyricAlignmentSection
                 lowPerfSection
                 amllFontSection
@@ -256,6 +257,24 @@ struct PlayerAdjustSheet: View {
     }
 
     // MARK: - 歌词对齐（2026-10-16 用户问题11：iOS 原生分段控制）
+
+    /// ★ 歌词引擎切换（2026-10-16）：现版 AMLL / 原生 Apple Music（MeloX 移植）
+    private var lyricEngineSection: some View {
+        Section {
+            Picker("歌词引擎", selection: Binding(
+                get: { settings.appleMusicLyricsEngine },
+                set: { settings.appleMusicLyricsEngine = $0 }
+            )) {
+                Text("现版").tag("amll")
+                Text("Apple Music 原生").tag("native")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        } footer: {
+            Text("现版 = WebView 歌词（AMLL）；Apple Music 原生 = 移植 MeloX 的原生渲染（逐字/间奏点/弹簧动画）。")
+                .font(.system(size: 12))
+        }
+    }
 
     private var lyricAlignmentSection: some View {
         Section {
