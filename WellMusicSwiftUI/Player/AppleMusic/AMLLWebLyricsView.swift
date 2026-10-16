@@ -10,6 +10,8 @@ struct AMLLWebLyricsView: View {
     @EnvironmentObject private var player: PlayerService
     @EnvironmentObject private var settings: SettingsManager
     @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
+    /// ★ 第十一轮问题6：歌词对齐（0 居中 / 1 左 / 2 右；播放器调整页分段控制）
+    @AppStorage("wellmusic.appleMusic.lyricAlignment") private var lyricAlignment: Int = 0
 
     /// 是否使用 Apple Music 独立的 AMLL 设置（和沉浸模式v2分开）
     var useAppleMusicSettings: Bool = false
@@ -40,7 +42,8 @@ struct AMLLWebLyricsView: View {
                 showsTranslation: settings.showLyricsTranslation,
                 showsRomaji: settings.lyricsAnnotation == .romaji,
                 fontSize: currentFontSize,
-                fontWeight: currentFontWeight
+                fontWeight: currentFontWeight,
+                textAlignment: lyricAlignment
             )
             .frame(width: width, height: geometry.size.height)
             .mask(
@@ -110,11 +113,24 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     let showsRomaji: Bool
     let fontSize: CGFloat
     let fontWeight: Int
+    /// ★ 第十一轮问题6：歌词对齐（0 居中 / 1 左 / 2 右；设置里的分段控制）
+    var textAlignment: Int = 0
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        // ★ 问题6：注入对齐 CSS（变量由 updateUIView 实时改；页面重绘的行也跟随）
+        let alignScript = """
+        (function(){
+          var st = document.createElement('style');
+          st.textContent = ':root{--wellLyricAlign:center}[class*="lyricLine"]{text-align:var(--wellLyricAlign)!important}'
+            + '[class*="lyricMainLine"]{justify-content:inherit}';
+          document.documentElement.appendChild(st);
+        })();
+        """
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: alignScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         // WebKit paces page animation near 60 fps by default (requestAnimationFrame included). The lyrics should follow the
         // display, 120 Hz on ProMotion phones, so that pacing feature is switched off. This goes through WebKit's internal
         // feature switch (not public API), so every step is checked and the outcome is logged.
@@ -161,6 +177,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     func updateUIView(_ web: WKWebView, context: Context) {
         context.coordinator.update(lyrics: lyrics, showsTranslation: showsTranslation, showsRomaji: showsRomaji,
                                    fontSize: fontSize, fontWeight: fontWeight)
+        // ★ 问题6：对齐实时生效（值不变时不重复下 JS）
+        context.coordinator.applyAlignment(textAlignment, web: web)
     }
 
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
@@ -175,6 +193,23 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var pending: (lyrics: ParsedLyrics, translation: Bool, romaji: Bool, signature: Int)?
         private var fontSize: CGFloat = 30
         private var fontWeight: Int = 600
+        /// 上次下发的歌词对齐（-1 = 未下发过）
+        private var lastAlignment: Int = -1
+
+        /// ★ 问题6：把对齐值写进页面 CSS 变量（值不变不重复下发）。
+        func applyAlignment(_ alignment: Int, web: WKWebView) {
+            guard lastAlignment != alignment else { return }
+            lastAlignment = alignment
+            let css: String
+            switch alignment {
+            case 1: css = "left"
+            case 2: css = "right"
+            default: css = "center"
+            }
+            web.evaluateJavaScript(
+                "document.documentElement.style.setProperty('--wellLyricAlign','\(css)')",
+                completionHandler: nil)
+        }
         private var timer: Timer?
         /// 订阅 `PlayerCore.isScrubbing`，用于拖动收尾的精确重锚。
         private var scrubObserver: AnyCancellable?

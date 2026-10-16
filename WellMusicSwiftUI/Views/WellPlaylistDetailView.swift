@@ -115,8 +115,10 @@ struct WellPlaylistDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        WellScrollTopReporter(space: "well-playlist-scroll").id("well-page-top")
-                        heroCover
+                        // ★ 2026-10-16 第十一轮问题1：去掉新增的 0 高锚点行（用户报
+                        //   「顶部多了很多空白、可以一直往回滑」——把锚点挂到封面本体上，
+                        //   内容区不再有任何新增视图）
+                        heroCover.id("well-page-top")
                         titleBlock
                         controlsRow
                         descriptionBlock
