@@ -57,6 +57,8 @@ struct WellMyPlaylistDetailView: View {
     /// 创建者头像（用户 2026-10-16 问题2：标题下要显示网易云创建者的头像 + 昵称）。
     /// 有值 → 平台行用头像替代平台 App 图标；nil → 沿用平台图标。
     @State private var creatorAvatarURL: String?
+    /// ★ 2026-10-16 用户：网易云歌单 id（云端移除歌曲用；非 .netease 源为 nil）
+    private var neteasePID: String? = nil
 
     @State private var isLoading: Bool
     @State private var failed = false
@@ -86,7 +88,8 @@ struct WellMyPlaylistDetailView: View {
             _creatorName = State(initialValue: Self.platformDisplayName(playlist))
             _trackTotal = State(initialValue: playlist.tracks.count)
             _isLoading = State(initialValue: false)
-        case .netease(_, let name, let cover, let creator):
+        case .netease(let id, let name, let cover, let creator):
+            self.neteasePID = id
             _tracks = State(initialValue: [])
             _title = State(initialValue: name)
             _coverURL = State(initialValue: cover)
@@ -305,6 +308,37 @@ struct WellMyPlaylistDetailView: View {
                 play(queue: tracks, startIndex: tracks.firstIndex(of: item) ?? 0)
             } label: {
                 Label("播放", systemImage: "play.fill")
+            }
+            // ★ 2026-10-16 用户：下一首播放
+            Button {
+                PlayerCore.shared.playNext(item)
+                ToastCenter.shared.show("已添加下一首播放")
+            } label: {
+                Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+            // ★ 2026-10-16 用户：特殊歌单（自动导入的网易云歌单 / 我喜欢）移除要**云端同步**
+            if item.source == .netease {
+                if let pid = neteasePID, let trackId = Int(item.neteaseId ?? "") {
+                    Button(role: .destructive) {
+                        Task {
+                            let ok = await NeteaseMusicAPI.shared.removeTracks(fromPlaylist: pid, trackIds: [trackId])
+                            if ok {
+                                withAnimation { tracks.removeAll { $0.keyOf == item.keyOf } }
+                            }
+                            ToastCenter.shared.show(ok ? "已移除（已同步网易云）" : "移除失败，请重试")
+                        }
+                    } label: {
+                        Label("从歌单移除", systemImage: "minus.circle")
+                    }
+                } else if title.contains("我喜欢") {
+                    Button(role: .destructive) {
+                        AppState.shared.toggleFavorite(item)
+                        withAnimation { tracks.removeAll { $0.keyOf == item.keyOf } }
+                        ToastCenter.shared.show("已取消喜欢（已同步网易云）")
+                    } label: {
+                        Label("取消喜欢", systemImage: "heart.slash")
+                    }
+                }
             }
             let isFav = AppState.shared.isFavorite(item)
             Button {

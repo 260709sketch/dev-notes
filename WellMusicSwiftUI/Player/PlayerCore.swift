@@ -692,6 +692,15 @@ final class PlayerCore: NSObject, ObservableObject {
         queue.move(fromOffsets: from, toOffset: to)
     }
 
+    /// 「下一首播放」（2026-10-16 用户）：插到当前曲目后面；无当前曲目则追加队尾。
+    func playNext(_ item: MusicItem) {
+        if let idx = currentIndex {
+            queue.insert(item, at: min(idx + 1, queue.count))
+        } else {
+            queue.append(item)
+        }
+    }
+
     // MARK: 0.05s tick（位置 / 时长 / 渲染态）
 
     private var tickTimer: Timer?

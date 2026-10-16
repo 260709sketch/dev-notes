@@ -521,6 +521,14 @@ struct WellPlaylistDetailView: View {
             Label("播放", systemImage: "play.fill")
         }
 
+        // ★ 2026-10-16 用户：所有歌单页面菜单加「下一首播放」
+        Button {
+            PlayerCore.shared.playNext(item)
+            ToastCenter.shared.show("已添加下一首播放")
+        } label: {
+            Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+        }
+
         let isFav = appState.isFavorite(item)
         Button {
             appState.toggleFavorite(item)

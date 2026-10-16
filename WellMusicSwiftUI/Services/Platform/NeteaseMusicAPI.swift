@@ -2117,6 +2117,25 @@ final class NeteaseMusicAPI {
         )
     }
 
+    /// 从网易云歌单移除歌曲（weapi `/api/playlist/manipulate/tracks`，op=del）。
+    /// ★ 2026-10-16 用户：自动导入的网易云歌单，移除要云端同步。
+    func removeTracks(fromPlaylist pid: String, trackIds: [Int]) async -> Bool {
+        guard !pid.isEmpty, !trackIds.isEmpty else { return false }
+        let idsJson = "[" + trackIds.map(String.init).joined(separator: ",") + "]"
+        let params: [String: Any] = [
+            "op": "del",
+            "pid": pid,
+            "trackIds": idsJson,
+            "tracks": idsJson,
+        ]
+        let resp = try? await Self.weapiRequest("/api/playlist/manipulate/tracks",
+                                                params: params,
+                                                type: ManipulateResult.self)
+        return resp?.code == 200
+    }
+
+    private struct ManipulateResult: Decodable { var code: Int? }
+
     private static func artistSubtitle(musicSize: Int?, albumSize: Int?) -> String? {
         // ★ 2026-10-16 第十一轮问题9（用户追加）：热门歌手卡副标题整体移除
         //   （「N 首单曲」「N 张专辑」都不要）
