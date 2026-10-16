@@ -376,7 +376,7 @@ struct WellSearchTrackRow: View {
                     .foregroundStyle(Color(red: 0.98, green: 0.30, blue: 0.35))
             }
 
-            if nowPlaying.isNowPlaying(item) {
+            if nowPlaying.isCurrent(item) {
                 NowPlayingIndicator()
             } else {
                 Text(item.durationText)

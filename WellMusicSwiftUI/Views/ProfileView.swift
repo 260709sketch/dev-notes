@@ -517,7 +517,7 @@ struct ProfileView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                if nowPlaying.isNowPlaying(track) {
+                if nowPlaying.isCurrent(track) {
                     NowPlayingIndicator()
                 }
             }

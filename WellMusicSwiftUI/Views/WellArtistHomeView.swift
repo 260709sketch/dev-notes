@@ -199,7 +199,7 @@ struct WellArtistHomeView: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             // ★ 2026-10-16 问题8：当前播放行显示音条动画
-            if nowPlaying.isNowPlaying(item) {
+            if nowPlaying.isCurrent(item) {
                 NowPlayingIndicator()
             } else {
                 Spacer(minLength: 0)

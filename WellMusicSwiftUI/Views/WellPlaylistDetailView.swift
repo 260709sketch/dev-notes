@@ -501,7 +501,7 @@ struct WellPlaylistDetailView: View {
             }
 
             // ★ 2026-10-16 问题8：当前播放行显示音条动画（发现页歌单/专辑/歌手通用）
-            if nowPlaying.isNowPlaying(item) {
+            if nowPlaying.isCurrent(item) {
                 NowPlayingIndicator()
             } else {
                 Text(item.durationText)
@@ -741,7 +741,7 @@ struct WellDetailSongRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if nowPlaying.isNowPlaying(item) {
+            if nowPlaying.isCurrent(item) {
                 NowPlayingIndicator()
             } else {
                 Text(item.durationText)

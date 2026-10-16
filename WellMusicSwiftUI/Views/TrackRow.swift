@@ -22,7 +22,7 @@ struct TrackRow: View {
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            if nowPlaying.isNowPlaying(item) {
+            if nowPlaying.isCurrent(item) {
                 NowPlayingIndicator()
             } else {
                 Image(systemName: "chevron.right")

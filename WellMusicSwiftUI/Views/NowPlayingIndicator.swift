@@ -44,9 +44,13 @@ final class NowPlayingTracker: ObservableObject {
 }
 
 /// Apple Music / Spotify 风格的三根音条动画（仅在**当前播放行**渲染，体积 16×14pt）。
+///
+/// ★ 2026-10-16 第十轮问题15：暂停后音条不再直接消失（改为静止状态）——
+///   行侧「时长/音条」位不会变空；恢复播放继续动。
 struct NowPlayingIndicator: View {
     var color: Color = .accentColor
 
+    @ObservedObject private var tracker = NowPlayingTracker.shared
     @State private var animating = false
 
     var body: some View {
@@ -63,7 +67,7 @@ struct NowPlayingIndicator: View {
         Capsule()
             .fill(color)
             .frame(width: 3, height: 14 * ratio)
-            .scaleEffect(y: animating ? 0.4 : 1.0, anchor: .bottom)
+            .scaleEffect(y: (animating && tracker.isPlaying) ? 0.4 : 1.0, anchor: .bottom)
             .animation(
                 .easeInOut(duration: 0.45)
                     .repeatForever(autoreverses: true)
