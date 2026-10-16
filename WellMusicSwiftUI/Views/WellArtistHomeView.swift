@@ -58,12 +58,13 @@ struct WellArtistHomeView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            WellScrollTopReporter(space: "well-artist-scroll").id("well-page-top")
                             artistHeader
                             hotSongsSection
                             albumsSection
                             Color.clear.frame(height: 170)
                         }
+                        .modifier(WellScrollOffsetReporter(space: "well-artist-scroll"))
+                        .id("well-page-top")
                         .padding(.top, 6)
                     }
                     .coordinateSpace(name: "well-artist-scroll")

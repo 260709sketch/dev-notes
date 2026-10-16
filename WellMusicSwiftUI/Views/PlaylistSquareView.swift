@@ -41,7 +41,6 @@ struct PlaylistSquareView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    WellScrollTopReporter(space: "well-square-scroll").id("well-page-top")
                     categoryBar
 
                 if failed && playlists.isEmpty && toplists.isEmpty {
@@ -57,6 +56,8 @@ struct PlaylistSquareView: View {
 
                 Color.clear.frame(height: 170)
             }
+            .modifier(WellScrollOffsetReporter(space: "well-square-scroll"))
+            .id("well-page-top")
             .padding(.top, 8)
             }
             .coordinateSpace(name: "well-square-scroll")

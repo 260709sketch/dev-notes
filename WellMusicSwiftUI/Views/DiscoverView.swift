@@ -36,6 +36,7 @@ struct DiscoverView: View {
 
     var body: some View {
         // ⚠️ 不带 NavigationStack：导航容器由 MainTabView 的 page() 统一提供（11:10 架构）。
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {                if let errorMessage {
                     errorState(errorMessage)
@@ -52,7 +53,13 @@ struct DiscoverView: View {
                 // 底栏留白：迷你播放器 + Tab 胶囊
                 Color.clear.frame(height: 170)
             }
+            .modifier(WellScrollOffsetReporter(space: "well-discover-scroll"))
+            .id("well-page-top")
             .padding(.top, 8)
+        }
+        .coordinateSpace(name: "well-discover-scroll")
+        .modifier(WellScrollToTopPageModifier(
+            space: "well-discover-scroll", topID: "well-page-top", proxy: proxy))
         }
         // ★ 第十一轮问题4：发现页滑动隐藏右侧滚动条
         .scrollIndicators(.hidden)

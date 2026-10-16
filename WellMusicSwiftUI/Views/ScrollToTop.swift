@@ -13,24 +13,22 @@ struct WellScrollOffsetKey: PreferenceKey {
     }
 }
 
-/// 滚动偏移上报锚点（放在 ScrollView 内容**最顶部**）。
-/// ⚠️ 2026-10-16 第十轮修复：探针必须挂在**内容**上 —— 之前直接挂在 ScrollView
-/// 自身（background GeometryReader），测到的是不动的容器 → 偏移恒 0 → 浮钮永不出现
-/// （用户原话「一键回顶的按钮在哪里」）。
-struct WellScrollTopReporter: View {
+/// ⚠️ 2026-10-16 第十一轮二修：上一版把探针做成「内容里的 0 高行」——
+/// LazyVStack 滚远后会**卸载**该行 → 偏好值消失归零 → 浮钮刚出现就被隐藏
+/// （用户：「回顶按钮我没看到」）。正确做法 = `background(GeometryReader)`
+/// 打在**整个内容根容器**上（根容器始终在、随滚动移动）。
+struct WellScrollOffsetReporter: ViewModifier {
     let space: String
 
-    var body: some View {
-        Color.clear
-            .frame(height: 0)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: WellScrollOffsetKey.self,
-                        value: -geo.frame(in: .named(space)).minY
-                    )
-                }
-            )
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: WellScrollOffsetKey.self,
+                    value: -geo.frame(in: .named(space)).minY
+                )
+            }
+        )
     }
 }
 

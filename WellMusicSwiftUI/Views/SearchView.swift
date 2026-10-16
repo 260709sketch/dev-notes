@@ -171,7 +171,6 @@ struct SearchView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    WellScrollTopReporter(space: "well-search-scroll").id("well-page-top")
                     // ★ 2026-10-15 用户：新版搜索框常驻可见（旧版走系统 searchable）
                     if !legacySearchUI {
                         searchBar
@@ -198,6 +197,8 @@ struct SearchView: View {
                     // 底栏（迷你播放器 52 + 间距 8 + 胶囊栏 64 + 距底 42 = 166）留白。
                     Color.clear.frame(height: 170)
                 }
+                .modifier(WellScrollOffsetReporter(space: "well-search-scroll"))
+                .id("well-page-top")
             }
             .coordinateSpace(name: "well-search-scroll")
             .modifier(WellScrollToTopPageModifier(
