@@ -356,7 +356,12 @@ final class WellLXSourceTestModel: ObservableObject {
                 guard !url.isEmpty else { throw WellLXEngineError.invalidResponse }
                 let used = Date().timeIntervalSince(qualityStarted)
                 if maxQuality == nil { maxQuality = actual }
-                details.append("\(wellLXQualityLabel(quality)) ✓ \(String(format: "%.1fs", used))")
+                // ★ 2026-10-16 用户：不足 1 秒的档位显示毫秒（本地秒回的源
+                //   原来会显示「0.0s」，看起来像没测）
+                let usedText = used >= 1
+                    ? String(format: "%.1fs", used)
+                    : String(format: "%.0fms", used * 1000)
+                details.append("\(wellLXQualityLabel(quality)) ✓ \(usedText)")
                 if showDowngrades, actual != quality {
                     downgrades.append("\(wellLXQualityLabel(quality))→\(wellLXQualityLabel(actual))")
                 }
