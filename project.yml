@@ -22,7 +22,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - WellMusicSwiftUI
+      # ⚠️ 2026-10-16：原生 Apple Music 播放器移植批次（Player/NativeAM）暂挂出编译，
+      #   待 shim（PlayerStore/AppSettings 适配层）完成后回归。删除本 excludes 即启用。
+      - path: WellMusicSwiftUI
+        excludes:
+          - "Player/NativeAM/**"
     dependencies:
       - package: MPVKit
         product: MPVKit
