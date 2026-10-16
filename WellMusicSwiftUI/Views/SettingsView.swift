@@ -17,21 +17,6 @@ struct SettingsView: View {
     /// 自愿赞助（2026-10-16 用户问题8：展示收款码）
     @State private var showingSupportSheet = false
 
-    /// 优先搜索平台绑定（安全形状：getter 显式 return、setter 具名参数 ——
-    /// 2026-10-16 CI 教训：Picker 内联 Binding 的简写形式在 wholemodule 下
-    /// 会推不出参数类型）
-    private var preferredPlatformBinding: Binding<WellSearchPlatform> {
-        Binding(
-            get: {
-                let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
-                    ?? WellSearchPlatform.netease.rawValue
-                return WellSearchPlatform(rawValue: raw) ?? WellSearchPlatform.netease
-            },
-            set: { newValue in
-                UserDefaults.standard.set(newValue.rawValue, forKey: "wellmusic.search.preferredPlatform")
-            }
-        )
-    }
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
@@ -218,21 +203,6 @@ struct SettingsView: View {
                     Text("存储")
                 } footer: {
                     Text("「缓存上限」是歌曲、图片、歌手主页三类缓存的合计上限，超出后自动清理最久未使用的内容。")
-                        .font(.system(size: 12))
-                }
-
-                Section {
-                    // ★ 2026-10-16 第十轮问题16：优先搜索平台（搜索页默认用它）
-                    Picker("优先搜索平台", selection: preferredPlatformBinding) {
-                        ForEach(WellSearchPlatform.allCases) { platform in
-                            Text(platform.rawValue).tag(platform)
-                        }
-                    }
-                    .pickerStyle(.navigationLink)
-                } header: {
-                    Text("搜索")
-                } footer: {
-                    Text("搜索页打开时默认选中该平台，可随时在搜索页切换。")
                         .font(.system(size: 12))
                 }
 

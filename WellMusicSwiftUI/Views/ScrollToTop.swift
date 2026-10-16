@@ -33,11 +33,13 @@ struct WellScrollOffsetReporter: ViewModifier {
 }
 
 /// dock 栏上方的「回到顶部」浮钮：
-/// * 上滑超过 400pt 且继续上滑 → 浮现；下滑 → 消失；接近顶部 → 消失；
+/// * 向下滚过 80pt 以上 → 浮现；往回滑 → 消失；接近顶部 → 消失；
 /// * 浮现后 3.5 秒不点击自动消失（用户指定）。
 struct WellScrollToTopModifier: ViewModifier {
-    /// 浮钮距页面底部的距离（2026-10-16 用户：弄到迷你播放器上面一点）
-    var bottomInset: CGFloat = 152
+    /// ★ 2026-10-16 三修：dock（迷你播放器 52 + 间距 8 + 胶囊 64 + 距底 42 ≈ 166pt）
+    ///   **会盖住页面 overlay** —— 上一版 152pt 的浮钮正好藏在 dock 后面（用户
+    ///   「回顶按钮在哪」）。抬到 108+80=188，确保整颗浮钮露在 dock 上方。
+    var bottomInset: CGFloat = 190
     let onScrollOffset: (CGFloat) -> Void
 
     @State private var visible = false
@@ -79,27 +81,19 @@ struct WellScrollToTopModifier: ViewModifier {
     }
 
     private func updateVisibility(offset: CGFloat) {
-        let previous = deltaBox.lastOffset
-        deltaBox.lastOffset = offset
-        let delta = offset - previous
-        if offset < 120 {
+        // ★★ 2026-10-16 四修（用户两次追问「回顶按钮在哪」）：改成**持久显示** ——
+        //   只要页面滚动超过 200pt，浮钮常驻；回到顶部附近才收起。
+        //   不再依赖滑动方向 / 3.5 秒计时（用户停止滚动后按钮就消失，
+        //   正是「找不到」的元凶）。
+        if offset > 200 {
+            if !visible { show() }
+        } else {
             if visible { hide() }
-            return
-        }
-        // 只有「显示/隐藏」真正翻转时才写 @State；其余帧零状态写入
-        if delta > 0.5, !visible {
-            show()
-        } else if delta < -0.5, visible {
-            hide()
-        } else if visible {
-            // 持续上滑时顺延 3.5 秒倒计时
-            scheduleHide()
         }
     }
 
     private func show() {
         visible = true
-        scheduleHide()
     }
 
     private func hide() {

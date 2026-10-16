@@ -5,15 +5,9 @@ import AVKit
 
 @MainActor
 final class WellSearchViewModel: ObservableObject {
-    /// 初始平台（2026-10-16 第十一轮按用户要求回退：只保留「创建/进页时读一次
-    /// 优先平台」；不要在每次 onAppear 重写用户在当前页面手选的平台）
-    @Published var platform: WellSearchPlatform = WellSearchViewModel.preferredPlatform
-    /// 设置 → 优先搜索平台（三大平台之一；rawValue 即展示名）
-    static var preferredPlatform: WellSearchPlatform {
-        let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
-            ?? WellSearchPlatform.netease.rawValue
-        return WellSearchPlatform(rawValue: raw) ?? .netease
-    }
+    /// 初始平台（2026-10-16 第十一轮末：按用户要求「优先搜索平台」整体删除，
+    /// 固定默认网易云，页面内切换照旧）
+    @Published var platform: WellSearchPlatform = .netease
     @Published var type: WellSearchType = .all
     @Published var result = WellSearchResult()
     @Published var isLoading = false

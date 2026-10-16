@@ -150,6 +150,8 @@ struct WellMyPlaylistDetailView: View {
     // MARK: 主体
 
     private var content: some View {
+        // ★ 2026-10-16 四修：我的歌单页也装上回顶浮钮（用户截图页就是这里）
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 header
@@ -170,6 +172,12 @@ struct WellMyPlaylistDetailView: View {
                 //   挡住 —— 底部统一加 170pt 留白（与其他列表页一致）
                 Color.clear.frame(height: 170)
             }
+            .modifier(WellScrollOffsetReporter(space: "well-myplaylist-scroll"))
+            .id("well-page-top")
+        }
+        .coordinateSpace(name: "well-myplaylist-scroll")
+        .modifier(WellScrollToTopPageModifier(
+            space: "well-myplaylist-scroll", topID: "well-page-top", proxy: proxy))
         }
         // 裸 ScrollView 不自带底色，深色下会露出白底（工程里踩过这个「白边」）
         .background(AppTheme.background)

@@ -498,6 +498,16 @@ final class WellLXScriptRunner: @unchecked Sendable {
             contentType = "application/x-www-form-urlencoded"
         } else if let body = options["body"] as? String {
             httpBody = body.data(using: .utf8)
+        } else if let bodyObject = options["body"] as? [String: Any] {
+            // ★★ 2026-10-16 实源修复（酷狗截图：source/rid/level 全空报错）：
+            //   大量源用**对象 body** 发 POST（`body: {source, rid, level}`），
+            //   旧实现只认字符串/form → 请求体为空 → 服务端 class-validator
+            //   三个字段全 undefined（「must be a string」连串）。这里序列化成 JSON。
+            httpBody = try? JSONSerialization.data(withJSONObject: bodyObject, options: [])
+            contentType = "application/json"
+        } else if let bodyArray = options["body"] as? [Any] {
+            httpBody = try? JSONSerialization.data(withJSONObject: bodyArray, options: [])
+            contentType = "application/json"
         } else if let formData = options["formData"] as? [String: Any],
                   let binary = lxString(formData["binary"]) {
             httpBody = Data(base64Encoded: binary)

@@ -671,7 +671,11 @@ final class WellLXSourceStore: ObservableObject {
                 let url = rawURL.replacingOccurrences(of: " ", with: "%20")
                 guard !url.isEmpty else { continue }
                 let isFallback = source.id != active.id
-                appendLog(WellLXRequestLog(
+                // ★ 2026-10-16 用户：音源状态「大小」列一直「—」——成功链接异步
+                //   HEAD 取 Content-Length 回填（失败再 Range GET 兜底）
+                let playbackHeaders = WellLXPlaybackHeaders.requestHeaders(
+                    for: url, platform: WellLXPlaybackHeaders.platformKey(for: item))
+                let logEntry = WellLXRequestLog(
                     trackTitle: item.title,
                     trackArtist: item.artist ?? "",
                     requestedQuality: targetQuality,
@@ -680,15 +684,15 @@ final class WellLXSourceStore: ObservableObject {
                     duration: Date().timeIntervalSince(started),
                     success: true,
                     message: isFallback ? "自动换源：\(source.name)" : nil
-                ))
+                )
+                appendLog(logEntry)
+                probeFileSizeAndPatch(logID: logEntry.id, urlString: url, headers: playbackHeaders)
                 return WellLXPlayback(
                     url: url,
                     quality: actualQuality,
                     sourceName: source.name,
                     isFallback: isFallback,
-                    headers: WellLXPlaybackHeaders.requestHeaders(
-                        for: url,
-                        platform: WellLXPlaybackHeaders.platformKey(for: item))
+                    headers: playbackHeaders
                 )
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -714,6 +718,46 @@ final class WellLXSourceStore: ObservableObject {
         requestLogs.insert(entry, at: 0)
         if requestLogs.count > logLimit {
             requestLogs.removeLast(requestLogs.count - logLimit)
+        }
+    }
+
+    /// 回填日志「大小」：HEAD 拿 Content-Length；HEAD 不可用（无长度/被拒）时
+    /// 用 `Range: bytes=0-0` 的 GET 从 Content-Range 里取总大小。
+    private func probeFileSizeAndPatch(logID: UUID, urlString: String, headers: [String: String]) {
+        guard let url = URL(string: urlString) else { return }
+        Task { [weak self] in
+            var size: Int64 = 0
+            var head = URLRequest(url: url)
+            head.httpMethod = "HEAD"
+            head.timeoutInterval = 8
+            for (k, v) in headers { head.setValue(v, forHTTPHeaderField: k) }
+            if let (_, response) = try? await URLSession.shared.data(for: head),
+               let http = response as? HTTPURLResponse {
+                if http.expectedContentLength > 0 {
+                    size = http.expectedContentLength
+                } else if let len = http.value(forHTTPHeaderField: "Content-Length"), let n = Int64(len) {
+                    size = n
+                }
+            }
+            if size <= 0 {
+                var range = URLRequest(url: url)
+                range.httpMethod = "GET"
+                range.timeoutInterval = 8
+                range.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+                for (k, v) in headers { range.setValue(v, forHTTPHeaderField: k) }
+                if let (_, response) = try? await URLSession.shared.data(for: range),
+                   let http = response as? HTTPURLResponse,
+                   let contentRange = http.value(forHTTPHeaderField: "Content-Range"),
+                   let total = contentRange.split(separator: "/").last, let n = Int64(total) {
+                    size = n
+                }
+            }
+            guard size > 0, let self else { return }
+            await MainActor.run {
+                if let idx = self.requestLogs.firstIndex(where: { $0.id == logID }) {
+                    self.requestLogs[idx].fileSize = size
+                }
+            }
         }
     }
 
