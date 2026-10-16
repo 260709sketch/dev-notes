@@ -361,13 +361,16 @@ struct DiscoverView: View {
 
         var started = false
         do {
-            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 3)
+            // ★ 2026-10-16 对齐 Kumone：流式开播（先拉一批），进漫游会话后
+            //   播放器会在剩余将尽时自动补货，漫游可无限续。
+            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 1)
             guard !tracks.isEmpty else {
                 ToastCenter.shared.show("私人漫游暂时没有推荐")
                 return
             }
             started = true
             PlayerCore.shared.play(queue: tracks, startIndex: 0)
+            PlayerCore.shared.beginFMSession()
             ToastCenter.shared.show("已开启私人漫游")
         } catch {
             if !started { ToastCenter.shared.show("私人漫游加载失败") }
@@ -392,23 +395,22 @@ struct DiscoverView: View {
         }
         let likedId = "\(NeteaseSession.shared.account?.userId ?? 0)"
 
-        // 种子 ①（参考实现同款）：每日推荐第一首
-        var seedId: String? = dailySongs.first?.neteaseId
+        // 种子（★ 2026-10-16 对齐 Kumone）：**从「我喜欢」随机一首**；
+        // 拉不到再退日推第一首 / 老接口前 10 条兜底。
+        var seedId: String?
         var likedTracks: [MusicItem] = []
-
-        // 种子 ② 兜底：我喜欢歌单随机一首（完整列表，见历史说明）
+        if let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId),
+           !imported.tracks.isEmpty {
+            likedTracks = imported.tracks
+            seedId = likedTracks.randomElement()?.neteaseId
+        }
         if seedId == nil {
-            if let imported = try? await NeteaseMusicAPI.shared.playlistForImport(id: likedId),
-               !imported.tracks.isEmpty {
-                likedTracks = imported.tracks
-                seedId = likedTracks.randomElement()?.neteaseId
-            }
-            // 再兜底一次：极端情况下（大歌单 trackIds 缺失）退回老接口，至少拿到前 10 条
-            if likedTracks.isEmpty,
-               let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
-                likedTracks = list
-                seedId = list.randomElement()?.neteaseId
-            }
+            seedId = dailySongs.first?.neteaseId
+        }
+        if likedTracks.isEmpty,
+           let list = try? await NeteaseMusicAPI.shared.playlistTracks(id: likedId), !list.isEmpty {
+            likedTracks = list
+            seedId = seedId ?? list.randomElement()?.neteaseId
         }
 
         // ① 种子 + 口味范围 → intelligenceList（服务端推相似串）

@@ -294,10 +294,49 @@ final class PlayerCore: NSObject, ObservableObject {
     // MARK: 对外控制
 
     func play(queue newQueue: [MusicItem], startIndex: Int = 0) {
+        // 普通播放 = 退出漫游会话（★ 2026-10-16）
+        isFMMode = false
         self.queue = newQueue
         currentIndex = newQueue.isEmpty ? nil : startIndex
         if newQueue.isEmpty { return }
         playCurrentItem(seekTo: 0)
+    }
+
+    // MARK: - 私人漫游会话（★ 2026-10-16 对齐 Kumone 机制）
+    //
+    // Kumone 的私人漫游是「流式」的：队列里剩的歌将尽时自动再拉一批，
+    // 漫游可以无限续下去；普通播放/换来源时退出该模式。
+    // 我们此前的实现只拉 3 批（9 首）播完就停 —— 这里补上自动补货。
+
+    private(set) var isFMMode = false
+    private var fmRefilling = false
+
+    /// 进入漫游会话（由「私人漫游」入口在起播后调用）
+    func beginFMSession() {
+        isFMMode = true
+        refillFMIfNeeded()
+    }
+
+    func endFMSession() {
+        isFMMode = false
+        fmRefilling = false
+    }
+
+    /// 剩余 ≤2 首且未在补货 → 拉一批追加队尾（Kumone 的 fmAdvance 同款语义）
+    private func refillFMIfNeeded() {
+        guard isFMMode, !fmRefilling else { return }
+        let played = (currentIndex ?? -1) + 1
+        let remaining = max(queue.count - played, 0)
+        guard remaining <= 2 else { return }
+        fmRefilling = true
+        Task { @MainActor [weak self] in
+            defer { self?.fmRefilling = false }
+            guard let tracks = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 1),
+                  !tracks.isEmpty, let self, self.isFMMode else { return }
+            var seen = Set(self.queue.map { $0.keyOf })
+            let fresh = tracks.filter { seen.insert($0.keyOf).inserted }
+            if !fresh.isEmpty { self.addToQueue(fresh) }
+        }
     }
 
     func playItem(_ item: MusicItem) {
@@ -630,6 +669,8 @@ final class PlayerCore: NSObject, ObservableObject {
 
     func next() {
         guard !queue.isEmpty else { return }
+        // ★ 私人漫游：推进时按剩余量自动补货（原来播完就停）
+        refillFMIfNeeded()
         let mode = AppState.shared.playMode
         switch mode {
         case 1: // 单曲循环
