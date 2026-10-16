@@ -110,6 +110,31 @@ final class AppSettings {
     var lyricsTranslationFontScale: Double = 0.62
     var lyricsTranslationOpacity: Double = 0.72
     var lyricsWordByWord: Bool = true
+
+    // MARK: 静态 Range 成员（MeloX AppSettings static let，原值照抄）
+    static let lyricsLiveActivityScrollSpeedRange = 8.0...80.0
+    static let lyricsLiveActivityScrollPauseRange = 0.0...3.0
+    static let appleMusicLyricsInterfaceAutoHideDelayRange = 3.0...15.0
+    static let appleMusicLyricsScrollHideThresholdRange = 40.0...240.0
+    static let lyricsFocusPositionRange = 0.05...0.8
+    static let lyricsCurrentLineScaleRange = 1.0...1.5
+    static let lyricsDistanceBlurScaleRange = 0.0...1.5
+    static let lyricsFocusCascadeDelayRange = 0.0...0.1
+    static let lyricsFocusCascadeDelayIncreaseRange = 0.0...0.1
+    static let lyricsFocusCascadeFollowingDelayRange = 0.0...0.2
+    static let lyricsFocusCascadeCatchUpRatioRange = 0.5...1.0
+    static let lyricsFocusCascadeChaseSpeedGradientRange = 0.0...1.0
+    static let lyricsFocusCascadeDurationRange = 0.2...1.2
+    static let lyricsFocusSnapThresholdRange = 0.05...0.5
+    static let lyricsFocusCascadeBounceRange = 0.0...0.8
+    static let lyricsFocusCascadeBounceGradientRange = 0.0...1.0
+    static let lyricsFocusScaleBounceRange = 0.0...0.5
+    static let lyricsFocusScaleBounceDurationRange = 0.15...0.8
+    static let lyricsFocusColorLeadTimeRange = -0.3...0.3
+    static let lyricsLongSyllableDurationThresholdRange = 0.3...1.5
+    static let lyricsLongToneExpansionAmountRange = 0.0...0.15
+    static let lyricsHighlightGradientWidthRange = 0.4...3.0
+    static let lyricsHighlightGradientReductionRange = 0.0...1.0
 }
 
 struct LyricsFontPrefs {
@@ -158,30 +183,6 @@ struct LyricsPrefs {
     var lyricsWordByWord: Bool = true
 }
 
-    // MARK: 静态 Range 成员（MeloX AppSettings static let，原值照抄）
-    static let lyricsLiveActivityScrollSpeedRange = 8.0...80.0
-    static let lyricsLiveActivityScrollPauseRange = 0.0...3.0
-    static let appleMusicLyricsInterfaceAutoHideDelayRange = 3.0...15.0
-    static let appleMusicLyricsScrollHideThresholdRange = 40.0...240.0
-    static let lyricsFocusPositionRange = 0.05...0.8
-    static let lyricsCurrentLineScaleRange = 1.0...1.5
-    static let lyricsDistanceBlurScaleRange = 0.0...1.5
-    static let lyricsFocusCascadeDelayRange = 0.0...0.1
-    static let lyricsFocusCascadeDelayIncreaseRange = 0.0...0.1
-    static let lyricsFocusCascadeFollowingDelayRange = 0.0...0.2
-    static let lyricsFocusCascadeCatchUpRatioRange = 0.5...1.0
-    static let lyricsFocusCascadeChaseSpeedGradientRange = 0.0...1.0
-    static let lyricsFocusCascadeDurationRange = 0.2...1.2
-    static let lyricsFocusSnapThresholdRange = 0.05...0.5
-    static let lyricsFocusCascadeBounceRange = 0.0...0.8
-    static let lyricsFocusCascadeBounceGradientRange = 0.0...1.0
-    static let lyricsFocusScaleBounceRange = 0.0...0.5
-    static let lyricsFocusScaleBounceDurationRange = 0.15...0.8
-    static let lyricsFocusColorLeadTimeRange = -0.3...0.3
-    static let lyricsLongSyllableDurationThresholdRange = 0.3...1.5
-    static let lyricsLongToneExpansionAmountRange = 0.0...0.15
-    static let lyricsHighlightGradientWidthRange = 0.4...3.0
-    static let lyricsHighlightGradientReductionRange = 0.0...1.0
 
     // MARK: 分享面板（原版拖 Nuke/选择 store/本地化，按调用面精简）
 struct LyricSharePresentation: Identifiable {
