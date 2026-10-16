@@ -124,6 +124,7 @@ final class AppSettings {
     var lyricsTranslationFontScale: Double = 0.62
     var lyricsTranslationOpacity: Double = 0.72
     var lyricsWordByWord: Bool = true
+    var lyricsUsesUniformDimmingWhileBrowsing: Bool = true
 
     // MARK: 静态 Range 成员（MeloX AppSettings static let，原值照抄）
     static let lyricsLiveActivityScrollSpeedRange = 8.0...80.0
