@@ -1329,6 +1329,13 @@ struct AppleMusicPlayerView: View {
             default: return .leading   // 居中由行内 Spacer 实现（见下）
             }
         }()
+        let frameAlign: Alignment = {
+            switch lyricAlignment {
+            case 1: return .leading
+            case 2: return .trailing
+            default: return .center
+            }
+        }()
         return Button {
             WellHaptics.tap()
             player.seek(to: LyricTiming.seekTime(for: line, userOffset: lyricOffset))
@@ -1356,7 +1363,7 @@ struct AppleMusicPlayerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: align)
+            .frame(maxWidth: .infinity, alignment: frameAlign)
             .contentShape(Rectangle())
             .scaleEffect(isFocused ? 1.06 : 0.84, anchor: lyricAlignment == 2 ? .trailing : .leading)
             .blur(radius: isFocused ? 0 : 0.7)
