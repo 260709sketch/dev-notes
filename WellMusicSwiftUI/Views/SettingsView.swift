@@ -17,6 +17,22 @@ struct SettingsView: View {
     /// 自愿赞助（2026-10-16 用户问题8：展示收款码）
     @State private var showingSupportSheet = false
 
+    /// 优先搜索平台绑定（安全形状：getter 显式 return、setter 具名参数 ——
+    /// 2026-10-16 CI 教训：Picker 内联 Binding 的简写形式在 wholemodule 下
+    /// 会推不出参数类型）
+    private var preferredPlatformBinding: Binding<WellSearchPlatform> {
+        Binding(
+            get: {
+                let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
+                    ?? WellSearchPlatform.netease.rawValue
+                return WellSearchPlatform(rawValue: raw) ?? WellSearchPlatform.netease
+            },
+            set: { newValue in
+                UserDefaults.standard.set(newValue.rawValue, forKey: "wellmusic.search.preferredPlatform")
+            }
+        )
+    }
+
     /// 底部栏位置微调的文案（正 = 更靠下）。
     private var tabBarOffsetText: String {
         let value = settings.tabBarBottomOffset
@@ -207,17 +223,7 @@ struct SettingsView: View {
 
                 Section("搜索") {
                     // ★ 2026-10-16 第十轮问题16：优先搜索平台（搜索页默认用它）
-                    Picker("优先搜索平台", selection: Binding(
-                        get: {
-                            let raw = UserDefaults.standard.string(forKey: "wellmusic.search.preferredPlatform")
-                                ?? WellSearchPlatform.netease.rawValue
-                            return WellSearchPlatform(rawValue: raw) ?? .netease
-                        },
-                        set: { platform in
-                            UserDefaults.standard.set(platform.rawValue,
-                                                      forKey: "wellmusic.search.preferredPlatform")
-                        }
-                    )) {
+                    Picker("优先搜索平台", selection: preferredPlatformBinding) {
                         ForEach(WellSearchPlatform.allCases) { platform in
                             Text(platform.rawValue).tag(platform)
                         }

@@ -82,14 +82,16 @@ struct DiscoverView: View {
         async let albumsTask = try? NeteaseMusicAPI.shared.newAlbums(limit: 20)
         async let artistsTask = loadArtists()
 
-        let (daily, recs, albums, arts) = await (dailyTask, recsTask, albumsTask, artistsTask)
+        let (daily, recs, albums) = await (dailyTask, recsTask, albumsTask)
+        // artistsTask 返回非可选数组，单独 await（不能进 `if let`）
+        let arts = await artistsTask
         // ★ 2026-10-16 第十轮问题4：下拉刷新偶发接口全空时**不再清空已加载内容**
         //   （原实现 `= daily ?? []` 无脑覆盖 → 整页变「加载失败」白屏，就是
         //   用户截图那种「下滑刷新变成失败图」）。失败 = 保留旧数据。
         if let daily { dailySongs = daily }
         if let recs { recommendedPlaylists = recs }
         if let albums { newAlbums = albums }
-        if let arts { artists = arts }
+        artists = arts
         isLoading = false
 
         // 仅当**全空且确实没拿到任何数据**时才报错（旧内容在则不报）
