@@ -515,7 +515,9 @@ struct WellPlaylistDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item)
+                        ? Color(red: 0.25, green: 0.52, blue: 0.96)
+                        : .primary)
                     .lineLimit(isAlbumSource ? 2 : 1)
                 if !isAlbumSource {
                     Text(item.artist ?? "未知歌手")
@@ -789,7 +791,9 @@ struct WellDetailSongRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(nowPlaying.isCurrent(item) ? Color.accentColor : .primary)
+                    .foregroundStyle(nowPlaying.isCurrent(item)
+                        ? Color(red: 0.25, green: 0.52, blue: 0.96)
+                        : .primary)
                     .lineLimit(1)
                 Text(item.artist ?? "未知歌手")
                     .font(.system(size: 12))

@@ -48,7 +48,9 @@ final class NowPlayingTracker: ObservableObject {
 /// ★ 2026-10-16 第十轮问题15：暂停后音条不再直接消失（改为静止状态）——
 ///   行侧「时长/音条」位不会变空；恢复播放继续动。
 struct NowPlayingIndicator: View {
-    var color: Color = .accentColor
+    // ★ 2026-10-16 用户：「时长旁会动的图标还是红色」—— 默认色由项目 accent（红）
+    //   改为与「正在播放」高亮一致的蓝。
+    var color: Color = Color(red: 0.25, green: 0.52, blue: 0.96)
 
     @ObservedObject private var tracker = NowPlayingTracker.shared
     @State private var animating = false

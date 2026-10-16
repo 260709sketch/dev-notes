@@ -278,7 +278,10 @@ struct WellMyPlaylistDetailView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(isPlaying ? Self.accent : Color.primary)
+                        // ★ 2026-10-16 用户：正在播放歌名 → 蓝（此前是网易云红）
+                        .foregroundStyle(isPlaying
+                            ? Color(red: 0.25, green: 0.52, blue: 0.96)
+                            : Color.primary)
                         .lineLimit(1)
                     Text(item.artist ?? "未知歌手")
                         .font(.system(size: 12))
