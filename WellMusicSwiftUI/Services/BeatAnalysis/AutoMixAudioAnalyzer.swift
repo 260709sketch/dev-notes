@@ -251,7 +251,7 @@ actor AutoMixAudioAnalyzer {
             FileManager.default.temporaryDirectory
                 .appending(
                     path:
-                        "\(AppStorageLocations.beatAnalysisDirectoryPrefix)\(UUID().uuidString)",
+                        "WellMusic-BeatNet-\(UUID().uuidString)",
                     directoryHint: .isDirectory
                 )
         try? FileManager.default.createDirectory(
