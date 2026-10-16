@@ -23,6 +23,9 @@ final class PlayerStore {
     var now: TimeInterval = 0
     /// MeloX 侧以 `player.estimatedProgress()` 形式调用（方法，不是属性）
     func estimatedProgress() -> TimeInterval { now }
+
+    /// MeloX 侧还以 `estimatedProgress(at: date)` 形式调用（按日期取估计进度）
+    func estimatedProgress(at date: Date? = nil) -> TimeInterval { now }
     var seekRevision: Int = 0
 
     func seek(to time: TimeInterval) {
@@ -77,17 +80,26 @@ final class AppSettings {
     var lyricsDimAmount: Double = 0.45
     var lyricsDistanceBlurScale: Double = 0.6
     var lyricsDuetLayoutEnabled: Bool = true
-    var lyricsFocusCascadeBounce: Bool = true
+    var lyricsFocusCascadeBounce: Double = 0.26
     var lyricsFocusCascadeBounceEnabled: Bool = true
     var lyricsFocusCascadeBounceGradient: Double = 0.4
     var lyricsFocusPosition: Double = 0.42
     var lyricsFocusPositionRange: ClosedRange<Double> = 0.0...1.0
-    var lyricsFocusScaleBounce: Bool = true
+    var lyricsFocusScaleBounce: Double = 0.32
     var lyricsFocusScaleBounceDuration: Double = 0.32
     var lyricsFocusScaleBounceEnabled: Bool = true
     var lyricsFollowDelay: Double = 0.0
     var lyricsFontSize: Double = 30
     var lyricsFontWeight: LyricsFontWeight = .semibold
+    var lyricsLineSpacing: Double = 28
+    var lyricsFocusCascadeDelay: Double = 0.021
+    var lyricsFocusCascadeDelayIncrease: Double = 0.005
+    var lyricsFocusCascadeFollowingDelay: Double = 0.030
+    var lyricsFocusCascadeCatchUpRatio: Double = 0.97
+    var lyricsFocusCascadeChaseSpeedGradient: Double = 0.70
+    var lyricsFocusCascadeDuration: Double = 0.74
+    var lyricsFocusSnapThreshold: Double = 0.26
+    var lyricsFocusColorLeadTime: Double = 0.0
     var lyricsGlowEnabled: Bool = false
     var lyricsGlowIntensity: Double = 0.5
     var lyricsGlowLongSyllablesOnly: Bool = false
@@ -149,16 +161,25 @@ struct LyricsPrefs {
     var lyricsDimAmount: Double = 0.45
     var lyricsDistanceBlurScale: Double = 0.6
     var lyricsDuetLayoutEnabled: Bool = true
-    var lyricsFocusCascadeBounce: Bool = true
+    var lyricsFocusCascadeBounce: Double = 0.26
     var lyricsFocusCascadeBounceEnabled: Bool = true
     var lyricsFocusCascadeBounceGradient: Double = 0.4
     var lyricsFocusPosition: Double = 0.42
-    var lyricsFocusScaleBounce: Bool = true
+    var lyricsFocusScaleBounce: Double = 0.32
     var lyricsFocusScaleBounceDuration: Double = 0.32
     var lyricsFocusScaleBounceEnabled: Bool = true
     var lyricsFollowDelay: Double = 0.0
     var lyricsFontSize: Double = 30
     var lyricsFontWeight: LyricsFontWeight = .semibold
+    var lyricsLineSpacing: Double = 28
+    var lyricsFocusCascadeDelay: Double = 0.021
+    var lyricsFocusCascadeDelayIncrease: Double = 0.005
+    var lyricsFocusCascadeFollowingDelay: Double = 0.030
+    var lyricsFocusCascadeCatchUpRatio: Double = 0.97
+    var lyricsFocusCascadeChaseSpeedGradient: Double = 0.70
+    var lyricsFocusCascadeDuration: Double = 0.74
+    var lyricsFocusSnapThreshold: Double = 0.26
+    var lyricsFocusColorLeadTime: Double = 0.0
     var lyricsGlowEnabled: Bool = false
     var lyricsGlowIntensity: Double = 0.5
     var lyricsGlowLongSyllablesOnly: Bool = false

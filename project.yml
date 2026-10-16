@@ -75,7 +75,7 @@ targets:
         OTHER_LDFLAGS:
           - $(inherited)
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
       configs:
         # ★ 2026-10-16：Debug 改为全量编译（wholemodule）。
         #
@@ -99,7 +99,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
         PRODUCT_BUNDLE_IDENTIFIER: com.wellmusic.app.tests
-        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
 schemes:
   WellMusicSwiftUI:
     build:
