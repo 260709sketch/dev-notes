@@ -125,6 +125,29 @@ enum WellLXPlaybackHeaders {
 
 // MARK: - 音源仓库
 
+/// 音源脚本上报的更新提示（对应参考实现的 `lx.send('showUpdateAlert', …)`）。
+struct WellLXUpdateNotice: Identifiable, Equatable {
+    var id = UUID()
+    /// 上报更新的音源 id（无法匹配到已导入音源时为 nil）
+    var sourceID: String?
+    var sourceName: String
+    var log: String
+    /// 更新链接（脚本未提供时为空）
+    var updateUrl: String
+
+    var hasLink: Bool { !updateUrl.isEmpty }
+}
+
+/// 「检查更新」的结果。
+enum WellLXUpdateCheckResult: Equatable {
+    /// 脚本未声明 srcUrl，无法在线检查
+    case unavailable
+    /// 拉取远端脚本失败
+    case failed
+    case upToDate
+    case newer(version: String, script: String)
+}
+
 /// 自定义音源（LX 脚本）仓库：负责导入、持久化、激活、测试与取链日志。
 ///
 /// 与播放层的契约：`resolvePlayback(for:quality:)` 返回可直接播放的地址 + 请求头，
@@ -141,6 +164,10 @@ final class WellLXSourceStore: ObservableObject {
     @Published private(set) var isInitializing = false
     @Published private(set) var lastError: String?
     @Published private(set) var requestLogs: [WellLXRequestLog] = []
+    /// 音源脚本上报的更新提示（待用户确认；确认/关闭后置空）
+    @Published var pendingUpdateAlert: WellLXUpdateNotice?
+    /// 已关闭「更新提示」的音源 id（不在集合里 = 开启，对齐参考实现的默认开启）
+    @Published private(set) var updateAlertDisabledIDs: Set<String> = []
 
     /// 当前激活的音源（未激活时为 nil）。
     var activeSource: WellLXSourceInfo? {
@@ -156,6 +183,8 @@ final class WellLXSourceStore: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let activeKey = "well.lx.activeSourceID"
+    /// 关闭了「更新提示」的音源 id 集合（未在集合中 = 开启，对齐参考实现的默认开启）
+    private let updateAlertDisabledKey = "well.lx.updateAlertDisabledIDs"
     private let logLimit = 50
 
     private let encoder: JSONEncoder = {
@@ -172,7 +201,9 @@ final class WellLXSourceStore: ObservableObject {
 
     private var didBootstrap = false
 
-    private init() {}
+    private init() {
+        updateAlertDisabledIDs = Set(UserDefaults.standard.stringArray(forKey: updateAlertDisabledKey) ?? [])
+    }
 
     // MARK: 目录
 
@@ -396,6 +427,111 @@ final class WellLXSourceStore: ObservableObject {
         var item = sources[idx]
         mutate(&item)
         sources[idx] = item
+    }
+
+    // MARK: 音源更新提示
+
+    /// 该音源是否允许弹出更新提示（默认允许）。
+    func allowsUpdateAlert(for sourceID: String) -> Bool {
+        !updateAlertDisabledIDs.contains(sourceID)
+    }
+
+    func setAllowsUpdateAlert(_ allows: Bool, for sourceID: String) {
+        var set = updateAlertDisabledIDs
+        if allows { set.remove(sourceID) } else { set.insert(sourceID) }
+        updateAlertDisabledIDs = set
+        defaults.set(Array(set), forKey: updateAlertDisabledKey)
+    }
+
+    /// 脚本上报更新（由 `WellLXEngine` 的通知转来）：按音源开关决定是否弹窗。
+    /// - 关闭了提示的音源只写进请求日志，不打扰用户。
+    func handleUpdateAlertNotification(name: String, log: String, updateUrl: String) {
+        let target = sources.first(where: { $0.name == name }) ?? activeSource
+        if let target, !allowsUpdateAlert(for: target.id) {
+            appendLog(WellLXRequestLog(
+                trackTitle: "音源更新提示",
+                trackArtist: target.name,
+                requestedQuality: "—",
+                actualQuality: "—",
+                url: "—",
+                duration: 0,
+                success: true,
+                message: "已在设置中关闭更新提示：\(log)"
+            ))
+            return
+        }
+        pendingUpdateAlert = WellLXUpdateNotice(
+            sourceID: target?.id,
+            sourceName: name.isEmpty ? (target?.name ?? "音源") : name,
+            log: log,
+            updateUrl: updateUrl
+        )
+    }
+
+    func dismissUpdateAlert() {
+        pendingUpdateAlert = nil
+    }
+
+    /// 手动检查更新：拉取音源脚本自己声明的 `srcUrl`，比对头部 `@version`。
+    /// 没有 srcUrl 的音源直接返回 `.unavailable`。
+    func checkUpdate(for source: WellLXSourceInfo) async -> WellLXUpdateCheckResult {
+        guard let script = scriptText(for: source) else { return .unavailable }
+        let declared = WellLXProtocol.extractSrcUrl(from: script) ?? ""
+        guard let url = Self.normalizedScriptURL(declared), !declared.isEmpty else {
+            return .unavailable
+        }
+        guard let remote = try? await fetchScript(from: url) else {
+            return .failed
+        }
+        let remoteVersion = WellLXProtocol.parseScriptInfo(remote).version
+        guard !remoteVersion.isEmpty, remoteVersion != source.version,
+              Self.isNewer(remoteVersion, than: source.version) else {
+            return .upToDate
+        }
+        return .newer(version: remoteVersion, script: remote)
+    }
+
+    /// 用「检查更新」拿到的远端脚本覆盖本地（同名音源原地升级，保持 id 不变）。
+    func applyUpdate(_ script: String, to source: WellLXSourceInfo) async throws {
+        let meta = WellLXProtocol.parseScriptInfo(script)
+        try script.write(to: scriptURL(for: source.id), atomically: true, encoding: .utf8)
+        update(source.id) {
+            // 名称保持不变：远端脚本没声明 @name 时会被解析成「未命名音源」，就地改名会把用户导入的音源弄乱
+            $0.sourceDescription = meta.description
+            $0.version = meta.version
+            $0.author = meta.author
+            $0.homepage = meta.homepage
+            $0.testStatus = .untested
+            $0.platformTestResults = [:]
+        }
+        persistSources()
+        if activeSourceID == source.id {
+            await activate(sources.first(where: { $0.id == source.id }) ?? source)
+        }
+    }
+
+    private func fetchScript(from url: URL) async throws -> String {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw WellLXStoreError.downloadFailed(http.statusCode)
+        }
+        let text = String(data: data, encoding: .utf8) ?? CryptoUtils.gbkString(data) ?? ""
+        guard !text.isEmpty else { throw WellLXStoreError.emptyScript }
+        return text
+    }
+
+    /// 版本号按数字分段比较（"1.10" > "1.9"）。
+    static func isNewer(_ lhs: String, than rhs: String) -> Bool {
+        func parts(_ s: String) -> [Int] {
+            s.split(whereSeparator: { !$0.isNumber }).map { Int($0) ?? 0 }
+        }
+        let a = parts(lhs), b = parts(rhs)
+        for i in 0..<max(a.count, b.count) {
+            let x = i < a.count ? a[i] : 0
+            let y = i < b.count ? b[i] : 0
+            if x != y { return x > y }
+        }
+        return false
     }
 
     // MARK: 播放解析

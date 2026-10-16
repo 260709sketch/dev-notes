@@ -28,6 +28,10 @@ struct WellLXSongResult: Identifiable, Hashable {
     var interval: TimeInterval? = nil
     var album: String? = nil
     var cover: String? = nil
+    /// QQ 音乐的媒体 mid（`file.media_mid`）——取链按它拼 vkey，缺了会整体失败
+    var mediaMid: String? = nil
+    /// 咪咕的 `copyrightId`——咪咕取链要用它
+    var copyrightId: String? = nil
 }
 
 enum WellLXError: LocalizedError {
@@ -140,7 +144,7 @@ enum WellLXProtocol {
     // MARK: 平台前缀解析
 
     /// 将带前缀的 songmid 解析成 lx 平台标识 + 纯净 ID
-    /// netease_/wy_ → wy；kugou_/kg_ → kg；kuwo_/kw_ → kw；migu_/mg_ → mg；其余 → tx
+    /// netease_/wy_ → wy；kugou_/kg_ → kg；kuwo_/kw_ → kw；migu_/mg_ → mg；tx_/qq_ 与其余 → tx
     static func parseLxPlatform(_ songmid: String) -> (source: String, cleanId: String) {
         let raw = songmid
         func strip(_ prefix: String) -> String { String(raw.dropFirst(prefix.count)) }
@@ -152,6 +156,8 @@ enum WellLXProtocol {
         if raw.hasPrefix("kw_") { return ("kw", strip("kw_")) }
         if raw.hasPrefix("migu_") { return ("mg", strip("migu_")) }
         if raw.hasPrefix("mg_") { return ("mg", strip("mg_")) }
+        if raw.hasPrefix("tx_") { return ("tx", strip("tx_")) }
+        if raw.hasPrefix("qq_") { return ("tx", strip("qq_")) }
         return ("tx", raw)
     }
 
@@ -168,29 +174,41 @@ enum WellLXProtocol {
     // MARK: payload 构建（对照 wellmusic getMusicUrlViaScript / searchMusicViaScript）
 
     /// musicUrl 请求：info.musicInfo 携带歌曲元数据 + 音质
+    /// - Parameters:
+    ///   - mediaMid: QQ 音乐的 `strMediaMid`（`file.media_mid`），部分歌曲 ≠ songmid
+    ///   - copyrightId: 咪咕的 `copyrightId`
     static func makeMusicUrlPayload(songmid: String, title: String, artist: String,
-                                    quality: String, requestKey: String) -> [String: Any] {
+                                    quality: String, requestKey: String,
+                                    mediaMid: String? = nil, copyrightId: String? = nil) -> [String: Any] {
         let p = parseLxPlatform(songmid)
+        var musicInfo: [String: Any] = [
+            "id": p.cleanId,
+            "songmid": p.cleanId,
+            "title": title,
+            "name": title,
+            "singer": artist,
+            "artist": artist,
+            "source": p.source,
+            "hash": p.cleanId,
+            "albumName": "",
+            "albumId": "",
+            "interval": NSNull(),
+            "types": [],
+            "typeUrl": [:],
+            "_quality": quality,
+        ]
+        if let mediaMid, !mediaMid.isEmpty { musicInfo["strMediaMid"] = mediaMid }
+        if let copyrightId, !copyrightId.isEmpty {
+            musicInfo["copyrightId"] = copyrightId
+            musicInfo["lrcUrl"] = ""
+            musicInfo["mrcUrl"] = ""
+            musicInfo["trcUrl"] = ""
+        }
         return [
             "action": "musicUrl",
             "source": p.source,
             "info": [
-                "musicInfo": [
-                    "id": p.cleanId,
-                    "songmid": p.cleanId,
-                    "title": title,
-                    "name": title,
-                    "singer": artist,
-                    "artist": artist,
-                    "source": p.source,
-                    "hash": p.cleanId,
-                    "albumName": "",
-                    "albumId": "",
-                    "interval": NSNull(),
-                    "types": [],
-                    "typeUrl": [:],
-                    "_quality": quality,
-                ],
+                "musicInfo": musicInfo,
                 "requestContext": ["requestKey": requestKey, "requestType": "current"],
                 "quality": quality,
                 "type": quality,
@@ -287,7 +305,9 @@ enum WellLXProtocol {
                 artist: stringValue(d["singer"]) ?? stringValue(d["artist"]) ?? "未知歌手",
                 interval: (d["interval"] as? Int).map { TimeInterval($0) },
                 album: stringValue(d["album"]),
-                cover: stringValue(d["picUrl"]) ?? stringValue(d["pic"])
+                cover: stringValue(d["picUrl"]) ?? stringValue(d["pic"]),
+                mediaMid: stringValue(d["strMediaMid"]) ?? stringValue(d["mediaMid"]),
+                copyrightId: stringValue(d["copyrightId"])
             ))
         }
         return out

@@ -21,7 +21,7 @@ final class KugouMusicAPI {
     /// 搜索歌曲。
     ///
     /// 主通道：`songsearch.kugou.com/song_search_v2`（https 可用，需 `platform=AndroidFilter`
-    /// + 桌面 Chrome UA，参考 Kumone KugouAPI.searchSongs）。
+    /// + 桌面 Chrome UA，参考实现的搜索接口同款）。
     /// 回退：`mobilecdn.kugou.com/api/v3/search/song` —— ⚠️ mobilecdn 系接口**必须用 http**，
     /// https 会返回空响应（curl 实测 + 参考源码注释双确认），这是此前酷狗搜索全挂的根因。
     func search(keyword: String, limit: Int = 30, page: Int = 1) async throws -> [MusicItem] {

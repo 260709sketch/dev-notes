@@ -64,6 +64,12 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         PRODUCT_BUNDLE_IDENTIFIER: com.wellmusic.app
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # ★ 2026-10-16 用户问题16：设置 → 关于页的「版本」只显示 1.0.0。
+        #   原先工程里没有声明 MARKETING_VERSION，xcodebuild 默认给 "1.0"。
+        #   显式声明后 Info.plist 里的 $(MARKETING_VERSION) 就有真值，
+        #   关于页从 Bundle 读出来即是 1.0.0（版本号只有这一个来源，不再手写）。
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
         OTHER_LDFLAGS:
           - $(inherited)
         ENABLE_USER_SCRIPT_SANDBOXING: NO

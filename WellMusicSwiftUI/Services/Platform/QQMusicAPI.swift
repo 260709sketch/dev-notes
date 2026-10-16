@@ -696,7 +696,7 @@ final class QQMusicAPI {
     // MARK: - 歌手歌曲（展开全部 / 详情页用）
 
     func singerSongs(singerMid: String, begin: Int = 0, num: Int = 30) async throws -> (list: [MusicItem], total: Int, hasMore: Bool) {
-        // 主通道：无签名 musicuGET（参考 Kumone，comm {ct:24, cv:0} 即可）。
+        // 主通道：无签名 musicuGET（参考实现同款，comm {ct:24, cv:0} 即可）。
         // 失败再回退签名版（老代码，部分设备签名接口不稳）。
         let plainBody: OrderedJSON = .object([
             ("comm", .object([("ct", .int(24)), ("cv", .int(0))])),

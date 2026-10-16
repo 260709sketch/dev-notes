@@ -13,6 +13,12 @@ struct WellLXSourceManageView: View {
     @State private var showFilePicker = false
     @State private var importError: String?
     @State private var testingIDs = Set<String>()
+    @State private var updateCheckingIDs = Set<String>()
+    /// 「检查更新」发现新版本后的确认弹窗载荷
+    @State private var updatePromptSource: WellLXSourceInfo?
+    @State private var updatePromptVersion = ""
+    @State private var updatePromptScript = ""
+    @State private var showUpdatePrompt = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -42,6 +48,12 @@ struct WellLXSourceManageView: View {
             WellScriptInputSheet(script: $scriptInput) {
                 Task { await importFromScript() }
             }
+        }
+        .alert("发现新版本 \(updatePromptVersion)", isPresented: $showUpdatePrompt) {
+            Button("同步更新") { applyPendingUpdate() }
+            Button("取消", role: .cancel) { clearUpdatePrompt() }
+        } message: {
+            Text("音源「\(updatePromptSource?.name ?? "")」当前版本 \(updatePromptSource?.version ?? "—")，是否用远端最新脚本覆盖本地？")
         }
     }
 
@@ -119,8 +131,14 @@ struct WellLXSourceManageView: View {
                     source: source,
                     isActive: source.id == store.activeSourceID,
                     isTesting: testingIDs.contains(source.id),
+                    isCheckingUpdate: updateCheckingIDs.contains(source.id),
+                    allowsUpdateAlert: store.allowsUpdateAlert(for: source.id),
                     onToggle: { toggle(source) },
-                    onTest: { runTest(source) }
+                    onTest: { runTest(source) },
+                    onCheckUpdate: { checkUpdate(source) },
+                    onToggleUpdateAlert: { allows in
+                        store.setAllowsUpdateAlert(allows, for: source.id)
+                    }
                 )
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -139,7 +157,7 @@ struct WellLXSourceManageView: View {
         } header: {
             Text("已导入音源（\(store.sources.count)）")
         } footer: {
-            Text("左滑音源可删除；导入后自动设为优先音源，播放失败时自动换源。")
+            Text("左滑音源可删除；导入后自动设为优先音源，播放失败时自动换源。音源脚本上报更新时会弹窗提示，可在此关闭「更新提示」。")
         }
     }
 
@@ -165,6 +183,51 @@ struct WellLXSourceManageView: View {
             await store.test(source)
             testingIDs.remove(source.id)
         }
+    }
+
+    // MARK: 更新
+
+    /// 拉取音源脚本声明的 srcUrl，比对版本号（问题11）。
+    private func checkUpdate(_ source: WellLXSourceInfo) {
+        Task {
+            updateCheckingIDs.insert(source.id)
+            let result = await store.checkUpdate(for: source)
+            updateCheckingIDs.remove(source.id)
+            switch result {
+            case .unavailable:
+                ToastCenter.shared.show("该音源未声明在线更新地址")
+            case .failed:
+                ToastCenter.shared.show("检查更新失败，请稍后重试")
+            case .upToDate:
+                ToastCenter.shared.show("已是最新版本（\(source.version)）")
+            case .newer(let version, let script):
+                updatePromptSource = source
+                updatePromptVersion = version
+                updatePromptScript = script
+                showUpdatePrompt = true
+            }
+        }
+    }
+
+    private func applyPendingUpdate() {
+        guard let source = updatePromptSource else { clearUpdatePrompt(); return }
+        let script = updatePromptScript
+        clearUpdatePrompt()
+        Task {
+            do {
+                try await store.applyUpdate(script, to: source)
+                ToastCenter.shared.show("音源「\(source.name)」已更新")
+            } catch {
+                ToastCenter.shared.show("更新失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func clearUpdatePrompt() {
+        showUpdatePrompt = false
+        updatePromptSource = nil
+        updatePromptVersion = ""
+        updatePromptScript = ""
     }
 
     private func importFromURL() async {
@@ -221,8 +284,12 @@ private struct WellLXSourceRow: View {
     let source: WellLXSourceInfo
     let isActive: Bool
     let isTesting: Bool
+    let isCheckingUpdate: Bool
+    let allowsUpdateAlert: Bool
     let onToggle: () -> Void
     let onTest: () -> Void
+    let onCheckUpdate: () -> Void
+    let onToggleUpdateAlert: (Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -249,7 +316,22 @@ private struct WellLXSourceRow: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                Button(action: onCheckUpdate) {
+                    if isCheckingUpdate {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+            Toggle("更新提示", isOn: Binding(
+                get: { allowsUpdateAlert },
+                set: { newValue in onToggleUpdateAlert(newValue) }
+            ))
+            .font(.caption)
+            .toggleStyle(.switch)
         }
         .padding(.vertical, 2)
     }

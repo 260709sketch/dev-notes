@@ -66,6 +66,32 @@ enum WellAudioQuality: Int, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// 档位降级链：用户选的档位 → `standard`。
+    ///
+    /// **云盘上传的文件没有高档位音源**（用户传的多是 128k/320k），按用户选的
+    /// 无损 / Hi-Res 档位去要地址，服务端只会回一个 `url: null` —— 表现就是
+    /// 「云盘歌曲点了不播」。参考实现在拿到空地址时会改用 `standard` 再要一次，
+    /// 这里把这条降级链固化下来（只降一级，不做全档遍历，避免失败路径多发请求）。
+    var neteaseLevelLadder: [String] {
+        self == .standard ? ["standard"] : [neteaseLevel, "standard"]
+    }
+
+    /// 网易云老接口 `api/song/enhance/player/url` 的 `br` 参数（码率，不是档位名）。
+    ///
+    /// 该接口按码率取地址、不区分档位，云盘上传文件走它命中率最高。
+    var neteaseBitrate: Int {
+        switch self {
+        case .standard: return 128000
+        case .high: return 320000
+        case .lossless, .hiRes: return 999000
+        }
+    }
+
+    /// 码率降级链（同 `neteaseLevelLadder` 的理由）。
+    var neteaseBitrateLadder: [Int] {
+        self == .standard ? [128000] : [neteaseBitrate, 128000]
+    }
+
     /// QQ 音乐 filename 前缀
     var qqFilePrefix: String {
         switch self {

@@ -72,6 +72,11 @@ final class WellLXScriptRunner: @unchecked Sendable {
     /// 脚本 console 日志回调（type: log/info/warn/error）
     private var logHandler: ((String, String) -> Void)?
 
+    /// 音源脚本主动上报更新（`lx.send('showUpdateAlert', { log, updateUrl })`）。
+    /// 参数依次为：音源名、更新说明、更新链接（可能为空）。
+    /// 只由 loadScript 设置一次，其余时间只读，故按 @unchecked Sendable 使用。
+    var onUpdateAlert: ((String, String, String) -> Void)?
+
     // MARK: - Host API
 
     /// 加载脚本：销毁旧环境 → 创建 JS 环境 → evaluate 用户脚本 → 等待 init（最多 initTimeout 秒）
@@ -343,7 +348,7 @@ final class WellLXScriptRunner: @unchecked Sendable {
             case "response":
                 weakSelf.handleBusinessResponse(jsonString: data)
             case "showUpdateAlert":
-                weakSelf.emitLog(type: "warn", message: "LX 音源提示更新：\(data ?? "")")
+                weakSelf.handleScriptUpdateAlert(jsonString: data)
             case "log":
                 weakSelf.emitLog(type: "info", message: data ?? "")
             default:
@@ -753,6 +758,18 @@ final class WellLXScriptRunner: @unchecked Sendable {
     private func emitLog(type: String, message: String) {
         Self.log.info("\(type): \(message, privacy: .public)")
         logHandler?(type, message)
+    }
+
+    /// 处理音源脚本主动上报的更新提示（preload 的 handleShowUpdateAlert 已校验 log 必填、长度 ≤1024）。
+    /// 载荷形如 `{"log":"...","updateUrl":"https://...","name":"音源名"}`。
+    private func handleScriptUpdateAlert(jsonString: String?) {
+        guard let value = jsonToValue(jsonString), let dict = value as? [String: Any] else { return }
+        let log = (dict["log"] as? String) ?? ""
+        let updateUrl = (dict["updateUrl"] as? String) ?? ""
+        let name = (dict["name"] as? String) ?? scriptInfo?.name ?? ""
+        guard !log.isEmpty else { return }
+        emitLog(type: "warn", message: "音源「\(name)」提示更新：\(log)")
+        onUpdateAlert?(name, log, updateUrl)
     }
 
     // MARK: - 微任务 pump（JSC 的 Promise 回调需周期性驱动）

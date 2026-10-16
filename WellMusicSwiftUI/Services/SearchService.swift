@@ -134,9 +134,29 @@ final class SearchService {
         case .tracks(let items, _):
             return items
 
-        case .playlist(let id, let platform, _):
-            guard platform == .netease else { return [] }
-            return (try? await NeteaseMusicAPI.shared.playlistTracks(id: id)) ?? []
+        case .playlist(let id, let platform, let name):
+            // ★ 2026-10-16 用户问题18：「搜索页的 QQ 音乐歌单搜索」——
+            //   搜索页能搜出 QQ / 酷狗歌单卡片，但原先点进去只有网易云有内容
+            //   （`guard platform == .netease else { return [] }`），
+            //   观感就是「QQ 歌单搜得到、点不开」。现在接上各平台自己的歌单详情接口。
+            switch platform {
+            case .netease:
+                return (try? await NeteaseMusicAPI.shared.playlistTracks(id: id)) ?? []
+            case .qq:
+                if let detail = try? await QQMusicAPI.shared.playlistDetail(dissTid: id),
+                   !detail.tracks.isEmpty {
+                    return detail.tracks
+                }
+            case .kugou:
+                if let tracks = try? await KugouMusicAPI.shared.playlistSongs(specialId: id),
+                   !tracks.isEmpty {
+                    return tracks
+                }
+            default:
+                break
+            }
+            // 平台详情接口拿不到时退回同名搜索（不混平台）
+            return await fallbackSearchTracks(name, platform: platform)
 
         case .album(let id, let platform, let name, let artist, let mid):
             switch platform {
@@ -159,7 +179,15 @@ final class SearchService {
             default:
                 break
             }
-            return await fallbackSearchTracks("\(name) \(artist)", platform: platform)
+            // ★ 2026-10-16 用户问题19：「播放器里播 QQ 音乐 / 酷狗的歌，进专辑页面
+            //   会有该歌手其他专辑混入」—— 根因就是下面这句兜底：真实专辑接口拿不到
+            //   数据时用「专辑名 + 歌手名」去**搜索**，返回的是该歌手的搜索命中，
+            //   自然夹着其它专辑的歌。现在对兜底结果按**专辑名归一化比对**过滤，
+            //   只保留本专辑的曲目；过滤后为空就给空态（宁可空，也不混入别的专辑）。
+            let fallback = await fallbackSearchTracks("\(name) \(artist)", platform: platform)
+            let wanted = Self.normalizedAlbumName(name)
+            guard !wanted.isEmpty else { return fallback }
+            return fallback.filter { Self.normalizedAlbumName($0.album ?? "") == wanted }
 
         case .artist(let id, let platform, let name, let mid):
             switch platform {
@@ -196,5 +224,22 @@ final class SearchService {
         } catch {
             return []
         }
+    }
+
+    /// 专辑名归一化：小写、剔除括号补充说明与常见分隔符，用于兜底结果比对。
+    ///
+    /// 例：《叶惠美》→ 叶惠美；`叶惠美 (Deluxe Edition)` → 叶惠美。
+    static func normalizedAlbumName(_ text: String) -> String {
+        var value = text.lowercased()
+        for pair in [("（", "）"), ("(", ")"), ("[", "]")] {
+            while let start = value.range(of: pair.0),
+                  let end = value.range(of: pair.1, range: start.upperBound..<value.endIndex) {
+                value.removeSubrange(start.lowerBound..<end.upperBound)
+            }
+        }
+        for character in ["《", "》", " ", "\t", "\n", "-", "–", "—", "·", ":", "：", "\""] {
+            value = value.replacingOccurrences(of: character, with: "")
+        }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -431,7 +431,7 @@ struct WellPlaylistDetailView: View {
                             PlayerCore.shared.play(queue: orderedTracks,
                                                    startIndex: playbackIndex(for: item))
                         }
-                        // ★ 2026-10-15 用户：长按歌曲弹出菜单（与 Kumone 同款能力）
+                        // ★ 2026-10-15 用户：长按歌曲弹出菜单（参考实现同款能力）
                         .contextMenu { songContextMenu(item) }
                 }
             }
@@ -588,9 +588,10 @@ struct WellPlaylistDetailView: View {
         }
 
         // 歌单简介：网易云歌单取服务端简介；每日推荐无简介接口，
-        // 按用户指定文案写死（2026-10-16 问题13：「捕捉你的音乐开口味 每日6：00更新每日推荐」）
+        // 按用户指定文案写死（2026-10-16 问题17：「捕捉你的音乐口味 每日6：00更新每日推荐」，
+        // 注意是「口味」不是「开口味」—— 用户当次原话）
         if dailyMode {
-            playlistDescription = "捕捉你的音乐开口味 每日6：00更新每日推荐"
+            playlistDescription = "捕捉你的音乐口味 每日6：00更新每日推荐"
         } else if case .playlist(let pid, let plat, _) = source, plat == .netease {
             playlistDescription = await NeteaseMusicAPI.shared.playlistDescription(id: pid)
         }

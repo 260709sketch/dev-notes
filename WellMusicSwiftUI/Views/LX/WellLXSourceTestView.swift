@@ -1,0 +1,597 @@
+import SwiftUI
+import UIKit
+
+// MARK: - 结果模型
+
+/// 单个平台的测试结果。
+struct WellLXPlatformTestResult: Identifiable, Equatable {
+    enum State: Equatable {
+        case pending
+        case testing
+        case success
+        case failed
+    }
+
+    /// 平台标识：kw / kg / tx / wy / mg
+    var id: String
+    var platformName: String
+    var keyword: String
+    var state: State = .pending
+    /// 搜索命中的歌曲（"歌名 - 歌手"）
+    var searchedSong: String = ""
+    /// 全流程耗时
+    var delay: TimeInterval?
+    /// 实际能取到的最高音质
+    var maxQuality: String?
+    /// 失败原因 / 降级说明
+    var message: String = ""
+    /// 逐档明细（"母带 ✓ 1.2s"）
+    var qualityDetails: [String] = []
+
+    var qualityShort: String {
+        guard let maxQuality else { return "—" }
+        return WellLXSourceTestModel.qualityLabel(maxQuality)
+    }
+}
+
+// MARK: - 视图模型
+
+/// 音源测试（问题12）：对五大平台（酷我 / 酷狗 / QQ / 网易 / 咪咕）逐个跑
+/// 「搜索 → 逐档取链」完整链路，产出「支持哪些平台 / 每个平台最高可用音质」的结论。
+///
+/// 与参考实现一致：关键词可自定义、超时与是否显示错误/降级可调、可随时停止、结果可复制。
+@MainActor
+final class WellLXSourceTestModel: ObservableObject {
+
+    struct Platform: Identifiable, Hashable {
+        let id: String
+        let name: String
+    }
+
+    /// 五大平台（顺序对齐参考实现）
+    static let platforms: [Platform] = [
+        Platform(id: "kw", name: "酷我"),
+        Platform(id: "kg", name: "酷狗"),
+        Platform(id: "tx", name: "QQ"),
+        Platform(id: "wy", name: "网易"),
+        Platform(id: "mg", name: "咪咕"),
+    ]
+
+    /// 音质档位（由高到低逐档测试，取第一个成功档为「最高可用」）
+    static let qualityLevels = ["master", "atmos_plus", "atmos", "hires", "flac", "320k", "128k"]
+
+    static func qualityLabel(_ quality: String) -> String {
+        switch quality {
+        case "master": return "母带"
+        case "atmos_plus": return "ATMOS+"
+        case "atmos": return "ATMOS"
+        case "hires": return "Hi-Res"
+        case "flac": return "FLAC"
+        case "320k": return "320K"
+        case "128k": return "128K"
+        default: return quality
+        }
+    }
+
+    /// 默认测试关键词（对齐参考实现）
+    static func defaultKeyword(for platform: String) -> String {
+        platform == "wy" ? "再也没有" : "晴天"
+    }
+
+    // MARK: 对外状态
+
+    @Published private(set) var results: [WellLXPlatformTestResult] = []
+    @Published private(set) var isRunning = false
+    @Published private(set) var logs: [String] = []
+    @Published private(set) var keywords: [String: String] = [:]
+    @Published var testTimeoutSeconds = 20
+    @Published var qualityTimeoutSeconds = 5
+    @Published var showErrors = true
+    @Published var showDowngrades = true
+    /// 音源能力版本号：激活的钱包音源变化后 +1，驱动「支持平台」重新计算
+    @Published private(set) var capabilityRevision = 0
+
+    // MARK: 内部
+
+    private var stopRequested = false
+    private var didLoad = false
+
+    private let keywordPrefix = "well.lx.srctest.keyword."
+    private let testTimeoutKey = "well.lx.srctest.timeout"
+    private let qualityTimeoutKey = "well.lx.srctest.qtimeout"
+    private let showErrorsKey = "well.lx.srctest.showErrors"
+    private let showDowngradesKey = "well.lx.srctest.showDowngrades"
+
+    private static let stampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    private static let reportFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+
+    // MARK: 读写设置
+
+    func loadIfNeeded() {
+        let defaults = UserDefaults.standard
+        if !didLoad {
+            didLoad = true
+            var map: [String: String] = [:]
+            for platform in Self.platforms {
+                map[platform.id] = defaults.string(forKey: keywordPrefix + platform.id)
+                    ?? Self.defaultKeyword(for: platform.id)
+            }
+            keywords = map
+            testTimeoutSeconds = (defaults.object(forKey: testTimeoutKey) as? Int) ?? 20
+            qualityTimeoutSeconds = (defaults.object(forKey: qualityTimeoutKey) as? Int) ?? 5
+            showErrors = (defaults.object(forKey: showErrorsKey) as? Bool) ?? true
+            showDowngrades = (defaults.object(forKey: showDowngradesKey) as? Bool) ?? true
+        }
+        capabilityRevision &+= 1
+    }
+
+    func keyword(for platform: String) -> String {
+        keywords[platform] ?? Self.defaultKeyword(for: platform)
+    }
+
+    func setKeyword(_ value: String, for platform: String) {
+        keywords[platform] = value
+        UserDefaults.standard.set(value, forKey: keywordPrefix + platform)
+    }
+
+    func persistSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(testTimeoutSeconds, forKey: testTimeoutKey)
+        defaults.set(qualityTimeoutSeconds, forKey: qualityTimeoutKey)
+        defaults.set(showErrors, forKey: showErrorsKey)
+        defaults.set(showDowngrades, forKey: showDowngradesKey)
+    }
+
+    // MARK: 支持的平台
+
+    /// 当前音源声明的能力里，哪些平台有可用音质（空 = 该音源不支持该平台）。
+    var supportedPlatformsText: String {
+        let capabilities = WellLXEngine.shared.capabilities
+        let names = Self.platforms.filter { platform in
+            (capabilities.first { $0.platform == platform.id }?.qualities.count ?? 0) > 0
+        }.map { $0.name }
+        return names.isEmpty ? "无" : names.joined(separator: "、")
+    }
+
+    var activeSourceName: String {
+        WellLXEngine.shared.currentSource?.name ?? WellLXSourceStore.shared.activeSource?.name ?? "未激活"
+    }
+
+    // MARK: 运行
+
+    func start() {
+        guard !isRunning else { return }
+        guard WellLXEngine.shared.currentSource != nil else {
+            logs.insert("[\(Self.stampFormatter.string(from: Date()))] [源测试] 没有已激活的音源，请先在「自定义音源」里导入并启用", at: 0)
+            results = []
+            return
+        }
+        stopRequested = false
+        isRunning = true
+        logs.removeAll()
+        results = Self.platforms.map {
+            WellLXPlatformTestResult(id: $0.id, platformName: $0.name, keyword: keyword(for: $0.id))
+        }
+        append("[源测试] 开始测试，音源：\(activeSourceName)")
+        append("[源测试] 支持平台：\(supportedPlatformsText)")
+        Task { await runAll() }
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        stopRequested = true
+        isRunning = false
+        append("[源测试] 用户请求停止")
+    }
+
+    private func runAll() async {
+        for (index, platform) in Self.platforms.enumerated() {
+            if stopRequested {
+                for rest in index..<Self.platforms.count where results[rest].state == .pending {
+                    results[rest].state = .failed
+                    results[rest].message = "已停止"
+                }
+                break
+            }
+            results[index].state = .testing
+            let outcome = await test(platform: platform, keyword: keyword(for: platform.id))
+            results[index] = outcome
+        }
+        isRunning = false
+        stopRequested = false
+        append("[源测试] 测试结束")
+        // 让「支持平台」按最新能力刷新
+        capabilityRevision &+= 1
+    }
+
+    private func test(platform: Platform, keyword: String) async -> WellLXPlatformTestResult {
+        var result = WellLXPlatformTestResult(id: platform.id, platformName: platform.name, keyword: keyword)
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            result.state = .failed
+            result.message = "关键词为空"
+            return result
+        }
+        let started = Date()
+        append("[\(platform.name)] 开始测试，关键词「\(trimmed)」")
+
+        let songs: [WellLXSongResult]
+        do {
+            songs = try await WellLXEngine.shared.search(
+                keyword: trimmed,
+                source: platform.id,
+                page: 1,
+                pageSize: 1,
+                timeout: TimeInterval(testTimeoutSeconds)
+            )
+        } catch {
+            result.state = .failed
+            result.message = "搜索失败：\(errorText(error))"
+            append("[\(platform.name)] \(result.message)")
+            return result
+        }
+
+        guard let song = songs.first else {
+            result.state = .failed
+            result.message = "搜索结果为空，该平台可能无此歌曲版权"
+            append("[\(platform.name)] \(result.message)")
+            return result
+        }
+        result.searchedSong = "\(song.title) - \(song.artist)"
+        append("[\(platform.name)] 命中：\(result.searchedSong)")
+
+        let songmid = "\(platform.id)_\(song.songmid)"
+        var details: [String] = []
+        var errors: [String] = []
+        var downgrades: [String] = []
+        var maxQuality: String?
+
+        for quality in Self.qualityLevels {
+            if stopRequested { break }
+            let qualityStarted = Date()
+            do {
+                let (url, actual) = try await WellLXEngine.shared.musicURL(
+                    songmid: songmid,
+                    title: song.title,
+                    artist: song.artist,
+                    quality: quality,
+                    mediaMid: song.mediaMid,
+                    copyrightId: song.copyrightId,
+                    timeout: TimeInterval(qualityTimeoutSeconds)
+                )
+                guard !url.isEmpty else { throw WellLXEngineError.invalidResponse }
+                let used = Date().timeIntervalSince(qualityStarted)
+                if maxQuality == nil { maxQuality = actual }
+                details.append("\(Self.qualityLabel(quality)) ✓ \(String(format: "%.1fs", used))")
+                append("[\(platform.name)] \(Self.qualityLabel(quality)) 可用（\(String(format: "%.1fs", used))）")
+                if showDowngrades, actual != quality {
+                    downgrades.append("\(Self.qualityLabel(quality))→\(Self.qualityLabel(actual))")
+                }
+            } catch {
+                let text = errorText(error)
+                details.append("\(Self.qualityLabel(quality)) ✗")
+                errors.append("\(Self.qualityLabel(quality))：\(text)")
+                append("[\(platform.name)] \(Self.qualityLabel(quality)) 失败：\(text)")
+            }
+        }
+
+        result.qualityDetails = details
+        result.maxQuality = maxQuality
+        result.delay = Date().timeIntervalSince(started)
+
+        var messages: [String] = []
+        if let maxQuality {
+            result.state = .success
+            messages.append("最高可用：\(Self.qualityLabel(maxQuality))")
+        } else {
+            result.state = .failed
+            messages.append("全部音质均不可用")
+        }
+        if showDowngrades, !downgrades.isEmpty {
+            messages.append("降级：" + downgrades.joined(separator: "、"))
+        }
+        if showErrors, !errors.isEmpty {
+            messages.append("失败：" + errors.joined(separator: "；"))
+        }
+        result.message = messages.joined(separator: "\n")
+        append("[\(platform.name)] 完成：\(result.message.replacingOccurrences(of: "\n", with: " / "))")
+        return result
+    }
+
+    // MARK: 日志 / 报告
+
+    func clearLogs() {
+        logs.removeAll()
+    }
+
+    var logText: String { logs.joined(separator: "\n") }
+
+    /// 纯文本报告，供复制分享。
+    var reportText: String {
+        var lines: [String] = []
+        lines.append("音源测试报告 · \(activeSourceName)")
+        lines.append("测试时间：\(Self.reportFormatter.string(from: Date()))")
+        lines.append("支持平台：\(supportedPlatformsText)")
+        if results.isEmpty {
+            lines.append("（暂无测试结果）")
+        }
+        for result in results {
+            lines.append("")
+            lines.append("【\(result.platformName)】\(stateText(result.state))　最高音质：\(result.qualityShort)")
+            if !result.searchedSong.isEmpty { lines.append("  命中：\(result.searchedSong)") }
+            if let delay = result.delay { lines.append(String(format: "  耗时：%.1fs", delay)) }
+            if !result.qualityDetails.isEmpty {
+                lines.append("  音质：\(result.qualityDetails.joined(separator: "  "))")
+            }
+            if !result.message.isEmpty {
+                lines.append("  \(result.message.replacingOccurrences(of: "\n", with: "　"))")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func stateText(_ state: WellLXPlatformTestResult.State) -> String {
+        switch state {
+        case .pending: return "待测试"
+        case .testing: return "测试中…"
+        case .success: return "可用"
+        case .failed: return "不可用"
+        }
+    }
+
+    private func append(_ line: String) {
+        logs.append("[\(Self.stampFormatter.string(from: Date()))] \(line)")
+        if logs.count > 600 { logs.removeFirst(logs.count - 600) }
+    }
+
+    private func errorText(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+// MARK: - 视图
+
+/// 音源源测试页（设置 → 高级功能 → 音源测试）。
+struct WellLXSourceTestView: View {
+    @StateObject private var model = WellLXSourceTestModel()
+    @ObservedObject private var store = WellLXSourceStore.shared
+    @State private var showLogs = false
+
+    var body: some View {
+        Form {
+            statusSection
+            keywordSection
+            settingsSection
+            if !model.results.isEmpty { resultSection }
+        }
+        .navigationTitle("音源测试")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if model.isRunning {
+                        Button { model.stop() } label: { Label("停止测试", systemImage: "stop.circle") }
+                    } else {
+                        Button { model.start() } label: { Label("开始测试", systemImage: "play.circle") }
+                            .disabled(store.activeSource == nil)
+                    }
+                    Button { showLogs = true } label: { Label("查看日志", systemImage: "doc.text.magnifyingglass") }
+                    Button {
+                        UIPasteboard.general.string = model.reportText
+                        ToastCenter.shared.show("测试结果已复制")
+                    } label: { Label("复制结果", systemImage: "doc.on.doc") }
+                    .disabled(model.results.isEmpty)
+                } label: {
+                    if model.isRunning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+        .task { model.loadIfNeeded() }
+        .sheet(isPresented: $showLogs) {
+            WellLXSourceTestLogSheet(text: model.logText) { model.clearLogs() }
+        }
+    }
+
+    // MARK: 当前音源
+
+    private var statusSection: some View {
+        Section {
+            HStack {
+                Label("当前音源", systemImage: "music.note")
+                Spacer()
+                Text(model.activeSourceName).foregroundStyle(.secondary)
+            }
+            HStack {
+                Label("支持平台", systemImage: "square.stack.3d.up")
+                Spacer()
+                Text(model.supportedPlatformsText).foregroundStyle(.secondary)
+            }
+            Button {
+                model.start()
+            } label: {
+                HStack {
+                    Spacer()
+                    Label(model.isRunning ? "测试中…" : "开始测试", systemImage: "play.fill")
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                }
+            }
+            .disabled(model.isRunning || store.activeSource == nil)
+        } footer: {
+            Text("逐个平台执行「搜索歌曲 → 逐档请求播放地址」，测出该音源实际支持哪些平台、每个平台最高能取到哪一档音质。测试期间会大量请求接口，请勿频繁重复测试。")
+        }
+    }
+
+    // MARK: 关键词
+
+    private var keywordSection: some View {
+        Section {
+            ForEach(WellLXSourceTestModel.platforms) { platform in
+                HStack {
+                    Text(platform.name).frame(width: 48, alignment: .leading)
+                    TextField("测试关键词", text: Binding(
+                        get: { model.keyword(for: platform.id) },
+                        set: { newValue in model.setKeyword(newValue, for: platform.id) }
+                    ))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                }
+            }
+        } header: {
+            Text("测试关键词")
+        } footer: {
+            Text("每个平台可分别填写用于搜索的歌名，测试时各取搜索结果第一条。")
+        }
+    }
+
+    // MARK: 设置
+
+    private var settingsSection: some View {
+        Section("测试设置") {
+            Stepper(value: $model.testTimeoutSeconds, in: 5...60, step: 5) {
+                HStack {
+                    Text("搜索超时")
+                    Spacer()
+                    Text("\(model.testTimeoutSeconds) 秒").foregroundStyle(.secondary)
+                }
+            }
+            Stepper(value: $model.qualityTimeoutSeconds, in: 1...30, step: 1) {
+                HStack {
+                    Text("单档取链超时")
+                    Spacer()
+                    Text("\(model.qualityTimeoutSeconds) 秒").foregroundStyle(.secondary)
+                }
+            }
+            Toggle("显示失败原因", isOn: $model.showErrors)
+            Toggle("显示音质降级", isOn: $model.showDowngrades)
+        }
+        .onChange(of: model.testTimeoutSeconds) { _ in model.persistSettings() }
+        .onChange(of: model.qualityTimeoutSeconds) { _ in model.persistSettings() }
+        .onChange(of: model.showErrors) { _ in model.persistSettings() }
+        .onChange(of: model.showDowngrades) { _ in model.persistSettings() }
+    }
+
+    // MARK: 结果
+
+    private var resultSection: some View {
+        Section {
+            ForEach(model.results) { result in
+                WellLXPlatformResultRow(result: result)
+            }
+        } header: {
+            Text("测试结果")
+        } footer: {
+            Text("「最高音质」= 由高到低逐档请求后第一个成功拿到的档位。")
+        }
+    }
+}
+
+// MARK: - 结果行
+
+private struct WellLXPlatformResultRow: View {
+    let result: WellLXPlatformTestResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                stateIcon
+                Text(result.platformName).font(.body.weight(.medium))
+                Spacer()
+                Text(result.qualityShort)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(result.state == .success ? Color.green : .secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            }
+            if !result.searchedSong.isEmpty {
+                Text("命中：\(result.searchedSong)").font(.caption).foregroundStyle(.secondary)
+            }
+            if let delay = result.delay {
+                Text(String(format: "耗时：%.1f 秒", delay)).font(.caption).foregroundStyle(.secondary)
+            }
+            if !result.qualityDetails.isEmpty {
+                Text(result.qualityDetails.joined(separator: "　"))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            if !result.message.isEmpty {
+                Text(result.message).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var stateIcon: some View {
+        switch result.state {
+        case .pending:
+            Image(systemName: "clock").foregroundStyle(.secondary)
+        case .testing:
+            ProgressView().controlSize(.small)
+        case .success:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        }
+    }
+}
+
+// MARK: - 日志
+
+private struct WellLXSourceTestLogSheet: View {
+    let text: String
+    let onClear: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(text.isEmpty ? "暂无日志" : text)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .textSelection(.enabled)
+            }
+            .navigationTitle("测试日志")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button {
+                            UIPasteboard.general.string = text
+                            ToastCenter.shared.show("日志已复制")
+                        } label: { Label("复制日志", systemImage: "doc.on.doc") }
+                        Button(role: .destructive, action: onClear) { Label("清空日志", systemImage: "trash") }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+    }
+}
+
+#Preview {
+    NavigationStack { WellLXSourceTestView() }
+}

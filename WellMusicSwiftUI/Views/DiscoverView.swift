@@ -127,8 +127,12 @@ struct DiscoverView: View {
 
     // MARK: - 我的音乐（我喜欢的音乐 / 最近播放 / 听歌排行 / 我的云盘）
 
-    /// 网易云「我喜欢的音乐」官方默认封面（未登录或拉不到用户封面时的兜底）。
-    private static let likedMusicCover = "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+    /// ★ 2026-10-16 用户（问题1）：「发现页我喜欢的音乐还是没封面」。
+    ///   根因：拉不到用户封面时回落到一个**硬编码的网易云封面 URL**，
+    ///   而该 URL 已失效（实测 HTTP 404，无论带不带 Referer/UA）→ 一片空白。
+    ///   处置：删掉死链，拉不到就传 nil —— 卡片走渐变底 + 心形图标
+    ///   （`WellFeatureCard.artwork` 的 else 分支），至少是完整好看的卡面。
+    ///   真实封面由 `likedFirstTrackCover` 三级兜底负责（见 NeteaseMusicAPI）。
 
     /// ★ 2026-10-15 用户：四张个人入口卡从「我的」页挪到发现页，
     /// 要求与「推荐歌单」一样的左右滑 —— 统一走 `WellShelf` 横向货架 +
@@ -144,8 +148,8 @@ struct DiscoverView: View {
                 WellFeatureCard(
                     title: "我喜欢的音乐",
                     icon: "heart.fill",
-                    // ★ 2026-10-16 用户：封面用用户「我喜欢」第一首歌的封面
-                    coverURL: likedCoverURL ?? Self.likedMusicCover,
+                    // ★ 2026-10-16 问题1：不再回落死链 URL；nil → 渐变卡面
+                    coverURL: likedCoverURL,
                     gradient: [Color(red: 0.88, green: 0.24, blue: 0.30),
                                Color(red: 0.65, green: 0.14, blue: 0.22)])
             }
@@ -347,7 +351,7 @@ struct DiscoverView: View {
     /// 心动模式：让服务端以一首种子歌 + 「我喜欢」歌单为口味范围推一串相近的歌。
     /// 网易云老规矩：「我喜欢的音乐」歌单 id == 用户 uid。
     ///
-    /// ★ 2026-10-16 用户反馈「已登录不能播」→ 两处对齐参考实现（kumone）：
+    /// ★ 2026-10-16 用户反馈「已登录不能播」→ 两处对齐参考实现：
     /// ① 种子改用**每日推荐的第一首**（参考实现同款；我喜欢的随机一首作兜底）；
     /// ② `intelligenceList` 接口本身切 weapi 加密通道（原先走明文，登录态拿不到数据）。
     /// 失败仍有逐级兜底（相似歌曲 simiSong → 我喜欢歌单随机起播），保证总能出歌。

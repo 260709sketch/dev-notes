@@ -18,6 +18,14 @@ final class NetworkClient {
         config.timeoutIntervalForResource = 30
         config.httpMaximumConnectionsPerHost = 6
         config.waitsForConnectivity = false
+        // ★ 关掉 URLSession 自带的 Cookie 管理（对齐参考实现）：
+        //   本项目所有平台接口都**自己拼 `Cookie` 头**，票据由 `NeteaseSession`
+        //   等各自的会话对象持有。若放任 URLSession 再管一份，会往全局
+        //   `HTTPCookieStorage` 里存一份、并在请求上追加一份 —— 同名 Key 撞车时
+        //   服务端取到哪一个不由我们决定（登录票据 MUSIC_U 撞上旧值就是「登录了
+        //   但服务端认为没登录」这类玄学问题的温床）。
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
         session = URLSession(configuration: config)
     }
 

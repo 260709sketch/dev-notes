@@ -64,7 +64,9 @@ struct WellArtistHomeView: View {
                 }
             }
         }
-        .navigationTitle("歌手主页")
+        // ★ 2026-10-16 用户（问题19）：搜索页进歌手主页，导航栏不要显示
+        //   「歌手主页」字样（返回按钮右边保持干净；歌手名在页面大头部里）
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         // ★ 2026-10-14 用户：移除导航栏上的搜索框。
         //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
@@ -298,7 +300,10 @@ struct WellArtistHomeView: View {
         //   「解析身份 → 拉歌曲 + 专辑」至少 2~3 轮网络，全完成前整页转圈。
         //   加会话级快照缓存：再次进入立即渲染缓存，随后照常后台刷新（数据新鲜）。
         let cacheKey = artistId + "|" + artistName
-        if let cached = WellArtistSnapshotCache.shared.get(cacheKey) {
+        // ★ 2026-10-16 问题15：快照缓存改成**落盘**的歌手主页缓存 —— 冷启动再次进入
+        //   同一歌手页也能先出内容；下面照常拉网络，拿到新内容覆盖缓存（图片由
+        //   WellImageCache 自动落盘），所以发新专辑/换头像后依旧会进缓存。
+        if let cached = await WellArtistHomeCache.shared.get(cacheKey) {
             realId = cached.artistId
             realMid = cached.artistMid
             resolvedAvatar = cached.avatar
@@ -352,7 +357,7 @@ struct WellArtistHomeView: View {
 
         // 写入快照缓存（供下次进入秒开；失败态不缓存）
         if !failed, !hotSongs.isEmpty || !albums.isEmpty {
-            WellArtistSnapshotCache.shared.set(cacheKey, WellArtistSnapshotCache.Snapshot(
+            await WellArtistHomeCache.shared.set(cacheKey, WellArtistHomeCache.Snapshot(
                 artistId: realId,
                 artistMid: realMid,
                 name: resolvedName.isEmpty ? artistName : resolvedName,
@@ -428,13 +433,29 @@ struct WellArtistHomeView: View {
     }
 }
 
-/// 歌手主页快照缓存（会话级；再次进入秒开，后台照常刷新）。
-@MainActor
-final class WellArtistSnapshotCache {
-    static let shared = WellArtistSnapshotCache()
-    private init() {}
+/// 歌手主页缓存：**落盘**保存「一次拉取到的歌手主页内容」。
+///
+/// 用户 2026-10-16 问题15：把没用的歌词缓存移除，换成**全新的歌手主页缓存** ——
+/// 「用户第一次打开该歌手主页之后，里面的歌手头像、歌曲封面、专辑封面自动进入缓存；
+/// 如果该歌手有最近更新（发新专辑 / 新歌、网易云换了头像），自动更新之后依旧进入缓存」。
+///
+/// 分两层落地：
+/// * **图片**：头像 / 歌曲封面 / 专辑封面在展示时已由 `WellImageCache` 自动落盘
+///   （磁盘副本，重启仍在），本类不重复存图，只保证「刷新出来的新封面一样会进缓存」
+///   —— 新封面在页面上展示即入缓存，符合用户描述。
+/// * **数据**：本类把歌手主页的数据存成 JSON（`Caches/artist-home/<md5>.json`），
+///   冷启动再次进入同一歌手页先用缓存**立刻出内容**，随后照常后台重新拉取；
+///   拉到新内容就覆盖缓存（新专辑/新头像随即被图片缓存接住）→ 数据变了才更新界面。
+///
+/// 容量：整体受「设置 → 存储 → 缓存上限」约束（`CacheBudget` 按最旧优先淘汰）。
+actor WellArtistHomeCache {
+    static let shared = WellArtistHomeCache()
 
-    struct Snapshot {
+    /// 缓存多久算「旧」（超过则在出缓存的同时后台重拉；现在是每次进入都会后台重拉，
+    /// 这个值只用于存储页展示与「多久没被访问就淘汰」的判断）。
+    static let staleAfter: TimeInterval = 6 * 60 * 60
+
+    struct Snapshot: Codable {
         var artistId: String
         var artistMid: String?
         var name: String
@@ -442,17 +463,98 @@ final class WellArtistSnapshotCache {
         var songs: [MusicItem]
         var albums: [WellAlbumSummary]
         var albumCount: Int?
+        /// 写入时间（存储页展示「缓存于 …」用）
+        var savedAt: Date = Date()
     }
 
-    private var storage: [String: Snapshot] = [:]
+    /// 内存层（同一会话内秒开，不用每次读盘）。
+    private var memory: [String: Snapshot] = [:]
+    private let maxMemoryEntries = 60
 
-    func get(_ key: String) -> Snapshot? { storage[key] }
+    private nonisolated(unsafe) let directory: URL
 
+    private init() {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        directory = caches.appendingPathComponent("artist-home", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    // MARK: 读写
+
+    /// 取缓存（内存 → 磁盘）。读盘时顺手刷新文件时间，作为 LRU 的「最近使用」标记。
+    func get(_ key: String) -> Snapshot? {
+        if let hit = memory[key] { return hit }
+        let url = fileURL(for: key)
+        guard let data = try? Data(contentsOf: url),
+              let snapshot = try? Self.decoder.decode(Snapshot.self, from: data) else { return nil }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        memory[key] = snapshot
+        trimMemory()
+        return snapshot
+    }
+
+    /// 写缓存（内存 + 磁盘）。
     func set(_ key: String, _ snapshot: Snapshot) {
-        storage[key] = snapshot
-        // 简单容量上限：超过 60 位歌手后丢弃最早写入的一条
-        if storage.count > 60, let firstKey = storage.keys.first {
-            storage.removeValue(forKey: firstKey)
+        memory[key] = snapshot
+        trimMemory()
+        guard let data = try? Self.encoder.encode(snapshot) else { return }
+        try? data.write(to: fileURL(for: key), options: .atomic)
+        Task { @MainActor in CacheBudget.enforceIfNeeded() }
+    }
+
+    /// 清空歌手主页缓存（存储页用）。
+    func clear() {
+        memory.removeAll()
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+        for file in files { try? FileManager.default.removeItem(at: file) }
+    }
+
+    // MARK: 存储占用（存储页 / 总预算用）
+
+    nonisolated func diskEntries() -> [CacheFileEntry] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
+        return files.compactMap { file in
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+            return CacheFileEntry(url: file,
+                                  size: Int64(values.fileSize ?? 0),
+                                  date: values.contentModificationDate ?? .distantPast,
+                                  kind: .artist)
         }
     }
+
+    nonisolated func diskUsage() -> Int64 {
+        diskEntries().reduce(Int64(0)) { $0 + $1.size }
+    }
+
+    /// 缓存了多少位歌手（存储页展示用）。
+    nonisolated func cachedCount() -> Int {
+        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.count ?? 0
+    }
+
+    // MARK: 内部
+
+    private func fileURL(for key: String) -> URL {
+        directory.appendingPathComponent(Data(key.utf8).md5Hex() + ".json")
+    }
+
+    private func trimMemory() {
+        guard memory.count > maxMemoryEntries else { return }
+        for key in memory.keys.prefix(memory.count - maxMemoryEntries) {
+            memory.removeValue(forKey: key)
+        }
+    }
+
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
 }

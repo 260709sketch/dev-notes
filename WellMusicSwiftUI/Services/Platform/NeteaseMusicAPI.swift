@@ -11,7 +11,7 @@ import Foundation
 ///   `code:200 + unikey`、轮询返回 `801`、合规号段 `weapi/sms/captcha/sent`
 ///   返回 `code:200`（真能下发验证码）—— 通道完全正常。
 ///   weapi 请求带设备指纹 Cookie（nuid / deviceId / NMTID），风控评分低于裸明文，
-///   与参考实现（kumone）保持一致。
+///   与参考实现保持一致。
 ///   ⚠️ 历史误判：本文件曾断言「weapi 已被服务端停用、恒返回空体」—— 那是加密
 ///   参数没配对导致的假象，已作废。谁再改登录相关代码，先跑一遍探针脚本确认。
 ///
@@ -78,19 +78,38 @@ final class NeteaseMusicAPI {
 
     // MARK: 通道（weapi / 加密请求，登录态接口首选）
 
+    /// weapi 请求的 Cookie 风格。
+    private enum WeapiCookieStyle {
+        /// 会话 Cookie + 设备指纹（默认）：给读接口用，风控评分更低。
+        case device
+        /// 只发会话 Cookie（+ `os=pc` / `appver=3.1.17`）。
+        ///
+        /// ★ 2026-10-16 用户「二维码/手机号登录照搬参考实现」→ 登录族一律用这个：
+        /// 参考实现登录时只发 `MUSIC_U` / `__csrf` / `NMTID` + 这两个标识，
+        /// **不带** `_ntes_nuid` / `deviceId` / `WNMCID` 那套浏览器设备指纹 ——
+        /// 设备指纹是「网页访客」特征，混进登录请求会让服务端把这次会话
+        /// 记成另一个设备，扫码头与轮询头对不上（票据就不落回来了）。
+        case session
+    }
+
     /// weapi POST（`https://music.163.com/weapi/…`）。
     ///
     /// - path 一律以 `/api/` 开头：内部去掉 `/api` 前缀拼到 `/weapi` 之后（与客户端一致）。
     /// - 加密：`NeteaseWeapi.weapi`（AES-CBC 双层 + **密钥反转后的无填充 RSA**）。
-    /// - Cookie = 设备指纹（首次自动生成并持久化）+ 登录票据；payload 的 `csrf_token`
-    ///   与 Cookie 里的 `__csrf` 保持一致。
+    /// - Cookie 见 `WeapiCookieStyle`；payload 的 `csrf_token` 与 Cookie 里的 `__csrf`
+    ///   保持一致，且非空时**同时拼进 URL query**（参考实现同款写法，服务端会校验两处一致）。
     private static func weapiRequest<T: Decodable>(_ path: String,
                                                    params: [String: Any],
-                                                   type: T.Type) async throws -> T {
-        let suffix = path.hasPrefix("/api") ? String(path.dropFirst(4)) : path
+                                                   type: T.Type,
+                                                   cookieStyle: WeapiCookieStyle = .device) async throws -> T {
+        var suffix = path.hasPrefix("/api") ? String(path.dropFirst(4)) : path
         var payload = params
         if payload["csrf_token"] == nil {
             payload["csrf_token"] = NeteaseSession.shared.cookie(named: "__csrf") ?? ""
+        }
+        let csrf = (payload["csrf_token"] as? String) ?? ""
+        if !csrf.isEmpty {
+            suffix += (suffix.contains("?") ? "&" : "?") + "csrf_token=\(csrf)"
         }
         let enc = NeteaseWeapi.weapi(payload)
         guard let paramsValue = enc["params"], !paramsValue.isEmpty,
@@ -98,6 +117,11 @@ final class NeteaseMusicAPI {
             throw NetworkClient.NetworkError.noData
         }
         let form = "params=\(escapeForm(paramsValue))&encSecKey=\(escapeForm(encSecKey))"
+        let cookie: String
+        switch cookieStyle {
+        case .device: cookie = neteaseWebCookieHeader()
+        case .session: cookie = NeteaseSession.shared.cookieHeader
+        }
         let resp = try await NetworkClient.shared.postRaw(
             "https://music.163.com/weapi\(suffix)",
             body: Data(form.utf8),
@@ -105,7 +129,7 @@ final class NeteaseMusicAPI {
             headers: [
                 "Referer": "https://music.163.com/",
                 "Origin": "https://music.163.com",
-                "Cookie": neteaseWebCookieHeader(),
+                "Cookie": cookie,
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             ]
         )
@@ -345,7 +369,13 @@ final class NeteaseMusicAPI {
             var description: String?
             var tracks: [Song]?
             var trackIds: [TrackID]?
+            /// 创建者（2026-10-16 用户 问题2：歌单页标题下要显示创建者头像 + 昵称）
+            var creator: Creator?
             struct TrackID: Decodable { var id: Int? }
+            struct Creator: Decodable {
+                var nickname: String?
+                var avatarUrl: String?
+            }
         }
     }
 
@@ -767,9 +797,13 @@ final class NeteaseMusicAPI {
     /// 发现页「我喜欢的音乐」卡封面要按网易云我喜欢第一首歌的封面拉取）。
     ///
     /// 通道与 `likedPlaylistCover` 相同（`api/v6/playlist/detail`，`n=1`），
-    /// 同一个响应里既有内嵌的 `playlist.tracks[0].al.picUrl` 也有歌单自己的
-    /// `coverImgUrl` —— 前者优先，拿不到再回退歌单封面，再不行回退 nil
-    /// （调用方有官方默认封面兜底）。
+    /// 三级兜底（2026-10-16 问题1：用户报「还是没封面」——
+    /// 原实现只认内嵌 `tracks[0]`，内嵌为空就整条返回 nil，
+    /// 调用方再回落到一个**已失效的硬编码封面 URL**，于是一片空白）：
+    ///   ① 内嵌 `playlist.tracks[0].al.picUrl`（最省一次请求）；
+    ///   ② 内嵌空 → 用 `trackIds[0]` 走 song/detail 拿专辑封面；
+    ///   ③ 再不行 → 歌单自己的 `coverImgUrl`；都没有 → nil
+    ///      （调用方此时应回落渐变底，而不是去加载死链）。
     func likedFirstTrackCover(uid: String) async throws -> String? {
         let idValue: Any = Int(uid).map { $0 as Any } ?? uid
         let params: [String: Any] = ["id": idValue, "n": 1, "s": 0, "csrf_token": ""]
@@ -777,6 +811,12 @@ final class NeteaseMusicAPI {
             "api/v6/playlist/detail", params: params, type: PlaylistDetailResponse.self)
         if let first = resp.playlist?.tracks?.first?.al?.picUrl, !first.isEmpty {
             return first
+        }
+        // 内嵌 tracks 为空：用 trackIds 首项补一次歌曲详情
+        if let firstId = resp.playlist?.trackIds?.first?.id,
+           let songs = try? await songDetails(ids: ["\(firstId)"]),
+           let cover = songs.first?.albumCoverURL, !cover.isEmpty {
+            return cover
         }
         return resp.playlist?.coverImgUrl
     }
@@ -1042,12 +1082,19 @@ final class NeteaseMusicAPI {
         return (resp.playlist?.tracks ?? []).compactMap(Self.mapSong)
     }
 
-    /// 歌单导入：返回歌单名 + 封面 + **完整**歌曲列表。
+    /// 歌单导入：返回歌单名 + 封面 + **完整**歌曲列表 + 创建者昵称/头像。
     ///
     /// `api/v6/playlist/detail` 明文可用，但 `tracks` 字段在大歌单上会被服务端
     /// 截断（约前 1000 首），所以照 `trackIds` 分块走 `api/v3/song/detail`
     /// 补齐（每块 500 个 id）。
-    func playlistForImport(id: String) async throws -> (name: String, coverURL: String?, tracks: [MusicItem]) {
+    ///
+    /// ★ 2026-10-16 问题2：返回值里一并带上创建者（`creator` 字段同一个响应
+    /// 里就有，不额外发请求）—— 歌单页标题下要显示创建者头像 + 昵称。
+    /// 元组加字段对既有调用点（都用具名访问）源码兼容。
+    func playlistForImport(id: String) async throws -> (
+        name: String, coverURL: String?, tracks: [MusicItem],
+        creatorName: String?, creatorAvatarURL: String?
+    ) {
         let idValue: Any = Int(id).map { $0 as Any } ?? id
         let params: [String: Any] = ["id": idValue, "n": 1000, "s": 0, "csrf_token": ""]
         let resp: PlaylistDetailResponse = try await Self.apiRequest(
@@ -1074,7 +1121,8 @@ final class NeteaseMusicAPI {
         }
 
         let tracks = songs.compactMap(Self.mapSong)
-        return (body.name ?? "导入的歌单", body.coverImgUrl, tracks)
+        return (body.name ?? "导入的歌单", body.coverImgUrl, tracks,
+                body.creator?.nickname, body.creator?.avatarUrl)
     }
 
     /// 专辑歌曲
@@ -1647,7 +1695,7 @@ final class NeteaseMusicAPI {
     ///
     /// ★ 2026-10-16 用户反馈「已登录不能播」→ 根因：原先走**明文**
     /// `api/playmode/intelligence/list`，登录态下该明文路径拿不到数据。
-    /// 参考实现（kumone）同款接口走 **weapi** `/api/playmode/intelligence/list`
+    /// 参考实现同款接口走 **weapi** `/api/playmode/intelligence/list`
     /// （songId / type=fromPlayOne / playlistId / startMusicId / count / csrf_token），
     /// 已切过来。种子由调用方给（参考实现用**每日推荐第一首**，见 DiscoverView）。
     func intelligenceList(songId: String, playlistId: String) async throws -> [MusicItem] {
@@ -1716,16 +1764,17 @@ final class NeteaseMusicAPI {
 
     /// 申请一个二维码 unikey。
     ///
-    /// 走 weapi（对齐参考实现）：`csrf_token` 必须进加密 payload，且请求带的
-    /// 设备指纹 Cookie 由 `weapiRequest` 统一拼。服务端会在响应头里下发
-    /// NMTID / `__csrf`，由 `weapiRequest` 吸收进会话，后续轮询原样带回。
+    /// 走 weapi，参数与 Cookie 与参考实现**逐字节一致**：`["type": 1]`，
+    /// Cookie 只发会话票据 + `os=pc` / `appver=3.1.17`（见 `WeapiCookieStyle.session`）。
+    /// `csrf_token` 由 `weapiRequest` 按会话里的 `__csrf` 自动填入。
     ///
-    /// 申请前先重置上一次的二维码会话 Cookie（NMTID/__csrf）—— 带着陈旧会话去申请，
-    /// 服务端会以会话特征不匹配为由拒绝（参考实现同款处理）。
+    /// ⚠️ 2026-10-16 改动：这里原本会先 `resetQRLoginSession()` 清掉 NMTID / `__csrf`
+    /// 再申请。实测参考实现**不做任何重置**，而清掉 NMTID 反而让「申请二维码」与
+    /// 「轮询」两次请求的设备特征对不上，手机端确认后票据不落回来 —— 已移除该重置。
     func qrLoginKey() async throws -> String {
-        NeteaseSession.shared.resetQRLoginSession()
         let resp: QRKeyResponse = try await Self.weapiRequest(
-            "/api/login/qrcode/unikey", params: ["type": 1], type: QRKeyResponse.self)
+            "/api/login/qrcode/unikey", params: ["type": 1],
+            type: QRKeyResponse.self, cookieStyle: .session)
         try Self.ensureOK(resp.code, fallback: "二维码获取失败")
         guard let key = resp.unikey, !key.isEmpty else {
             throw NetworkClient.NetworkError.noData
@@ -1733,16 +1782,16 @@ final class NeteaseMusicAPI {
         return key
     }
 
-    /// 轮询二维码状态（建议 1.5s 一次）。
+    /// 轮询二维码状态（参考实现 1.2s 一次）。
     ///
-    /// 走 weapi：`key` / `type` / `csrf_token` 全部进加密 payload —— 少了 payload
-    /// 里的 csrf，手机确认后服务端会一直回 802（参考实现同款坑）。
+    /// 走 weapi：`key` / `type` 两个参数，与参考实现一致（`csrf_token` 由
+    /// `weapiRequest` 自动补会话里的值）。少了 payload 里的 csrf，
+    /// 手机确认后服务端会一直回 802。
     func qrLoginCheck(key: String) async throws -> NeteaseQRState {
-        let csrf = NeteaseSession.shared.cookie(named: "__csrf") ?? ""
         let resp: QRPollResponse = try await Self.weapiRequest(
             "/api/login/qrcode/client/login",
-            params: ["key": key, "type": 1, "csrf_token": csrf],
-            type: QRPollResponse.self)
+            params: ["key": key, "type": 1],
+            type: QRPollResponse.self, cookieStyle: .session)
         // 803 时票据可能只在响应体的 cookie 字段里，Set-Cookie 已由 weapiRequest 吸收
         if let cookie = resp.cookie, !cookie.isEmpty {
             NeteaseSession.shared.ingest(cookieString: cookie)
@@ -1760,24 +1809,24 @@ final class NeteaseMusicAPI {
 
     /// 发送登录用短信验证码。
     ///
-    /// 走 weapi（对齐参考实现）：明文 `api/sms/captcha/sent` 实测对设备指纹要求更严，
-    /// weapi 通道 2026-10-16 实测合规号段返回 `code:200`。
+    /// 走 weapi，参数与参考实现一致：`ctcode` / `cellphone` / `secrete`；
+    /// `csrf_token` 不再手工写死空串，交给 `weapiRequest` 按会话里的 `__csrf` 补
+    /// （参考实现就是这样，会话里没有才是空串）。
     func sendLoginSMSCode(phone: String, countryCode: String = "86") async throws {
         let resp: CodeResponse = try await Self.weapiRequest(
             "/api/sms/captcha/sent",
-            // csrf_token 显式给空串：与参考实现的 payload 严格一致，
-            // 不让 weapiRequest 自动补一个可能已过期的会话 csrf
             params: ["cellphone": phone, "ctcode": countryCode,
-                     "secrete": "music_middleuser_pclogin", "csrf_token": ""],
-            type: CodeResponse.self)
+                     "secrete": "music_middleuser_pclogin"],
+            type: CodeResponse.self, cookieStyle: .session)
         try Self.ensureOK(resp.code, serverMessage: resp.message ?? resp.msg, fallback: "验证码发送失败")
     }
 
     /// 手机号登录：验证码与密码二选一。
     ///
-    /// 走 weapi（对齐参考实现）：`weapi/w/login/cellphone`。登录成功的票据
-    /// （`MUSIC_U` 等）走 `Set-Cookie` 下发，由 `weapiRequest` 自动吸收；
-    /// 个别情况下响应体也会给一份 `cookie` 字段，一并接住。
+    /// 走 weapi（对齐参考实现）：`weapi/w/login/cellphone`，参数
+    /// `type` / `https` / `phone` / `countrycode` / `captcha` / `remember` / `secureCaptcha`
+    /// 一一对应。登录成功的票据（`MUSIC_U` 等）走 `Set-Cookie` 下发，
+    /// 由 `weapiRequest` 自动吸收；个别情况下响应体也会给一份 `cookie` 字段，一并接住。
     @discardableResult
     func loginCellphone(phone: String,
                         captcha: String? = nil,
@@ -1786,14 +1835,15 @@ final class NeteaseMusicAPI {
         var params: [String: Any] = [
             "type": "1", "https": "true",
             "phone": phone, "countrycode": countryCode,
-            "remember": "true", "secureCaptcha": "", "csrf_token": "",
+            "remember": "true", "secureCaptcha": "",
         ]
         if let captcha, !captcha.isEmpty { params["captcha"] = captcha }
         // 约定：服务端要的是 MD5
         if let password, !password.isEmpty { params["password"] = CryptoUtils.md5(password) }
 
         let resp: LoginResponse = try await Self.weapiRequest(
-            "/api/w/login/cellphone", params: params, type: LoginResponse.self)
+            "/api/w/login/cellphone", params: params,
+            type: LoginResponse.self, cookieStyle: .session)
         if let cookie = resp.cookie, !cookie.isEmpty {
             NeteaseSession.shared.ingest(cookieString: cookie)
         }
@@ -1874,12 +1924,17 @@ final class NeteaseMusicAPI {
 
     /// 官方播放地址（登录态；云盘歌曲与「内置音源」兜底走这里）。
     ///
-    /// ★ 2026-10-16 用户反馈「云盘歌曲不能播放（已登录也不行）」→ 多端点 fallback：
-    /// 云盘上传歌的 id 只在账号云盘里有效，公共曲库的 `player/url/v1` 对它回空；
-    /// 云盘文件的直链在 **`download/url/v1`**（`data` 是单对象，不是数组）。
+    /// ★ 2026-10-16 用户反馈「云盘还是不能播放」→ 补齐三条通道 / 一处降级：
+    ///   * 云盘上传歌的 id 只在账号云盘里有效，公共曲库的 `player/url/v1` 对它回空；
+    ///   * **云盘文件没有档位概念**，按「无损 / Hi-Res」去要一定回 `url: null`；
+    ///   * 登录态下 eapi 通道（加密体内带客户端 header）比明文 / weapi 稳。
     /// 顺序（都带登录 Cookie）：
-    ///   ① 云盘曲目：`download/url/v1`（云盘直链）→ `player/url/v1` → weapi `player/url/v1`
-    ///   ② 普通曲目：`player/url/v1` → weapi `player/url/v1`
+    ///   ① 云盘曲目：老端点 `player/url`（按 `br` 取）→ eapi `player/url/v1`
+    ///      → `download/url/v1`（云盘文件直链）
+    ///   ② 全部曲目：明文 `player/url/v1` → weapi `player/url/v1` → eapi `player/url/v1`（兜底）
+    /// 每一步在**档位降级链**上最多试两档（用户档位 → standard，见
+    /// `WellAudioQuality.neteaseLevelLadder`）。普通曲目的通道顺序保持原样不变，
+    /// eapi 只作为最后一档兜底。
     /// 风控响应（`code:-462`，滑块验证）单独识别：换网络 / 稍后再试，
     /// 不再和「没有返回数据」混在一起看不清真因。
     func resolvePlayURL(item: MusicItem, quality: WellAudioQuality) async throws -> String {
@@ -1887,52 +1942,110 @@ final class NeteaseMusicAPI {
             throw NetworkClient.NetworkError.noData
         }
         let idValue: Any = Int(id).map { $0 as Any } ?? id
-        let playerParams: [String: Any] = [
-            "ids": "[\(id)]",
-            "level": quality.neteaseLevel,
-            "encodeType": "flac",
-            "csrf_token": "",
-        ]
-        let downloadParams: [String: Any] = [
-            "id": idValue,
-            "level": quality.neteaseLevel,
-            "encodeType": "flac",
-            "csrf_token": "",
-        ]
+        let idString = "[\(id)]"
         var riskMessage: String?
 
-        // ① 云盘曲目：先试云盘文件直链端点（data 为单对象）
+        /// 从响应里取地址（数组 / 单对象两种形态都接住）。
+        func extractURL(from resp: URLResponse) -> String? {
+            (resp.data?.items?.first?.url ?? resp.data?.single?.url).flatMap { $0.isEmpty ? nil : $0 }
+        }
+
+        /// eapi `player/url/v1`（加密体内必须带客户端 header，否则服务端静默忽略）。
+        func eapiPlayerURL(level: String) async -> URLResponse? {
+            let params: [String: Any] = [
+                "ids": idString,
+                "level": level,
+                "encodeType": "flac",
+                "header": NeteaseCrypto.eapiHeaderPayload(cookie: NeteaseSession.shared.cookieHeader),
+            ]
+            return try? await Self.eapiRequest("/api/song/enhance/player/url/v1",
+                                               params: params, type: URLResponse.self)
+        }
+
+        /// 明文 `player/url/v1`。
+        func plainPlayerURL(level: String) async -> URLResponse? {
+            try? await Self.apiRequest("api/song/enhance/player/url/v1",
+                                       params: ["ids": idString, "level": level,
+                                                "encodeType": "flac", "csrf_token": ""],
+                                       type: URLResponse.self)
+        }
+
+        // ① 云盘曲目：先走「按码率」的老端点 —— 云盘文件不带档位信息，命中率最高。
         if item.isCloudDisk {
-            if let resp: URLResponse = try? await Self.apiRequest(
-                "api/song/enhance/download/url/v1", params: downloadParams, type: URLResponse.self) {
-                if resp.isRiskControl {
-                    riskMessage = resp.message
-                } else if let url = resp.data?.single?.url ?? resp.data?.items?.first?.url,
-                          !url.isEmpty {
-                    return url
+            for br in quality.neteaseBitrateLadder {
+                if let resp: URLResponse = try? await Self.apiRequest(
+                    "api/song/enhance/player/url",
+                    params: ["id": idValue, "ids": idString, "br": br, "csrf_token": ""],
+                    type: URLResponse.self) {
+                    if resp.isRiskControl {
+                        riskMessage = resp.message
+                    } else if let address = extractURL(from: resp) {
+                        return address
+                    }
                 }
             }
         }
 
-        // ② 播放端点（明文）
-        if let resp: URLResponse = try? await Self.apiRequest(
-            "api/song/enhance/player/url/v1", params: playerParams, type: URLResponse.self) {
-            if resp.isRiskControl {
-                riskMessage = resp.message
-            } else if let url = resp.data?.items?.first?.url ?? resp.data?.single?.url,
-                      !url.isEmpty {
-                return url
+        // ② 云盘曲目：eapi 通道 + 档位降级（云盘上传文件在 standard 档一定有地址）
+        if item.isCloudDisk {
+            for level in quality.neteaseLevelLadder {
+                guard let resp = await eapiPlayerURL(level: level) else { continue }
+                if resp.isRiskControl {
+                    riskMessage = resp.message
+                } else if let address = extractURL(from: resp) {
+                    return address
+                }
             }
         }
 
-        // ③ weapi 播放端点（带设备指纹 Cookie，风控评分低于裸明文）
-        if let resp: URLResponse = try? await Self.weapiRequest(
-            "/api/song/enhance/player/url/v1", params: playerParams, type: URLResponse.self) {
+        // ③ 云盘曲目：文件直链端点（`data` 为单对象）
+        if item.isCloudDisk {
+            for level in quality.neteaseLevelLadder {
+                if let resp: URLResponse = try? await Self.apiRequest(
+                    "api/song/enhance/download/url/v1",
+                    params: ["id": idValue, "level": level,
+                             "encodeType": "flac", "csrf_token": ""],
+                    type: URLResponse.self) {
+                    if resp.isRiskControl {
+                        riskMessage = resp.message
+                    } else if let address = extractURL(from: resp) {
+                        return address
+                    }
+                }
+            }
+        }
+
+        // ④ 明文播放端点（普通曲目从这里开始，顺序与原实现一致）
+        for level in quality.neteaseLevelLadder {
+            guard let resp = await plainPlayerURL(level: level) else { continue }
             if resp.isRiskControl {
                 riskMessage = resp.message
-            } else if let url = resp.data?.items?.first?.url ?? resp.data?.single?.url,
-                      !url.isEmpty {
-                return url
+            } else if let address = extractURL(from: resp) {
+                return address
+            }
+        }
+
+        // ⑤ weapi 播放端点（带设备指纹 Cookie，风控评分低于裸明文）
+        for level in quality.neteaseLevelLadder {
+            if let resp: URLResponse = try? await Self.weapiRequest(
+                "/api/song/enhance/player/url/v1",
+                params: ["ids": idString, "level": level, "encodeType": "flac"],
+                type: URLResponse.self) {
+                if resp.isRiskControl {
+                    riskMessage = resp.message
+                } else if let address = extractURL(from: resp) {
+                    return address
+                }
+            }
+        }
+
+        // ⑥ eapi 播放端点（最后一档兜底：登录态下这条最不容易被风控吃掉）
+        for level in quality.neteaseLevelLadder {
+            guard let resp = await eapiPlayerURL(level: level) else { continue }
+            if resp.isRiskControl {
+                riskMessage = resp.message
+            } else if let address = extractURL(from: resp) {
+                return address
             }
         }
 

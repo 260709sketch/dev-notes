@@ -133,6 +133,10 @@ actor WellImageCache {
             // 落盘存的是**原图字节**，内存里放的是缩略图：
             // 以后要按更大尺寸重新出图时还有原始数据可用。
             try? data.write(to: directory.appendingPathComponent(key), options: .atomic)
+            // ★ 2026-10-16 问题15：图片以前**完全不受缓存上限约束**（只有 NSCache 的
+            //   内存上限），磁盘一路涨 —— 用户「设置了 4G 依旧超过 4G」就是这么来的。
+            //   现在每存一张都报给总预算管理器（内部 20 秒节流，不会真去扫目录）。
+            await MainActor.run { CacheBudget.enforceIfNeeded() }
             return image
         }
         inflight[key] = task
@@ -200,6 +204,25 @@ actor WellImageCache {
         memory.removeAllObjects()
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
         for file in files { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// 磁盘条目（供 `CacheBudget` 做总预算淘汰）。
+    nonisolated func diskEntries() -> [CacheFileEntry] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
+        return files.compactMap { file in
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+            return CacheFileEntry(url: file,
+                                  size: Int64(values.fileSize ?? 0),
+                                  date: values.contentModificationDate ?? .distantPast,
+                                  kind: .image)
+        }
+    }
+
+    /// 放掉内存缓存（总预算淘汰掉图片文件后调用）。
+    func dropMemoryCache() {
+        memory.removeAllObjects()
     }
 
     /// 当前磁盘占用字节数。

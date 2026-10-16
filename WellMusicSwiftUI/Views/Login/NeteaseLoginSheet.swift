@@ -349,7 +349,7 @@ struct NeteaseLoginSheet: View {
 
                 var consecutiveErrors = 0
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
                     guard !Task.isCancelled else { return }
 
                     let state: NeteaseMusicAPI.NeteaseQRState
@@ -358,7 +358,7 @@ struct NeteaseLoginSheet: View {
                         consecutiveErrors = 0
                     } catch {
                         consecutiveErrors += 1
-                        if consecutiveErrors >= 8 {
+                        if consecutiveErrors >= 15 {
                             qrPhase = .failed("二维码状态获取失败，请刷新重试")
                             return
                         }
@@ -630,7 +630,8 @@ struct NeteaseLoginSheet: View {
                 return
             }
             // 票据对不对，以「能否拉到账号资料」为准
-            if await session.refreshAccount() {
+            // 登录流程必须绕过刷新闸门（否则会被 60s 冷却挡住 → 「登录了没反应」）
+            if await session.refreshAccount(force: true) {
                 ToastCenter.shared.show("欢迎回来，\(session.account?.nickname ?? "")")
                 dismiss()
             } else {
@@ -651,12 +652,12 @@ struct NeteaseLoginSheet: View {
     @discardableResult
     private func completeLogin() async -> Bool {
         pollTask?.cancel()
-        var fetched = await session.refreshAccount()
+        var fetched = await session.refreshAccount(force: true)
         // 刚登录成功时账号资料接口偶发超时；票据已到手就再试两次，别急着下结论
         var attempt = 0
         while !fetched, session.isLoggedIn, attempt < 2 {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            fetched = await session.refreshAccount()
+            fetched = await session.refreshAccount(force: true)
             attempt += 1
         }
         guard fetched || session.isLoggedIn else { return false }

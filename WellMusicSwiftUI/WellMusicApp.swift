@@ -35,6 +35,30 @@ struct WellMusicApp: App {
         AudioSessionManager.configure()
         // 断开蓝牙耳机 / 拔出耳机时自动暂停（默认开启，可在设置页关闭）
         BluetoothAutoPauseManager.shared.start()
+        // ★ 2026-10-16 问题15：
+        //   ① 冷启动按「缓存上限」清一次超额缓存（含图片 / 歌曲 / 歌手主页缓存）——
+        //      原先上限只在歌曲下载完成后才检查，用户「设置了 4G 依旧超过 4G」；
+        //   ② 清掉历史版本遗留的歌词缓存目录（已废弃，且界面上已没有入口）。
+        //   （`CacheBudget` 是主 actor 隔离的，这里显式跳到主 actor 上调用。）
+        Task { @MainActor in
+            CacheBudget.enforceIfNeeded(force: true)
+        }
+        Self.removeLegacyLyricCacheIfNeeded()
+    }
+
+    /// 删除历史版本遗留的歌词缓存目录（一次性）。
+    ///
+    /// 用户 2026-10-16 问题15：「把没用的歌词缓存移除」。界面入口与写入都已去掉，
+    /// 这里把老版本留下的文件也一并清掉 —— 否则这部分空间用户再也无法释放。
+    private static func removeLegacyLyricCacheIfNeeded() {
+        let key = "wellmusic.cache.legacyLyricCacheCleaned"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let directory = caches.appendingPathComponent("amll-ttml", isDirectory: true)
+        if FileManager.default.fileExists(atPath: directory.path) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     var body: some Scene {

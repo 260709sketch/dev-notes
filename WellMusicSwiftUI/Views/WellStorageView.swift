@@ -1,12 +1,32 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 存储管理页：数据备份（导出 / 恢复）与缓存（图片 / 歌词）管理。
+/// 存储管理页：数据备份（导出 / 恢复）与缓存（图片 / 歌曲 / 歌手主页）管理。
+///
+/// ★ 2026-10-16 用户问题14：「设置新增存储分组，数据备份和存储移动出来放到存储分组里，
+///   数据备份和缓存分开」——本页按 `mode` 拆成两个入口：`缓存管理` 与 `数据备份`。
 ///
 /// 备份内容 = 白名单前缀下的全部 UserDefaults 项（收藏、歌单、播放历史、
 /// 歌词偏移、设置项等）；自定义音源脚本不在内（体积大且有单独的导入通道）。
 /// 恢复采用**覆盖写回**，重启 App 后全部生效。
 struct WellStorageView: View {
+    /// 页面模式（拆成两个设置入口）。
+    enum Mode {
+        /// 缓存管理（歌曲 / 图片 / 歌手主页）
+        case cache
+        /// 数据备份（导出 / 恢复）
+        case backup
+
+        var title: String {
+            switch self {
+            case .cache: return "缓存管理"
+            case .backup: return "数据备份"
+            }
+        }
+    }
+
+    var mode: Mode = .cache
+
     /// 参与备份的设置键前缀（本项目自定义键都在这几个前缀下）。
     private static let backupPrefixes = ["favorites.", "playlists.", "lyric", "player.", "wellmusic."]
 
@@ -18,73 +38,24 @@ struct WellStorageView: View {
     @State private var alertMessage = ""
     @State private var showingAlert = false
 
-    @State private var artworkCacheSize: String = "计算中…"
     @State private var audioCacheSize: String = "计算中…"
-    @State private var lyricCacheSize: String = "计算中…"
+    @State private var artworkCacheSize: String = "计算中…"
+    @State private var artistCacheSize: String = "计算中…"
+    @State private var artistCacheCount: Int = 0
+    @State private var totalCacheText: String = "计算中…"
+    @State private var limitText: String = "—"
 
     var body: some View {
         List {
-            Section {
-                Button {
-                    makeBackup()
-                } label: {
-                    Label("导出数据备份", systemImage: "square.and.arrow.up")
-                }
-                Button {
-                    showingImportPicker = true
-                } label: {
-                    Label("从备份文件恢复", systemImage: "square.and.arrow.down")
-                }
-            } header: {
-                Text("数据备份")
-            } footer: {
-                Text("备份包含收藏、歌单、播放历史、歌词偏移与全部设置项。恢复后将覆盖当前数据，重启 App 生效。")
-                    .font(.system(size: 12))
-            }
-
-            Section {
-                HStack {
-                    Text("歌曲缓存")
-                    Spacer()
-                    Text(audioCacheSize).foregroundStyle(.secondary)
-                }
-                Button(role: .destructive) {
-                    AudioCacheManager.shared.clear()
-                    refreshCacheSizes()
-                } label: {
-                    Label("清除歌曲缓存", systemImage: "trash")
-                }
-                HStack {
-                    Text("图片缓存")
-                    Spacer()
-                    Text(artworkCacheSize).foregroundStyle(.secondary)
-                }
-                Button(role: .destructive) {
-                    WellImageCache.shared.clear()
-                    refreshCacheSizes()
-                } label: {
-                    Label("清除图片缓存", systemImage: "trash")
-                }
-                HStack {
-                    Text("歌词缓存")
-                    Spacer()
-                    Text(lyricCacheSize).foregroundStyle(.secondary)
-                }
-                Button(role: .destructive) {
-                    clearLyricCache()
-                    refreshCacheSizes()
-                } label: {
-                    Label("清除歌词缓存", systemImage: "trash")
-                }
-            } header: {
-                Text("缓存")
-            } footer: {
-                Text("歌曲缓存为播放过的音频本地副本（上限可在「设置 → 播放 → 缓存上限」调整，超出自动淘汰最旧文件）；图片缓存为封面等网络图片的本地副本；歌词缓存为历史版本遗留的在线歌词副本（已不再使用），可安全清除。")
-                    .font(.system(size: 12))
+            switch mode {
+            case .backup:
+                backupSections
+            case .cache:
+                cacheSections
             }
         }
-        .navigationTitle("存储与备份")
-        .task { refreshCacheSizes() }
+        .navigationTitle(mode.title)
+        .task { await refreshCacheSizes() }
         .sheet(isPresented: $showingExporter) {
             if let url = exportingURL {
                 ShareSheetView(items: [url])
@@ -109,6 +80,101 @@ struct WellStorageView: View {
             }
         } message: {
             Text(alertMessage)
+        }
+    }
+
+    // MARK: - 数据备份
+
+    @ViewBuilder
+    private var backupSections: some View {
+        Section {
+            Button {
+                makeBackup()
+            } label: {
+                Label("导出数据备份", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                showingImportPicker = true
+            } label: {
+                Label("从备份文件恢复", systemImage: "square.and.arrow.down")
+            }
+        } header: {
+            Text("数据备份")
+        } footer: {
+            Text("备份包含收藏、歌单、播放历史、歌词偏移与全部设置项。恢复后将覆盖当前数据，重启 App 生效。")
+                .font(.system(size: 12))
+        }
+    }
+
+    // MARK: - 缓存管理
+
+    @ViewBuilder
+    private var cacheSections: some View {
+        Section {
+            HStack {
+                Text("合计占用")
+                Spacer()
+                Text(totalCacheText).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("上限")
+                Spacer()
+                Text(limitText).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("缓存总览")
+        } footer: {
+            Text("上限在「设置 → 存储 → 缓存上限」调整；歌曲、图片、歌手主页三类缓存**合计**超出上限时，自动按「最旧未使用」优先清理。")
+                .font(.system(size: 12))
+        }
+
+        Section {
+            HStack {
+                Text("歌曲缓存")
+                Spacer()
+                Text(audioCacheSize).foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) {
+                AudioCacheManager.shared.clear()
+                Task { await refreshCacheSizes() }
+            } label: {
+                Label("清除歌曲缓存", systemImage: "trash")
+            }
+
+            HStack {
+                Text("图片缓存")
+                Spacer()
+                Text(artworkCacheSize).foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) {
+                WellImageCache.shared.clear()
+                Task { await refreshCacheSizes() }
+            } label: {
+                Label("清除图片缓存", systemImage: "trash")
+
+            }
+
+            // ★ 2026-10-16 用户问题15：原来的「歌词缓存」是个已经不再使用的历史目录，
+            //   按要求移除，换成**歌手主页缓存**（首次打开歌手主页后，
+            //   头像 / 歌曲封面 / 专辑封面与主页数据一起进缓存，有更新时自动覆盖）。
+            HStack {
+                Text("歌手主页缓存")
+                Spacer()
+                Text("\(artistCacheSize) · \(artistCacheCount) 位歌手").foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) {
+                Task {
+                    await WellArtistHomeCache.shared.clear()
+                    await refreshCacheSizes()
+                }
+            } label: {
+                Label("清除歌手主页缓存", systemImage: "trash")
+            }
+        } header: {
+            Text("缓存")
+        } footer: {
+            Text("歌曲缓存为播放过的音频本地副本；图片缓存为封面、头像等网络图片的本地副本；歌手主页缓存保存打开过的歌手主页内容（含头像与专辑封面），再次进入无需等待。")
+                .font(.system(size: 12))
         }
     }
 
@@ -207,34 +273,14 @@ struct WellStorageView: View {
 
     // MARK: - 缓存
 
-    private func refreshCacheSizes() {
-        audioCacheSize = Self.formatBytes(Int(AudioCacheManager.shared.totalSize()))
-        artworkCacheSize = Self.formatBytes(Int(WellImageCache.shared.diskUsage()))
-        lyricCacheSize = Self.formatBytes(Self.directorySize(Self.lyricCacheDirectory))
-    }
-
-    private func clearLyricCache() {
-        let fm = FileManager.default
-        if let dir = Self.lyricCacheDirectory,
-           let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            for file in files { try? fm.removeItem(at: file) }
-        }
-    }
-
-    private static var lyricCacheDirectory: URL? {
-        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        return base.appendingPathComponent("amll-ttml", isDirectory: true)
-    }
-
-    private static func directorySize(_ url: URL?) -> Int {
-        guard let url,
-              let files = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return 0
-        }
-        return files.reduce(0) { partial, file in
-            let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return partial + size
-        }
+    private func refreshCacheSizes() async {
+        let usage = await CacheBudget.totalUsage()
+        audioCacheSize = Self.formatBytes(Int(usage.audio))
+        artworkCacheSize = Self.formatBytes(Int(usage.image))
+        artistCacheSize = Self.formatBytes(Int(usage.artist))
+        artistCacheCount = WellArtistHomeCache.shared.cachedCount()
+        totalCacheText = Self.formatBytes(Int(usage.audio + usage.image + usage.artist))
+        limitText = Self.formatBytes(Int(AudioCacheManager.byteLimit))
     }
 
     private static func formatBytes(_ bytes: Int) -> String {

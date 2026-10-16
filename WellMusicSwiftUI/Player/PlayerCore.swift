@@ -503,11 +503,6 @@ final class PlayerCore: NSObject, ObservableObject {
         engine.setVolume(percent: Double(volume) * 100)
     }
 
-    /// 应用均衡器（转发给 MPV 音频滤镜链）。
-    func applyEqualizer(enabled: Bool, gains: [Double]) {
-        engine.applyEqualizer(enabled: enabled, gains: gains)
-    }
-
     // MARK: - 播放/暂停淡入淡出（2026-10-16 用户）
 
     /// 淡入淡出开关（UserDefaults key）

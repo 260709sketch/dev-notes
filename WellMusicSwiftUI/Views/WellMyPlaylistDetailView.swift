@@ -54,6 +54,9 @@ struct WellMyPlaylistDetailView: View {
     /// 总曲目数：网易云歌单元数据里的总数可能大于已加载条数
     @State private var trackTotal: Int
     @State private var playlistDescription: String? = nil
+    /// 创建者头像（用户 2026-10-16 问题2：标题下要显示网易云创建者的头像 + 昵称）。
+    /// 有值 → 平台行用头像替代平台 App 图标；nil → 沿用平台图标。
+    @State private var creatorAvatarURL: String?
 
     @State private var isLoading: Bool
     @State private var failed = false
@@ -61,18 +64,26 @@ struct WellMyPlaylistDetailView: View {
     /// 正在播放曲目的 `keyOf`（只在换歌时更新，见类型注释）
     @State private var playingKey: String? = nil
 
-    init(source: WellMyPlaylistSource) {
+    init(source: WellMyPlaylistSource,
+         introText: String? = nil,
+         creatorAvatarURL: String? = nil) {
         self.source = source
+        _creatorAvatarURL = State(initialValue: creatorAvatarURL)
+        // 简介：调用方注入优先（问题10：我喜欢页「来自你的网易云音乐」）；
+        // .netease 源的 load() 会用服务端简介覆盖（那是真简介，优先级更高）
+        _playlistDescription = State(initialValue: introText)
         switch source {
         case .local(let playlist):
             _tracks = State(initialValue: playlist.tracks)
             _title = State(initialValue: playlist.name)
             _coverURL = State(initialValue: playlist.coverURL)
             // 导入的歌单带平台来源（netease / qq）→ 显示平台行 + 对应 App 图标；
-            // 用户自建歌单（sourcePlatform == nil）不显示平台行
-            _creatorName = State(initialValue: playlist.sourcePlatform.map {
-                $0 == "qq" ? "QQ音乐" : "网易云音乐"
-            })
+            // 用户自建歌单（sourcePlatform == nil）不显示平台行。
+            // ★ 2026-10-16 用户（问题4）：「导入的QQ音乐歌单不会有QQ音乐标识，
+            //   网易云的都有」。sourcePlatform 字段是后加的，之前导入的歌单
+            //   持久化数据里没有它 → 按曲目来源兜底推断（见 platformDisplayName），
+            //   旧导入自动补上标识，不用用户重新导入。
+            _creatorName = State(initialValue: Self.platformDisplayName(playlist))
             _trackTotal = State(initialValue: playlist.tracks.count)
             _isLoading = State(initialValue: false)
         case .netease(_, let name, let cover, let creator):
@@ -89,6 +100,25 @@ struct WellMyPlaylistDetailView: View {
             _creatorName = State(initialValue: creator)
             _trackTotal = State(initialValue: list.count)
             _isLoading = State(initialValue: false)
+        }
+    }
+
+    /// 本地歌单的平台显示名（detail 页标题下的平台行；nil = 不显示该行）。
+    ///
+    /// * `sourcePlatform` 有值（新导入）→ 直接映射；
+    /// * 没有（2026-10-16 之前导入的旧歌单）→ 按曲目来源兜底推断：
+    ///   **整本曲目全部来自同一平台**才认（混源 / 空歌单不猜，返回 nil）。
+    private static func platformDisplayName(_ playlist: Playlist) -> String? {
+        if let sp = playlist.sourcePlatform, !sp.isEmpty {
+            return sp == "qq" ? "QQ音乐" : "网易云音乐"
+        }
+        guard !playlist.tracks.isEmpty else { return nil }
+        let sources = Set(playlist.tracks.map(\.source))
+        guard sources.count == 1, let only = sources.first else { return nil }
+        switch only {
+        case .qq: return "QQ音乐"
+        case .netease: return "网易云音乐"
+        default: return nil
         }
     }
 
@@ -155,7 +185,15 @@ struct WellMyPlaylistDetailView: View {
 
                     if let creatorName, !creatorName.isEmpty {
                         HStack(spacing: 6) {
-                            platformMark
+                            // ★ 2026-10-16 用户（问题2）：有创建者头像就显示头像
+                            //   （圆形 18pt，与文字基线对齐），否则退回平台 App 图标
+                            if let creatorAvatarURL, !creatorAvatarURL.isEmpty {
+                                WellRemoteImage(url: creatorAvatarURL, displaySize: 36)
+                                    .frame(width: 18, height: 18)
+                                    .clipShape(Circle())
+                            } else {
+                                platformMark
+                            }
                             Text(creatorName)
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -322,6 +360,10 @@ struct WellMyPlaylistDetailView: View {
             if let cover = imported.coverURL, !cover.isEmpty { coverURL = cover }
             // 简介要单独取：playlistForImport 的返回值里不带 description
             playlistDescription = await NeteaseMusicAPI.shared.playlistDescription(id: id)
+            // ★ 2026-10-16 用户（问题2）：平台行显示**真实创建者**的头像 + 昵称
+            //   （playlistForImport 的返回值里已带上 creator，零额外请求）
+            if let n = imported.creatorName, !n.isEmpty { creatorName = n }
+            if let a = imported.creatorAvatarURL, !a.isEmpty { creatorAvatarURL = a }
         } catch {
             failed = true
         }

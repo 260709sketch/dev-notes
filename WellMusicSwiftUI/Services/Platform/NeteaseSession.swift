@@ -107,36 +107,44 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
     }
 
     /// 从登录响应的 `Set-Cookie` 头里吸收票据。
+    ///
+    /// ⚠️ 必须用 `HTTPCookie.cookies(withResponseHeaderFields:for:)` 来解析（对齐参考实现）：
+    /// `HTTPURLResponse.allHeaderFields` 是**字典**，同名的多条 `Set-Cookie` 会被
+    /// Foundation 折叠成 `A=1; Path=/, B=2; Path=/` 这种逗号拼接的**单条**字符串。
+    /// 早先这里手工按 `;` 切、只取第一段 —— 于是「服务端先下发 NMTID、再下发 MUSIC_U」
+    /// 时只能拿到第一个，`MUSIC_U` 被丢掉，表现为**扫码在手机上确认成功、
+    /// App 里却永远停在「等待确认」**（`isLoggedIn` 一直为 false）。
+    /// Foundation 的这条 API 对 Set-Cookie 专门做了逗号分组，能一次解析出全部 Cookie。
     func absorb(setCookieHeaders: [String]) {
+        let url = URL(string: "https://music.163.com")!
         var parsed: [String: String] = [:]
         for header in setCookieHeaders {
-            // 一个 Set-Cookie 头可能被折叠成多行（见 NetworkClient.headerFields）
+            // 一个头的值可能被折叠成多行（见 NetworkClient.headerFields）
             for line in header.components(separatedBy: "\n") {
-                guard let firstSegment = line.components(separatedBy: ";").first,
-                      let eq = firstSegment.firstIndex(of: "=") else { continue }
-                let name = firstSegment[..<eq].trimmingCharacters(in: .whitespaces)
-                let value = firstSegment[firstSegment.index(after: eq)...]
-                    .trimmingCharacters(in: .whitespaces)
-                guard !name.isEmpty, !value.isEmpty, value != "\"\"" else { continue }
-                parsed[String(name)] = String(value)
+                let cookies = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": line],
+                                                 for: url)
+                if cookies.isEmpty {
+                    // 兜底：Foundation 偶尔会因为属性不合法整条丢弃，
+                    // 这时退回「取第一段 name=value」的老办法，宁可少拿也不要空手。
+                    if let pair = Self.firstPair(in: line) { parsed[pair.0] = pair.1 }
+                    continue
+                }
+                for cookie in cookies where !cookie.value.isEmpty && cookie.value != "\"\"" {
+                    parsed[cookie.name] = cookie.value
+                }
             }
         }
         merge(cookies: parsed)
     }
 
-    /// 重置二维码登录的会话 Cookie（`NMTID` / `__csrf`），保留登录票据与其它字段。
-    ///
-    /// 对齐参考实现：每次生成新二维码前重置，避免带着上一次会话的陈旧 NMTID/__csrf
-    /// 去申请，导致服务端会话特征不匹配（表现为 unikey 申请失败或轮询卡在 802）。
-    /// ⚠️ 只清这两个键 —— 不清 `MUSIC_U`：从设置里重新打开登录面板，
-    /// 不该把已经登录的票据弄丢。
-    func resetQRLoginSession() {
-        lock.lock()
-        cookieStorage.removeValue(forKey: "NMTID")
-        cookieStorage.removeValue(forKey: "__csrf")
-        let snapshot = cookieStorage
-        lock.unlock()
-        persist(snapshot)
+    /// 从 `name=value; Path=/; …` 里取出 `name` / `value`。
+    private static func firstPair(in line: String) -> (String, String)? {
+        guard let firstSegment = line.components(separatedBy: ";").first,
+              let eq = firstSegment.firstIndex(of: "=") else { return nil }
+        let name = firstSegment[..<eq].trimmingCharacters(in: .whitespaces)
+        let value = firstSegment[firstSegment.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, !value.isEmpty, value != "\"\"" else { return nil }
+        return (String(name), String(value))
     }
 
     /// 退出登录：只清登录票据，保留其它无关 Cookie。
@@ -158,12 +166,28 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
     ///
     /// 登录成功后、以及每次冷启动进入「我的」页时都会调一次 ——
     /// 它同时也是**校验 Cookie 是否还有效**的手段（过期会返回未登录错误）。
+    ///
+    /// ★ 2026-10-16 用户（问题22）：「给所有界面新增缓存机制，频繁就限制刷新」。
+    ///   本方法被「我的」页、账号卡、账号设置页各挂了一个 `.task`，用户从歌单页
+    ///   来回切一次就会连着打好几次账号接口；每次回包都会替换 `account` 对象，
+    ///   于是头像、VIP 标识跟着重建 —— 叠加「红色的占位图」就是用户看到的
+    ///   「退出歌单页有时一直闪红色」。这里加一道 60 秒闸门：冷却期内直接返回
+    ///   当前登录态，不打网络、不动 `account`。
+    ///
+    /// 登录流程内部（扫码确认 / 手机号 / Cookie 验票）必须用 `force: true`
+    /// 绕过闸门，否则刚登录会被冷却挡住。
     @MainActor
     @discardableResult
-    func refreshAccount() async -> Bool {
+    func refreshAccount(force: Bool = false) async -> Bool {
         guard isLoggedIn else {
             account = nil
             return false
+        }
+        let gateKey = "netease.account"
+        if force { RefreshGate.shared.force(gateKey) }
+        guard RefreshGate.shared.allow(gateKey, cooldown: Self.accountRefreshCooldown) else {
+            // 冷却中：保留本地缓存的账号资料，界面照常显示
+            return account != nil
         }
         guard let fetched = try? await NeteaseMusicAPI.shared.userAccount() else {
             // 网络抖动不该直接把用户踢下线：保留本地缓存，界面照常显示
@@ -178,6 +202,9 @@ final class NeteaseSession: ObservableObject, @unchecked Sendable {
         Task { await NeteaseLikedAutoImporter.importIfNeeded() }
         return true
     }
+
+    /// 账号资料的自动刷新冷却（秒）。
+    private static let accountRefreshCooldown: TimeInterval = 60
 
     // MARK: 落盘
 

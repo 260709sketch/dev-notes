@@ -30,10 +30,11 @@ struct NeteaseAccountCard: View {
     }
 
     /// 卡片阴影（用户 2026-10-15：登录卡与近期播放卡加阴影）。
+    /// ★ 2026-10-16 用户（问题21）：原 7/0.10 太重，削减到 4/0.06。
     /// 半径/偏移刻意收敛：与下方卡片只隔 10pt，阴影别落到下一张卡上
     /// （下方卡片是不透明背景，轻微溢出也会被盖住，双保险）。
     private var cardShadow: (Color, CGFloat, CGFloat, CGFloat) {
-        (Color.black.opacity(0.10), 7, 0, 2)
+        (Color.black.opacity(0.06), 4, 0, 1)
     }
 
     var body: some View {
@@ -138,10 +139,8 @@ struct NeteaseAccountCard: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(AppTheme.secondaryBackground)
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-        }
+        // ★ 2026-10-16 用户（问题21）：去掉灰色描边（Color.primary.opacity(0.06)
+        //   在浅色界面下是一条灰线）—— 保留 overlay 由设计决定，此处仅移除灰边
         .shadow(color: cardShadow.0, radius: cardShadow.1, x: cardShadow.2, y: cardShadow.3)
         .task {
             // 进页面时顺手校验一次票据：过期就自动回到未登录态，
@@ -153,16 +152,16 @@ struct NeteaseAccountCard: View {
     /// VIP 标识：描边胶囊 + 档位字样（用户 2026-10-15：按网易云实际开通状态显示）。
     ///
     /// * 没开通（0 / 拿不到）→ **不显示**
-    /// * 黑胶VIP（11）/ 音乐包（10）→ `vip`
-    /// * 其他非零取值 → `svip`
+    /// * 已开通（任何非零档位）→ `VIP`
     ///
-    /// ⚠️ 网易云官方明示 SVIP「网页端暂不支持展示」，web 接口只区分 0/10/11；
-    /// 服务端哪天给出 SVIP 的独立取值，这里自动按 svip 显示，不用改代码。
+    /// ★ 2026-10-16 用户（问题23）：「我在网易云是VIP怎么给我标成SVIP了」。
+    ///   根因：旧逻辑只认 10/11 两个值，其余非零档位一律落 svip 分支；
+    ///   而网易云官方明示 SVIP「网页端暂不支持展示」，web 接口并不按
+    ///   10/11 之外的值可靠区分档位。修正：**非零即 VIP**，不再猜 svip。
     @ViewBuilder
     private func vipBadge(vipType: Int?) -> some View {
         if let vipType, vipType != 0 {
-            let text = (vipType == 10 || vipType == 11) ? "vip" : "svip"
-            Text(text)
+            Text("VIP")
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(AppTheme.accent)
                 .padding(.horizontal, 4.5)
@@ -181,11 +180,22 @@ struct NeteaseAccountCard: View {
     /// **圆角方形**（RoundedRectangle），头像 URL 缺失/加载失败时就露出方块。
     /// 修法：徽标本身改 `Circle`，且整个 ZStack 统一 `clipShape(Circle())`，
     /// 任何状态（加载中/失败/成功）都是圆的。
+    ///
+    /// ★ 2026-10-16 用户（问题22）：「登录卡片的头像是不是有红色的头图标在里面？
+    /// 从歌单页面退出来有时候会一直闪红色的」—— 定位到两处：
+    ///   ① 加载中的占位图原来是**品牌红**的圆形徽标（红底 + 白色音符），
+    ///      页面重算 / 行重建时先出这一帧，就是那下「红色的头」；
+    ///      现在换成品类中性的灰圆 + 人形图标，闪也只会闪一个浅灰圆。
+    ///   ② 头像地址之前直接 `URL(string:)` 就用：网易云会给 `http://` 地址，
+    ///      被 ATS 拦掉 → 图永远加载不出来 → 一直停在那张红色占位图上。
+    ///      现在统一走 `WellArtworkURL.resolved`（http→https + 按 52pt 要 192px 缩图），
+    ///      地址稳定、缓存键也就稳定，返回页面时能直接命中缓存的真图。
     private func avatar(_ account: NeteaseAccount) -> some View {
         ZStack {
-            if let urlString = account.avatarURL, let url = URL(string: urlString), !urlString.isEmpty {
+            if let url = WellArtworkURL.resolved(account.avatarURL,
+                                                 pixelSize: WellArtworkURL.pixelSize(forPoints: 52)) {
                 WellAsyncImage(url: url) {
-                    brandBadge(size: 52)
+                    avatarPlaceholder
                 }
                 .frame(width: 52, height: 52)
             } else {
@@ -197,6 +207,17 @@ struct NeteaseAccountCard: View {
         .overlay {
             Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
         }
+    }
+
+    /// 头像加载中的中性占位（刻意不用品牌色，避免「闪红色」）。
+    private var avatarPlaceholder: some View {
+        Circle()
+            .fill(Color.primary.opacity(0.08))
+            .overlay {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Color.secondary.opacity(0.7))
+            }
     }
 
     private func brandBadge(size: CGFloat) -> some View {

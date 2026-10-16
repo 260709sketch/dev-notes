@@ -23,6 +23,31 @@ struct SettingsView: View {
         return value > 0 ? "靠下 \(Int(value))pt" : "靠上 \(Int(-value))pt"
     }
 
+    // MARK: - 检查更新（问题16）
+
+    /// 是否正在检查。
+    @State private var checkingUpdate = false
+    /// 检查结果文案（「已是最新 / 有新版本」），显示在「检查更新」右侧。
+    @State private var updateStatus: String?
+    /// 检测到新版本时的详情（弹窗展示）。
+    @State private var updateInfo: UpdateChecker.UpdateInfo?
+    @State private var showingUpdateSheet = false
+
+    private func checkForUpdates() async {
+        checkingUpdate = true
+        defer { checkingUpdate = false }
+        switch await UpdateChecker.check() {
+        case .upToDate(let remote):
+            updateStatus = "已是最新（\(remote)）"
+        case .newer(let info):
+            updateStatus = "有新版本 \(info.version)"
+            updateInfo = info
+            showingUpdateSheet = true
+        case .failed(let message):
+            updateStatus = message
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -83,24 +108,6 @@ struct SettingsView: View {
                         get: { (UserDefaults.standard.object(forKey: AudioCacheManager.enabledKey) as? Bool) ?? true },
                         set: { UserDefaults.standard.set($0, forKey: AudioCacheManager.enabledKey) }
                     ))
-                    // 缓存上限（用户自选档位；2026-10-15）
-                    if (UserDefaults.standard.object(forKey: AudioCacheManager.enabledKey) as? Bool) ?? true {
-                        Picker("缓存上限", selection: Binding(
-                            get: {
-                                let current = AudioCacheManager.byteLimit
-                                return AudioCacheManager.LimitOption(rawValue: current)
-                                    ?? .gb2
-                            },
-                            set: { option in
-                                UserDefaults.standard.set(option.rawValue, forKey: AudioCacheManager.limitKey)
-                                AudioCacheManager.shared.enforceLimitNow()
-                            }
-                        )) {
-                            ForEach(AudioCacheManager.LimitOption.allCases) { option in
-                                Text(option.displayName).tag(option)
-                            }
-                        }
-                    }
                     // 播放/暂停淡入淡出（2026-10-16 用户：未开启时不显示档位调节）
                     Toggle("播放淡入淡出", isOn: $fadeEnabled)
                     if fadeEnabled {
@@ -123,14 +130,11 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    // 均衡器入口（2026-10-15 用户）
-                    NavigationLink {
-                        WellEqualizerView()
-                    } label: {
-                        Label("均衡器", systemImage: "slider.vertical.3")
-                    }
                 }
 
+                // ★ 2026-10-16 用户问题12：「在我们设置新增高级功能，用收纳这些功能，
+                //   包含现有的内置音源」。
+                //   → 高级功能分组 = 内置音源开关 + 当前音源 + 自定义音源管理/状态/测试。
                 Section {
                     HStack {
                         Text("当前音源")
@@ -146,23 +150,64 @@ struct SettingsView: View {
                         get: { UserDefaults.standard.bool(forKey: MusicURLResolver.builtinSourceKey) },
                         set: { UserDefaults.standard.set($0, forKey: MusicURLResolver.builtinSourceKey) }
                     ))
-                } header: {
-                    Text("自定义音源")
-                } footer: {
-                    Text("开启「内置音源」后，未导入自定义音源（或全部音源解析失败）时，自动通过第三方解析获取完整音频（含 320k 高码率）。受版权限制的个别歌曲解析不到时回退官方通道（可能仅试听 30 秒）——这类歌可导入自定义音源解决。")
-                        .font(.system(size: 12))
-                }
-                Section {
                     NavigationLink {
                         WellLXSourceManageView()
                     } label: {
-                        Label("管理自定义音源", systemImage: "square.stack.3d.up")
+                        Label("自定义音源", systemImage: "square.stack.3d.up")
+                    }
+                    NavigationLink {
+                        WellLXSourceTestView()
+                    } label: {
+                        Label("音源测试", systemImage: "stethoscope")
                     }
                     NavigationLink {
                         WellLXSourceStatusView()
                     } label: {
                         Label("音源状态", systemImage: "waveform.path.ecg")
                     }
+                } header: {
+                    Text("高级功能")
+                } footer: {
+                    Text("开启「内置音源」后，未导入自定义音源（或全部音源解析失败）时，自动通过第三方解析获取完整音频（含 320k 高码率）。受版权限制的个别歌曲解析不到时回退官方通道（可能仅试听 30 秒）——这类歌可导入自定义音源解决。")
+                        .font(.system(size: 12))
+                }
+
+                // ★ 2026-10-16 用户问题14/15：「设置新增存储分组，数据备份和存储移出来放到
+                //   存储分组里面，数据备份和缓存分开」「缓存上限也加入存储分组里面」。
+                //   → 存储分组 = 缓存上限（原来在「播放」里）+ 缓存管理 + 数据备份三个入口，
+                //     备份与缓存彻底分开成两个页面。
+                Section {
+                    // 缓存上限：歌曲 / 图片 / 歌手主页三类缓存的**合计**上限
+                    Picker("缓存上限", selection: Binding(
+                        get: {
+                            let current = AudioCacheManager.byteLimit
+                            return AudioCacheManager.LimitOption(rawValue: current)
+                                ?? .gb2
+                        },
+                        set: { option in
+                            UserDefaults.standard.set(option.rawValue, forKey: AudioCacheManager.limitKey)
+                            AudioCacheManager.shared.enforceLimitNow()
+                        }
+                    )) {
+                        ForEach(AudioCacheManager.LimitOption.allCases) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    NavigationLink {
+                        WellStorageView(mode: .cache)
+                    } label: {
+                        Label("缓存管理", systemImage: "internaldrive")
+                    }
+                    NavigationLink {
+                        WellStorageView(mode: .backup)
+                    } label: {
+                        Label("数据备份", systemImage: "externaldrive.badge.timemachine")
+                    }
+                } header: {
+                    Text("存储")
+                } footer: {
+                    Text("「缓存上限」是歌曲、图片、歌手主页三类缓存的合计上限，超出后自动清理最久未使用的内容。")
+                        .font(.system(size: 12))
                 }
 
                 Section("界面") {
@@ -211,27 +256,99 @@ struct SettingsView: View {
                     }
                 }
 
-                Section {
-                    NavigationLink {
-                        WellStorageView()
-                    } label: {
-                        Label("存储与备份", systemImage: "externaldrive")
-                    }
-                }
-
+                // ★ 2026-10-16 用户问题16：
+                //   ① 「关于」里新增「开发者」，右侧名字 Well，位置在版本**上面**；
+                //   ② 新增「名称」= Well Music；
+                //   ③ 「版本」只保留当前 1.0.0（原先显示「1.0.0 (SwiftUI)」）；
+                //   ④ 新增「检查更新」与更新机制（从 GitHub 仓库拉取，见 `UpdateChecker`）。
                 Section("关于") {
+                    HStack {
+                        Text("名称")
+                        Spacer()
+                        Text(UpdateChecker.appName)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("开发者")
+                        Spacer()
+                        Text("Well")
+                            .foregroundStyle(.secondary)
+                    }
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("1.0.0 (SwiftUI)")
+                        Text(UpdateChecker.currentVersion)
                             .foregroundStyle(.secondary)
                     }
+                    Button {
+                        Task { await checkForUpdates() }
+                    } label: {
+                        HStack {
+                            Text("检查更新")
+                            Spacer()
+                            if checkingUpdate {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text(updateStatus ?? "")
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .disabled(checkingUpdate)
                 }
             }
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") { dismiss() }
+                }
+            }
+            // 有新版本时的详情弹窗（含发布页入口，点「前往下载」用系统浏览器打开）
+            .sheet(isPresented: $showingUpdateSheet) {
+                if let info = updateInfo {
+                    NavigationStack {
+                        List {
+                            Section("新版本") {
+                                HStack {
+                                    Text("版本")
+                                    Spacer()
+                                    Text(info.version).foregroundStyle(.secondary)
+                                }
+                                if !info.title.isEmpty, info.title != info.version {
+                                    HStack {
+                                        Text("标题")
+                                        Spacer()
+                                        Text(info.title).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                }
+                            }
+                            if !info.notes.isEmpty {
+                                Section("更新内容") {
+                                    Text(info.notes)
+                                        .font(.system(size: 13))
+                                }
+                            }
+                            Section {
+                                if let url = info.pageURL {
+                                    Link(destination: url) {
+                                        Label("前往下载", systemImage: "arrow.down.circle")
+                                    }
+                                } else {
+                                    Text("该版本没有附带下载页，请在仓库的 Releases 里查看。")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .navigationTitle("发现新版本")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("完成") { showingUpdateSheet = false }
+                            }
+                        }
+                    }
                 }
             }
         }

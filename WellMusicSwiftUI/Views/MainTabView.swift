@@ -11,6 +11,8 @@ import UIKit
 /// 落到本地 @State 即可。
 struct MainTabView: View {
     @EnvironmentObject private var settings: SettingsManager
+    /// 自定义音源仓库：仅用于展示「音源脚本上报更新」的弹窗（低频，无性能风险）。
+    @ObservedObject private var lxStore = WellLXSourceStore.shared
     @State private var selectedTab: WellTab = .radio
     @State private var showingNowPlaying = false
 
@@ -37,6 +39,27 @@ struct MainTabView: View {
         tabInterface
             .modifier(HiddenChromeBackgroundModifier())
             .overlay(alignment: .top) { WellToastView() }
+            // 自定义音源脚本上报更新 → 弹窗询问是否去更新（每音源开关见音源管理页）
+            .alert(
+                Text("音源更新提示"),
+                isPresented: Binding(
+                    get: { lxStore.pendingUpdateAlert != nil },
+                    set: { newValue in if !newValue { lxStore.dismissUpdateAlert() } }
+                ),
+                presenting: lxStore.pendingUpdateAlert
+            ) { notice in
+                if notice.hasLink, let url = URL(string: notice.updateUrl) {
+                    Button("打开更新链接") {
+                        UIApplication.shared.open(url)
+                        lxStore.dismissUpdateAlert()
+                    }
+                }
+                Button("关闭", role: .cancel) { lxStore.dismissUpdateAlert() }
+            } message: { notice in
+                Text([notice.sourceName + " 有更新", notice.log]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n"))
+            }
             .fullScreenCover(isPresented: $showingNowPlaying) {
                 NowPlayingRouterView(onDismiss: { showingNowPlaying = false })
             }

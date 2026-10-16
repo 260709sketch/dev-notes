@@ -128,7 +128,7 @@ enum CommentsAPI {
         return CommentPage(hot: hotFinal, latest: latest, total: total, hasMore: latest.count >= pageSize)
     }
 
-    /// 酷狗行解析（参考 Kumone parseCommentRows：字段 user_name/user_pic/comment_content/
+    /// 酷狗行解析（参考实现的评论文本解析：字段 user_name/user_pic/comment_content/
     /// praisenum/like.likenum/addtime；addtime 可能是 Double/Int/日期字符串）。
     private static func parseKugouRows(_ rows: [[String: Any]], seen: inout Set<String>) -> [SongComment] {
         rows.compactMap { raw -> SongComment? in
@@ -185,7 +185,7 @@ enum CommentsAPI {
         let trackInfo = ((infoJSON["songInfo"] as? [String: Any])?["data"] as? [String: Any])?["track_info"] as? [String: Any]
         guard let numId = (trackInfo?["id"] as? NSNumber)?.stringValue, numId != "0" else { return nil }
 
-        // 2) 全量评论：⚠️ 必须 POST form（GET 同地址拿不到数据），参考 Kumone QQMusicAPI.comments
+        // 2) 全量评论：⚠️ 必须 POST form（GET 同地址拿不到数据），参考实现的评论接口同款
         var comps = URLComponents(string: "https://c.y.qq.com/base/fcgi-bin/fcg_global_comment_h5.fcg")!
         comps.queryItems = [
             URLQueryItem(name: "format", value: "json"),

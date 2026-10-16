@@ -100,7 +100,9 @@ final class AudioCacheManager {
                 guard let tempURL else { return }
                 try? FileManager.default.removeItem(at: destination)
                 try? FileManager.default.moveItem(at: tempURL, to: destination)
-                self.enforceLimitIfNeeded()
+                // ★ 2026-10-16 问题15：容量检查改成**总预算**（歌曲 + 图片 + 歌手主页缓存合计），
+                //   不能再只盯着歌曲缓存自己那点体积。
+                CacheBudget.enforceIfNeeded()
             }
         }.resume()
     }
@@ -124,6 +126,23 @@ final class AudioCacheManager {
         for file in files { try? FileManager.default.removeItem(at: file) }
     }
 
+    /// 缓存文件清单（路径 / 大小 / 最后访问时间），交给 `CacheBudget` 做**总预算**淘汰。
+    ///
+    /// ★ 2026-10-16 问题15：以前这里自己算自己的上限，图片缓存完全不受限，
+    ///   所以「设置了 4G 依旧超过 4G」。现在统一由 `CacheBudget` 按三类缓存全局 LRU 淘汰。
+    func diskEntries() -> [CacheFileEntry] {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
+        return files.compactMap { file in
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+            return CacheFileEntry(url: file,
+                                  size: Int64(values.fileSize ?? 0),
+                                  date: values.contentModificationDate ?? .distantPast,
+                                  kind: .audio)
+        }
+    }
+
     // MARK: - 内部
 
     private func cacheKey(for item: MusicItem) -> String {
@@ -134,28 +153,8 @@ final class AudioCacheManager {
         directory.appendingPathComponent(cacheKey(for: item) + ".audio")
     }
 
-    /// 超出容量上限时按修改时间（最后访问/写入）从旧到新淘汰。
-    private func enforceLimitIfNeeded() {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
-        var entries: [(url: URL, size: Int64, date: Date)] = files.compactMap { file in
-            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-            return (file, Int64(values.fileSize ?? 0), values.contentModificationDate ?? .distantPast)
-        }
-        var total = entries.reduce(Int64(0)) { $0 + $1.size }
-        let limit = Self.byteLimit
-        guard total > limit else { return }
-        entries.sort { $0.date < $1.date }
-        for entry in entries {
-            guard total > limit else { break }
-            try? FileManager.default.removeItem(at: entry.url)
-            total -= entry.size
-        }
-    }
-
-    /// 立即执行一次容量检查（用户改小上限时调用）。
+    /// 立即执行一次容量检查（用户改上限时调用）—— 走**总预算**（含图片/歌手主页缓存）。
     func enforceLimitNow() {
-        enforceLimitIfNeeded()
+        CacheBudget.enforceIfNeeded(force: true)
     }
 }

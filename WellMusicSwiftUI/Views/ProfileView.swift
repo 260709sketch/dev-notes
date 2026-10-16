@@ -201,8 +201,10 @@ struct ProfileView: View {
             }
             // ★ 2026-10-15 用户：登录/退出网易云后，收藏专辑与账号歌单要跟着刷新
             //   （原先只在进页 task 拉一次，登录后回来还是空 = 「不同步」的观感来源）。
+            // ★ 2026-10-16：这类「必须立刻同步」的场景要绕过刷新闸门（force），
+            //   否则刚登录就被 5 分钟冷却挡住，观感还是「登录了没同步」。
             .onChange(of: session.isLoggedIn) { _ in
-                Task { await loadContent() }
+                Task { await loadContent(force: true) }
             }
             // 合并歌单缓存的重算时机（本地歌单变化 / 排序变化；性能优化配套）
             .onChange(of: appState.playlists) { _ in
@@ -356,13 +358,10 @@ struct ProfileView: View {
             .padding(12)
             .background(AppTheme.secondaryBackground,
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-            )
-            // ★ 2026-10-15 用户：这张卡也要阴影（与登录卡同款；
-            //   半径收敛，不会落到下方「我的歌单」货架上）
-            .shadow(color: Color.black.opacity(0.10), radius: 7, x: 0, y: 2)
+            // ★ 2026-10-16 用户（问题21）：阴影削减（7/0.10 → 4/0.06），
+            //   去掉灰色描边（原先 Color.primary.opacity(0.06) 在浅色界面下
+            //   就是一条灰线，用户明确「去除掉或者改成白色」—— 选择去除）
+            .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 1)
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -370,8 +369,9 @@ struct ProfileView: View {
     }
 
     /// 横卡副标题：歌曲 / MV 各多少条。
+    /// ★ 2026-10-16 用户（问题20）：数据纯本地，副标题加「本地」前缀明示。
     private var recentPlaysSubtitle: String {
-        "\(appState.playHistory.count) 首歌曲 · \(appState.mvHistory.count) 个 MV"
+        "本地 \(appState.playHistory.count) 首歌曲 · \(appState.mvHistory.count) 个 MV"
     }
 
     // MARK: - 分组② 我的歌单（标题 + 查看更多 + 横滑）
@@ -533,7 +533,8 @@ struct ProfileView: View {
                                 .font(.system(size: 14))
                                 .foregroundStyle(.secondary)
                             Button("重试") {
-                                Task { await loadContent() }
+                                // 用户主动重试：绕过冷却（否则点一下没反应）
+                                Task { await loadContent(force: true) }
                             }
                             .font(.system(size: 14, weight: .medium))
                             .buttonStyle(.plain)
@@ -596,15 +597,27 @@ struct ProfileView: View {
 
     // MARK: - 数据加载
 
-    private func loadContent() async {
+    private func loadContent(force: Bool = false) async {
+        // ★ 2026-10-16 用户问题5/问题22：「打开专辑退出来后所有封面闪一下，好像是自动
+        //   又刷新了」+「进入歌单后回到我的页不要再次触发刷新，频繁就限制刷新」。
+        //    → 这里上「刷新闸门」：冷却期内直接返回，保留页面上已有的数据，
+        //      不再打网络、不重建列表 —— 封面自然不会再集体闪一下。
+        //   用户主动点「重试」、以及登录/退出这类必须立刻同步的场景走 force。
+        let gateKey = "profile.content"
+        if force { RefreshGate.shared.force(gateKey) }
+        guard RefreshGate.shared.allow(gateKey) else { return }
+
         isLoadingContent = true
         if session.isLoggedIn {
             async let albumsTask = NeteaseMusicAPI.shared.favoritedAlbums(limit: 200)
             if let uid = session.account?.userId {
                 async let playlistsTask = NeteaseMusicAPI.shared.userPlaylists(uid: uid)
-                neteasePlaylists = (try? await playlistsTask) ?? []
+                let fetched = (try? await playlistsTask) ?? []
+                // 内容没变就不赋值：换一份等值的新数组同样会让货架整体重算
+                if fetched != neteasePlaylists { neteasePlaylists = fetched }
             }
-            favoriteAlbums = (try? await albumsTask) ?? []
+            let albums = (try? await albumsTask) ?? []
+            if albums != favoriteAlbums { favoriteAlbums = albums }
         }
         rebuildMergedPlaylists()
         isLoadingContent = false
@@ -856,6 +869,9 @@ struct NeteaseLikedSongsView: View {
     @State private var isLoading = true
     @State private var notLoggedIn = false
     @State private var failed = false
+    /// 创建者（= 用户自己）昵称 / 头像（问题2：标题下显示头像 + 名字）
+    @State private var creatorName: String?
+    @State private var creatorAvatarURL: String?
 
     var body: some View {
         Group {
@@ -870,9 +886,13 @@ struct NeteaseLikedSongsView: View {
             } else {
                 // 复用「我的歌单」截图版式（小封面 + 红「播放全部」+ 歌曲列表）。
                 // 标题由 WellMyPlaylistDetailView 统一留空（歌单页样式不含导航栏标题）。
+                // ★ 2026-10-16 问题2：平台行给真实创建者（用户自己）的头像 + 昵称；
+                //   问题10：播放全部上方一行简介。
                 WellMyPlaylistDetailView(
                     source: .tracks(name: name, coverURL: coverURL,
-                                    creatorName: "网易云音乐", tracks: tracks))
+                                    creatorName: creatorName ?? "网易云音乐", tracks: tracks),
+                    introText: "来自你的网易云音乐",
+                    creatorAvatarURL: creatorAvatarURL)
             }
         }
         .navigationTitle(isLoading || notLoggedIn || failed || tracks.isEmpty ? "我喜欢" : "")
@@ -898,14 +918,17 @@ struct NeteaseLikedSongsView: View {
             return
         }
         // 主通道：歌单详情（id == uid）——顺序即官方那种（trackIds 顺序）。
-        // 封面取歌单自己的 coverImgUrl，取不到回落网易云官方默认封面。
+        // 封面取歌单自己的 coverImgUrl；取不到就留 nil（页面走占位图，
+        // ★ 2026-10-16 问题1：原先回落一个**已失效的硬编码封面 URL**，只会更糟）。
         do {
             let imported = try await NeteaseMusicAPI.shared.playlistForImport(id: "\(uid)")
             if !imported.tracks.isEmpty {
                 tracks = imported.tracks
                 if !imported.name.isEmpty { name = imported.name }
                 coverURL = imported.coverURL
-                    ?? "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+                // 问题2：创建者 = 用户自己（头像 + 昵称）
+                if let n = imported.creatorName, !n.isEmpty { creatorName = n }
+                if let a = imported.creatorAvatarURL, !a.isEmpty { creatorAvatarURL = a }
                 isLoading = false
                 return
             }
@@ -913,10 +936,8 @@ struct NeteaseLikedSongsView: View {
         // 兜底：红心 id 列表 + 分块详情（顺序不定，仅保证不空）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
             tracks = songs
-            // 封面用用户「我喜欢」歌单的真实封面（歌单 id == uid）；
-            // 拉不到时回落网易云官方默认封面（与官方 App 一致）
-            coverURL = (try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)"))
-                ?? "https://p2.music.126.net/2HBhZ0WCSJ1LcSnoFrbt0g==/18742470786037648.jpg"
+            // 封面用用户「我喜欢」歌单的真实封面（歌单 id == uid）
+            coverURL = try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)")
             isLoading = false
             return
         }

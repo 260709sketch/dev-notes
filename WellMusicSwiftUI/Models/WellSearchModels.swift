@@ -34,7 +34,7 @@ enum WellSearchType: String, CaseIterable, Identifiable {
 // MARK: - 摘要模型
 
 /// 搜索结果里的歌手条目（跨平台统一模型）。
-struct WellArtistSummary: Identifiable, Hashable {
+struct WellArtistSummary: Identifiable, Hashable, Codable {
     var id: String
     var name: String
     var picURL: String?
@@ -46,7 +46,7 @@ struct WellArtistSummary: Identifiable, Hashable {
 }
 
 /// 搜索结果里的专辑条目。
-struct WellAlbumSummary: Identifiable, Hashable {
+struct WellAlbumSummary: Identifiable, Hashable, Codable {
     var id: String
     var name: String
     var picURL: String?

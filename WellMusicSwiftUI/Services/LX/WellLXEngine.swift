@@ -40,6 +40,13 @@ struct WellLXSourceCapability: Hashable {
     let qualities: [String]
 }
 
+// MARK: - 通知
+
+extension Notification.Name {
+    /// 音源脚本上报更新（userInfo: name / log / updateUrl）
+    static let wellLXSourceUpdateAlert = Notification.Name("well.lx.sourceUpdateAlert")
+}
+
 // MARK: - 错误
 
 enum WellLXEngineError: LocalizedError {
@@ -75,7 +82,16 @@ enum WellLXEngineError: LocalizedError {
 final class WellLXEngine {
 
     static let shared = WellLXEngine()
-    private init() {}
+    private init() {
+        // 音源脚本主动上报更新 → 转成通知，由 UI 层弹窗（是否显示由每音源开关决定）
+        runner.onUpdateAlert = { name, log, updateUrl in
+            NotificationCenter.default.post(
+                name: .wellLXSourceUpdateAlert,
+                object: nil,
+                userInfo: ["name": name, "log": log, "updateUrl": updateUrl]
+            )
+        }
+    }
 
     private static let log = Logger(subsystem: "well.music.swiftui", category: "lxengine")
 
@@ -212,6 +228,48 @@ final class WellLXEngine {
             }
         }
         return false
+    }
+
+    /// 按平台搜索歌曲（源测试用；也复用于普通搜索场景）。
+    /// - Parameter source: lx 平台标识 "kw"/"kg"/"tx"/"wy"/"mg"
+    func search(keyword: String, source: String, page: Int = 1, pageSize: Int = 10,
+                timeout: TimeInterval = 15) async throws -> [WellLXSongResult] {
+        guard currentSource != nil else { throw WellLXEngineError.notLoaded }
+        let requestKey = UUID().uuidString
+        let payload = WellLXProtocol.makeSearchPayload(
+            keyword: keyword, page: page, pageSize: pageSize,
+            source: source, requestKey: requestKey
+        )
+        let result = try await callJS(action: "request", data: payload, timeout: timeout)
+        return WellLXProtocol.extractSongs(from: result)
+    }
+
+    /// 按「带平台前缀的 songmid」直接取播放地址（源测试用）。
+    /// 与 `musicURL(for:quality:)` 的区别：不依赖 MusicItem，元数据直接由调用方给出。
+    func musicURL(songmid: String, title: String, artist: String,
+                  quality: String,
+                  mediaMid: String? = nil,
+                  copyrightId: String? = nil,
+                  timeout: TimeInterval = 20) async throws -> (url: String, quality: String) {
+        guard currentSource != nil else { throw WellLXEngineError.notLoaded }
+        let requestKey = UUID().uuidString
+        let payload = WellLXProtocol.makeMusicUrlPayload(
+            songmid: songmid, title: title, artist: artist,
+            quality: quality, requestKey: requestKey,
+            mediaMid: mediaMid, copyrightId: copyrightId
+        )
+        let result = try await callJS(action: "request", data: payload, timeout: timeout)
+        guard let url = WellLXProtocol.extractMusicUrl(from: result), !url.isEmpty else {
+            throw WellLXEngineError.invalidResponse
+        }
+        var actualQuality = quality
+        if let dict = result as? [String: Any] {
+            if let type = dict["type"] as? String, !type.isEmpty { actualQuality = type }
+            else if let data = dict["data"] as? [String: Any], let type = data["type"] as? String, !type.isEmpty {
+                actualQuality = type
+            }
+        }
+        return (url, actualQuality)
     }
 
     // MARK: Swift -> JS
