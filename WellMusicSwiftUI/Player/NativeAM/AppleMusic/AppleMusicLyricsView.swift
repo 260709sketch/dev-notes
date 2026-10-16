@@ -248,7 +248,7 @@ struct AppleMusicLyricsView: View {
 
     @ViewBuilder
     private var lyricsLoadedState: some View {
- =
+            let blurFocusLyricID =
                 visualCascadeFocusLyricID
                 ?? highlightedLyricID
             let _ = lyricLayoutRevision
