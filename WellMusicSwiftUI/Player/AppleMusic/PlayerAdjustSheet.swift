@@ -27,6 +27,7 @@ struct PlayerAdjustSheet: View {
                 topBarSection
                 amllLyricSection
                 lyricAlignmentSection
+                lowPerfSection
                 amllFontSection
             }
             .navigationTitle("播放器调整")
@@ -272,6 +273,19 @@ struct PlayerAdjustSheet: View {
             Text("歌词位置")
         } footer: {
             Text("歌词行在页面内的对齐方向（居中 / 靠左 / 靠右）。")
+        }
+    }
+
+    /// ★ 低性能歌词模式（2026-10-16）：官方标注 blur 开销较高、关弹簧对低配友好
+    private var lowPerfSection: some View {
+        Section {
+            Toggle("低性能歌词模式", isOn: Binding(
+                get: { settings.appleMusicAmllLowPerf },
+                set: { settings.appleMusicAmllLowPerf = $0 }
+            ))
+        } footer: {
+            Text("关闭歌词模糊与弹簧动画，降低 CPU/GPU 占用（低配设备更流畅，动画变为简单过渡）。")
+                .font(.system(size: 12))
         }
     }
 

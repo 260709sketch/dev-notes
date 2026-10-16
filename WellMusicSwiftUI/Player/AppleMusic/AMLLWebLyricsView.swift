@@ -12,6 +12,8 @@ struct AMLLWebLyricsView: View {
     @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
     /// ★ 第十一轮问题6：歌词对齐（0 居中 / 1 左 / 2 右；播放器调整页分段控制）
     @AppStorage("wellmusic.appleMusic.lyricAlignment") private var lyricAlignment: Int = 0
+    /// ★ 低性能歌词模式（关模糊 + 关弹簧；AMLL 官方性能标注）
+    @AppStorage("wellmusic.appleMusic.amllLowPerf") private var amllLowPerf = false
 
     /// 是否使用 Apple Music 独立的 AMLL 设置（和沉浸模式v2分开）
     var useAppleMusicSettings: Bool = false
@@ -43,7 +45,8 @@ struct AMLLWebLyricsView: View {
                 showsRomaji: settings.lyricsAnnotation == .romaji,
                 fontSize: currentFontSize,
                 fontWeight: currentFontWeight,
-                textAlignment: lyricAlignment
+                textAlignment: lyricAlignment,
+                lowPerformance: amllLowPerf
             )
             .frame(width: width, height: geometry.size.height)
             .mask(
@@ -115,6 +118,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
     let fontWeight: Int
     /// ★ 第十一轮问题6：歌词对齐（0 居中 / 1 左 / 2 右；设置里的分段控制）
     var textAlignment: Int = 0
+    /// ★ 低性能歌词模式（隐藏模糊/弹簧动画；桥：AMLLBridge.setBlur/setSpring）
+    var lowPerformance: Bool = false
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -185,6 +190,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                                    fontSize: fontSize, fontWeight: fontWeight)
         // ★ 问题6：对齐实时生效（值不变时不重复下 JS）
         context.coordinator.applyAlignment(textAlignment, web: web)
+        // ★ 低性能模式（值不变不重复下发）
+        context.coordinator.applyLowPerformance(lowPerformance, web: web)
     }
 
     static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
@@ -201,6 +208,26 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var fontWeight: Int = 600
         /// 上次下发的歌词对齐（-1 = 未下发过）
         private var lastAlignment: Int = -1
+        /// 上次下发的低性能模式（nil = 未下发过）
+        private var lastLowPerf: Bool? = nil
+        /// 目标低性能值（ready 后补发用）
+        private var lastLowPerfValue = false
+
+        /// ★ 低性能歌词模式：桥内建 setBlur / setSpring（官方性能标注：
+        ///   blur 开销「较高」；关 spring 对低配机器友好、回退 CSS 过渡）。
+        func applyLowPerformance(_ lowPerf: Bool, web: WKWebView) {
+            lastLowPerfValue = lowPerf
+            guard lastLowPerf != lowPerf else { return }
+            lastLowPerf = lowPerf
+            let blur = lowPerf ? "false" : "true"
+            let spring = lowPerf ? "false" : "true"
+            web.evaluateJavaScript("""
+            try {
+              if (window.AMLLBridge && window.AMLLBridge.setBlur) window.AMLLBridge.setBlur(\(blur));
+              if (window.AMLLBridge && window.AMLLBridge.setSpring) window.AMLLBridge.setSpring(\(spring));
+            } catch (e) {}
+            """, completionHandler: nil)
+        }
 
         /// ★ 问题6/间奏点（2026-10-16 三定案，参照 AMLL 官方组件机制）：
         /// 官方组件每次布局都用 JS **内联 style** 定位间奏点 —— 任何「给它写内联
@@ -557,6 +584,11 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
                 ready = true
                 flushWork?.cancel()
                 applyFontWeight(fontWeight)
+                // 页面就绪后补发一次低性能模式（首帧时桥可能尚未定义）
+                if let w = web {
+                    lastLowPerf = nil
+                    applyLowPerformance(lastLowPerfValue, web: w)
+                }
                 flushPending()
             case "fps":
                 let fps = (body["fps"] as? NSNumber)?.intValue ?? 0

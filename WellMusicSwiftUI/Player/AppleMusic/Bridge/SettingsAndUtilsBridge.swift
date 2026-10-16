@@ -351,6 +351,8 @@ final class SettingsManager: ObservableObject {
     @AppStorage("wellmusic.appleMusic.backgroundDim") var appleMusicBackgroundDim: Double = 0.04
     /// ★ 2026-10-16 用户问题11：歌词对齐（0 居中 / 1 左 / 2 右）
     @AppStorage("wellmusic.appleMusic.lyricAlignment") var appleMusicLyricAlignment: Int = 0
+    /// ★ 低性能歌词模式（2026-10-16，参照 AMLL 官方性能标注：关歌词模糊 + 关弹簧动画）
+    @AppStorage("wellmusic.appleMusic.amllLowPerf") var appleMusicAmllLowPerf: Bool = false
 
     /// 是否隐藏大封面状态顶部的小横条指示器（下滑关闭手势仍然可用）。
     @AppStorage("wellmusic.appleMusic.hideTopIndicator") var appleMusicHideTopIndicator: Bool = false
