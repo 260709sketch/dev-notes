@@ -272,10 +272,7 @@ struct WMLyricLine: Identifiable, Hashable, Sendable {
             if includingTranslation,
                let translation = backgroundVocal.translation {
                 components.append(
-                    L10n.format(
-                        "ui.lyrics.accessibility.translation",
-                        translation
-                    )
+                    translation
                 )
             }
         }

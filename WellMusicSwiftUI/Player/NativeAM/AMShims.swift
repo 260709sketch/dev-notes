@@ -21,7 +21,8 @@ final class PlayerStore {
     var isLoading: Bool = false
     var progress: TimeInterval = 0
     var now: TimeInterval = 0
-    var estimatedProgress: TimeInterval = 0
+    /// MeloX 侧以 `player.estimatedProgress()` 形式调用（方法，不是属性）
+    func estimatedProgress() -> TimeInterval { now }
     var seekRevision: Int = 0
 
     func seek(to time: TimeInterval) {
@@ -40,7 +41,6 @@ final class PlayerStore {
             .sink { [weak self] t in
                 self?.progress = t
                 self?.now = t
-                self?.estimatedProgress = t
             }
             .store(in: &bag)
     }
@@ -56,6 +56,19 @@ final class AppSettings {
 
     var appleMusicLyricsScrollHideThreshold: Double = 44
     var wordByWordLyricsAdvanceTime: Double = 0
+    var lyricsAdvanceTime: TimeInterval = 0
+
+    func effectiveLyricsAdvanceTime(hasSyllableSyncedLyrics: Bool) -> TimeInterval {
+        let usesWordByWord = hasSyllableSyncedLyrics
+            ? lyrics.lyricsWordByWord
+            : lyrics.lyricsPseudoWordByWord
+        return usesWordByWord ? wordByWordLyricsAdvanceTime : lyricsAdvanceTime
+    }
+
+    func effectiveLyricsAdvanceTime(for lyrics: [WMLyricLine]) -> TimeInterval {
+        effectiveLyricsAdvanceTime(
+            hasSyllableSyncedLyrics: lyrics.contains(where: \.isSyllableSynced))
+    }
 
     // MARK: 顶层直读成员（MeloX 的 settings.xxx 直读形态）
     var lyricsAutoFollow: Bool = true
@@ -145,8 +158,33 @@ struct LyricsPrefs {
     var lyricsWordByWord: Bool = true
 }
 
-// MARK: - 分享面板类型（MeloX 原版拖入 Song/分享资源/本地化，这里按需精简）
-struct LyricSharePresentation: Identifiable, Hashable {
+    // MARK: 静态 Range 成员（MeloX AppSettings static let，原值照抄）
+    static let lyricsLiveActivityScrollSpeedRange = 8.0...80.0
+    static let lyricsLiveActivityScrollPauseRange = 0.0...3.0
+    static let appleMusicLyricsInterfaceAutoHideDelayRange = 3.0...15.0
+    static let appleMusicLyricsScrollHideThresholdRange = 40.0...240.0
+    static let lyricsFocusPositionRange = 0.05...0.8
+    static let lyricsCurrentLineScaleRange = 1.0...1.5
+    static let lyricsDistanceBlurScaleRange = 0.0...1.5
+    static let lyricsFocusCascadeDelayRange = 0.0...0.1
+    static let lyricsFocusCascadeDelayIncreaseRange = 0.0...0.1
+    static let lyricsFocusCascadeFollowingDelayRange = 0.0...0.2
+    static let lyricsFocusCascadeCatchUpRatioRange = 0.5...1.0
+    static let lyricsFocusCascadeChaseSpeedGradientRange = 0.0...1.0
+    static let lyricsFocusCascadeDurationRange = 0.2...1.2
+    static let lyricsFocusSnapThresholdRange = 0.05...0.5
+    static let lyricsFocusCascadeBounceRange = 0.0...0.8
+    static let lyricsFocusCascadeBounceGradientRange = 0.0...1.0
+    static let lyricsFocusScaleBounceRange = 0.0...0.5
+    static let lyricsFocusScaleBounceDurationRange = 0.15...0.8
+    static let lyricsFocusColorLeadTimeRange = -0.3...0.3
+    static let lyricsLongSyllableDurationThresholdRange = 0.3...1.5
+    static let lyricsLongToneExpansionAmountRange = 0.0...0.15
+    static let lyricsHighlightGradientWidthRange = 0.4...3.0
+    static let lyricsHighlightGradientReductionRange = 0.0...1.0
+
+    // MARK: 分享面板（原版拖 Nuke/选择 store/本地化，按调用面精简）
+struct LyricSharePresentation: Identifiable {
     let song: PlayerStore.Song
     let lyrics: [WMLyricLine]
     let initialLyricID: WMLyricLine.ID
@@ -162,4 +200,28 @@ struct LyricSharePayload: Identifiable {
     var originalLyricsText: String {
         lyrics.map(\.text).joined(separator: "\n")
     }
+}
+
+struct LyricsShareExperienceView: View {
+    let presentation: LyricSharePresentation
+
+    init(presentation: LyricSharePresentation) {
+        self.presentation = presentation
+    }
+
+    var body: some View {
+        // 一期占位：歌词分享面板（原版依赖 Nuke/选择 store，后续接）
+        VStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 28))
+            Text("歌词分享")
+                .font(.system(size: 14))
+        }
+        .foregroundStyle(.secondary)
+    }
+}
+
+/// 歌词分享选择约束（MeloX Sharing 模块精简：只保留被引用到的常量）
+enum LyricsSelectionManager {
+    static let defaultCharacterLimit = 150
 }
