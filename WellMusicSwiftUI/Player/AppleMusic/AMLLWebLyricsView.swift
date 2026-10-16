@@ -132,24 +132,28 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         //   现在把**当前设置值直接拼进 documentStart 脚本**，首载即正确；
         //   后续变化再由 applyAlignment 补发（已去门控）+ ready 后强制重发。
         let initialAlignCSS: String
+        let initialJustifyCSS: String
         let initialDotsCSS: String
         switch textAlignment {
         case 1:
             initialAlignCSS = "left"
+            initialJustifyCSS = "flex-start"
             initialDotsCSS = "--wellDotsLeft:0;--wellDotsRight:auto;--wellDotsML:0;--wellDotsMR:0"
         case 2:
             initialAlignCSS = "right"
+            initialJustifyCSS = "flex-end"
             initialDotsCSS = "--wellDotsLeft:auto;--wellDotsRight:0;--wellDotsML:0;--wellDotsMR:0"
         default:
             initialAlignCSS = "center"
+            initialJustifyCSS = "center"
             initialDotsCSS = "--wellDotsLeft:0;--wellDotsRight:0;--wellDotsML:auto;--wellDotsMR:auto"
         }
         let alignScript = """
         (function(){
           var st = document.createElement('style');
-          st.textContent = ':root{--wellLyricAlign://('initialAlignCSS);\('initialDotsCSS)}'
+          st.textContent = ':root{--wellLyricAlign://('initialAlignCSS);--wellJustify://('initialJustifyCSS);\('initialDotsCSS)}'
             + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
-            + '{text-align:var(--wellLyricAlign)!important}'
+            + '{text-align:var(--wellLyricAlign)!important;justify-content:var(--wellJustify)!important}'
             // ★ 间奏点：官方组件由 JS 每次布局写**内联 style** 定位 —— 只有带
             //   !important 的样式表能压过它。位置由 CSS 变量驱动，随对齐设置变化。
             + '.interludeDots{left:var(--wellDotsLeft)!important;right:var(--wellDotsRight)!important;'
@@ -259,10 +263,11 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             lastAlignment = alignment
             lastAlignmentValue = alignment
             let css: String
+            let justify: String
             switch alignment {
-            case 1: css = "left"
-            case 2: css = "right"
-            default: css = "center"
+            case 1: css = "left"; justify = "flex-start"
+            case 2: css = "right"; justify = "flex-end"
+            default: css = "center"; justify = "center"
             }
             // 间奏点四变量：居中=左右都 0 + 双 auto 外边距；右=靠右；左=靠左
             let dotsLeft: String
@@ -281,6 +286,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             (function(){
               var r = document.documentElement.style;
               r.setProperty('--wellLyricAlign','\(css)');
+              r.setProperty('--wellJustify','\(justify)');
               r.setProperty('--wellDotsLeft','\(dotsLeft)');
               r.setProperty('--wellDotsRight','\(dotsRight)');
               r.setProperty('--wellDotsML','\(dotsML)');
