@@ -51,22 +51,28 @@ struct WellScrollToTopModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .bottom) {
+            // ★★ 2026-10-16 五修：完全对齐 RN 版（ScrollToTopFAB）——
+            //   右下角 right 16 / 48pt 圆钮 / 阈值 320 / 方向感知（往回翻出现、
+            //   往下翻隐藏）/ 点击回顶并抑制回顶途中的方向判断
+            .overlay(alignment: .bottomTrailing) {
                 if visible {
                     Button {
+                        deltaBox.scrollingToTop = true
                         NotificationCenter.default.post(
                             name: .wellScrollToTop, object: nil)
                         hide()
                     } label: {
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 40, height: 40)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-                            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 48, height: 48)
+                            .background(
+                                Circle().fill(Color(uiColor: .secondarySystemBackground).opacity(0.92)))
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                            .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
                     }
                     .buttonStyle(.plain)
+                    .padding(.trailing, 16)
                     .padding(.bottom, bottomInset)
                     // 动画只作用在浮钮自身，不挂在整页容器上
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -80,14 +86,24 @@ struct WellScrollToTopModifier: ViewModifier {
             .onDisappear { deltaBox.hideTask?.cancel() }
     }
 
+    /// RN 版（74版 ScrollToTopFAB）同款规则：
+    /// * 未超过 320pt → 隐藏；
+    /// * 往回翻（offset 减小 >8）→ 显示；往下翻（offset 增大 >8）→ 隐藏；
+    /// * 点过回顶后，直到滚回 ≤320 前不做方向判断（防回顶途中按钮乱闪）。
     private func updateVisibility(offset: CGFloat) {
-        // ★★ 2026-10-16 四修（用户两次追问「回顶按钮在哪」）：改成**持久显示** ——
-        //   只要页面滚动超过 200pt，浮钮常驻；回到顶部附近才收起。
-        //   不再依赖滑动方向 / 3.5 秒计时（用户停止滚动后按钮就消失，
-        //   正是「找不到」的元凶）。
-        if offset > 200 {
+        if deltaBox.scrollingToTop {
+            if offset <= 320 { deltaBox.scrollingToTop = false; if visible { hide() } }
+            deltaBox.lastOffset = offset
+            return
+        }
+        let previous = deltaBox.lastOffset
+        deltaBox.lastOffset = offset
+        let delta = offset - previous
+        if offset <= 320 {
+            if visible { hide() }
+        } else if delta < -8 {
             if !visible { show() }
-        } else {
+        } else if delta > 8 {
             if visible { hide() }
         }
     }
@@ -118,6 +134,8 @@ struct WellScrollToTopModifier: ViewModifier {
 final class ScrollDeltaBox {
     var lastOffset: CGFloat = 0
     var hideTask: Task<Void, Never>?
+    /// 回顶动画进行中（抑制方向判断，RN 版同款）
+    var scrollingToTop = false
 }
 
 /// 页面内「回到顶部」动作广播：页面 ScrollView 收到后自行滚顶。
