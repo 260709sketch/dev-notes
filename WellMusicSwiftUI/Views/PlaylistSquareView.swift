@@ -170,18 +170,24 @@ struct PlaylistSquareView: View {
         loadedKey = key
         isLoading = true
         failed = false
-        playlists = []
-        toplists = []
+        // ★ 2026-10-16 用户：「精选页上滑刷新还是会刷新失败」—— 与发现页同病：
+        //   刷新先把列表清空、接口偶发空就整页失败。改为**保留旧数据**，只有
+        //   确实一条都拿不到（含旧数据为空）时才报失败。
         offset = 0
         highQualityBefore = 0
         hasMore = false
 
         switch key {
         case "排行榜":
-            toplists = (try? await NeteaseMusicAPI.shared.toplists()) ?? []
+            if let fetched = try? await NeteaseMusicAPI.shared.toplists(), !fetched.isEmpty {
+                toplists = fetched
+            }
             if toplists.isEmpty { failed = true }
         case "推荐歌单":
-            playlists = (try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 100)) ?? []
+            if let fetched = try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 100),
+               !fetched.isEmpty {
+                playlists = fetched
+            }
             if playlists.isEmpty { failed = true }
         case "精品歌单":
             if let result = try? await NeteaseMusicAPI.shared.highQualityPlaylists(cat: "全部", limit: 50, before: 0) {
@@ -191,10 +197,16 @@ struct PlaylistSquareView: View {
             }
             if playlists.isEmpty { failed = true }
         default:
-            // 分类歌单（明文 api/playlist/list）；失败退个性化推荐，避免整页报错
-            playlists = (try? await NeteaseMusicAPI.shared.categoryPlaylists(cat: key, limit: 50, offset: 0)) ?? []
-            if playlists.isEmpty {
-                playlists = (try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 50)) ?? []
+            // 分类歌单（明文 api/playlist/list）；失败退个性化推荐，避免整页报错。
+            // ★ 刷新失败不再清空已有列表（同前两个分支的修法）。
+            if let fetched = try? await NeteaseMusicAPI.shared.categoryPlaylists(cat: key, limit: 50, offset: 0),
+               !fetched.isEmpty {
+                playlists = fetched
+            }
+            if playlists.isEmpty,
+               let fallback = try? await NeteaseMusicAPI.shared.personalizedPlaylists(limit: 50),
+               !fallback.isEmpty {
+                playlists = fallback
             }
             offset = 50
             hasMore = !playlists.isEmpty

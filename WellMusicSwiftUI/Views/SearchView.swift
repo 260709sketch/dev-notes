@@ -154,6 +154,12 @@ struct SearchView: View {
             }
         }
         .navigationTitle(hasQuery ? "搜索：\(committedQuery)" : "搜索")
+        // ★ 2026-10-16 用户：「优先搜索平台没用」—— 模型只在创建时读一次设置，
+        //   之后进页不再应用。每次进搜索页都套用设置里的偏好平台。
+        .onAppear {
+            let preferred = WellSearchViewModel.preferredPlatform
+            if model.platform != preferred { model.platform = preferred }
+        }
         // ⚠️ 这里**不要**加 `.navigationBarTitleDisplayMode(.inline)`：
         // 这里用系统默认的**大标题**，抬头就是一行大字「搜索」。
         // ⚠️ 不在 task 里 clear()：清空缓存标记会让「从详情页返回」也重新请求。
