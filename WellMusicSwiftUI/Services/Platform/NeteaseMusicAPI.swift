@@ -1414,7 +1414,9 @@ final class NeteaseMusicAPI {
     ///
     /// 一个账号的这份列表里混着三类：`isLoved` 的「我喜欢的音乐」、用户自建歌单、
     /// 用户收藏的别人的歌单 —— 界面上按 `isLoved` 与创建者区分。
-    struct UserPlaylistItem: Identifiable {
+    /// `Equatable`：`ProfileView.loadContent` 用「内容没变就不赋值」来避免货架整体重算，
+    /// 靠 `fetched != neteasePlaylists` 做等值判断（Build #241 实报缺 conformance）。
+    struct UserPlaylistItem: Identifiable, Equatable {
         var id: String
         var name: String
         var coverURL: String?

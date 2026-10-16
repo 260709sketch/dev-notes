@@ -74,6 +74,16 @@ targets:
           - $(inherited)
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+      configs:
+        # ★ 2026-10-16：Debug 改为全量编译（wholemodule）。
+        #
+        # 原因：CI 的 Debug 默认是 batch mode，swiftc 在**批内逐文件**编译并
+        # 「遇到第一个出错的主文件就停」，于是每次构建只能暴露一个文件的错误 ——
+        # 一轮 3 分钟，几十个文件要烧几十轮。
+        # wholemodule 下整个模块一次性类型检查，**所有**编译错误一次报全；
+        # Release（真正出 IPA 的那条）本来就默认 wholemodule，不受影响。
+        Debug:
+          SWIFT_COMPILATION_MODE: wholemodule
   WellMusicSwiftUITests:
     type: bundle.unit-test
     platform: iOS
