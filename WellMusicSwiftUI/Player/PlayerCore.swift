@@ -153,6 +153,9 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 有版本号之后，轮询只要比对一次 Int（O(1)），队列真的变了才重建。
     private(set) var queueRevision: Int = 0
 
+    /// ★ 2026-10-16 节拍分析一期：最近一次解析出的可播放流地址（远端为 CDN 直链）
+    private(set) var currentStreamURL: URL?
+
     @Published var currentIndex: Int? = nil
     @Published var isPlaying: Bool = false
     @Published var currentTime: TimeInterval = 0
@@ -389,6 +392,7 @@ final class PlayerCore: NSObject, ObservableObject {
                     // 换歌不走淡入淡出：打断进行中的斜坡，音量拉回目标值再加载
                     // （否则旧斜坡回调会把新歌音量继续按旧目标改写）。
                     cancelFade()
+                    currentStreamURL = URL(string: resolved.url)
                     engine.load(url: resolved.url,
                                 headers: resolved.headers,
                                 startAt: time,
