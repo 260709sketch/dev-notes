@@ -155,17 +155,10 @@ struct WellPlaylistDetailView: View {
         .modifier(NativeNavigationBarBackground())
         .overlay {
             if isLoading && tracks.isEmpty {
-                // ★ 2026-10-16 用户问题18：转圈换骨架屏（kumone 同款流光）
-                VStack(spacing: 24) {
-                    WellSkeletonHeader(coverSide: isAlbumSource ? 120 : 304)
-                    ForEach(0..<6, id: \.self) { _ in
-                        WellSkeletonView(cornerRadius: 8)
-                            .frame(height: 52)
-                            .padding(.horizontal, 16)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, 24)
+                // ★ 2026-10-16 第十一轮用户：骨架屏先撤（「不要乱套壳」）——
+                //   恢复原来的简单加载态
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if failed && tracks.isEmpty {
                 retryState
             }

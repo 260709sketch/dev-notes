@@ -522,21 +522,15 @@ struct DiscoverView: View {
     // MARK: - 状态视图
 
     private var loadingState: some View {
-        // ★ 2026-10-16 用户问题18：转圈换成 kumone 同款骨架屏（结构镜像 + 流光），
-        //   加载完成不跳版
-        VStack(spacing: 30) {
-            HStack(spacing: 14) {
-                ForEach(0..<3, id: \.self) { _ in
-                    WellSkeletonView(cornerRadius: 14)
-                        .frame(width: 230, height: 88)
-                }
-            }
-            .padding(.horizontal, 16)
-            WellSkeletonShelf()
-            WellSkeletonShelf()
+        // ★ 2026-10-16 第十一轮用户：kumone 骨架屏先撤（「不要乱套壳，暂时移除这个
+        //   刷新动画」）—— 恢复原来的简洁加载态
+        VStack(spacing: 14) {
+            ProgressView()
+            Text("正在加载推荐内容…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 420, alignment: .top)
-        .padding(.top, 8)
+        .frame(maxWidth: .infinity, minHeight: 420)
     }
 
     private func errorState(_ message: String) -> some View {
