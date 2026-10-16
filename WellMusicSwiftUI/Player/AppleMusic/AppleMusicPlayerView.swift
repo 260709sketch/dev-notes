@@ -701,7 +701,9 @@ struct AppleMusicPlayerView: View {
             showsLyrics: showLyrics,
             coverURL: coverURL,
             amllTopPadding: ScreenAdapter.h(CGFloat(amllTopPx)),
-            amllBottomPadding: ScreenAdapter.h(CGFloat(amllBottomPx)),
+            // ★ 2026-10-16 第十轮问题10：歌词页下滑收起底部控制后，歌词一直铺到
+            //   手机底部（上滑恢复原状）
+            amllBottomPadding: ScreenAdapter.h(hideBottomControls ? 12 : CGFloat(amllBottomPx)),
             amllHorizontalPadding: ScreenAdapter.w(CGFloat(amllHorizPx))
         )
     }
@@ -1384,8 +1386,9 @@ struct AppleMusicPlayerView: View {
     }
 
     /// 歌词列表底部留白，让末行也能滚到中线。
+    /// ★ 问题10：底部控制收起时收紧留白 —— 末行歌词也能到手机底部。
     private var lyricBottomSpacer: CGFloat {
-        max(110, lyricsViewportHeight * 0.34)
+        hideBottomControls ? 44 : max(110, lyricsViewportHeight * 0.34)
     }
 
     /// 单行歌词：本体 + 上报行中线位置。

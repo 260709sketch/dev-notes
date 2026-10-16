@@ -34,8 +34,10 @@ final class WellLXScriptRunner: @unchecked Sendable {
     private static let log = Logger(subsystem: "well.music.swiftui", category: "lx")
     /// 脚本初始化兜底超时（wellmusic 同为约 10s）
     private let initTimeout: TimeInterval = 10
-    /// 业务请求（搜索/取链/歌词）兜底超时
-    private let businessTimeout: TimeInterval = 15
+    /// 业务请求（搜索/取链/歌词）兜底超时。
+    /// ★ 2026-10-16：对齐权威版 lx-music-mobile 的 20 秒（第三方中转源
+    /// 两跳链路常见 5~10 秒，15 秒偏紧）。
+    private let businessTimeout: TimeInterval = 20
     /// 脚本侧原生 HTTP 代理的 timeout 硬上限（与 preload/RN 侧一致）
     private let maxHTTPTimeout: TimeInterval = 60
 
@@ -474,7 +476,11 @@ final class WellLXScriptRunner: @unchecked Sendable {
         let options = (dict["options"] as? [String: Any]) ?? [:]
 
         var request = URLRequest(url: url)
-        request.timeoutInterval = min((options["timeout"] as? Double ?? 0) / 1000.0, maxHTTPTimeout)
+        // ★ 2026-10-16 用户实源（念心/玉宁熙/聆澜）：旧写法 `options["timeout"] as? Double
+        //   ?? 0` 在脚本把 timeout 传成**字符串**或缺失时得到 0 → 超时立即触发，
+        //   全档位秒失败（"HTTP request timeout"）。改成宽容解析（NSNumber/String），
+        //   解析不到就用 hard upper bound 60s，而不是 0。
+        request.timeoutInterval = Self.parseHTTPTimeout(options["timeout"], cap: maxHTTPTimeout)
 
         if let method = options["method"] as? String, !method.isEmpty {
             request.httpMethod = method
@@ -510,7 +516,8 @@ final class WellLXScriptRunner: @unchecked Sendable {
 
         // options.binary == true → 响应 body 以 base64 字符串回传（镜像 lx-music-mobile）
         let respondBinary = (options["binary"] as? Bool) == true
-        let httpTimeout = min((options["timeout"] as? Double ?? 0) / 1000.0, maxHTTPTimeout)
+        // ★ 同上：宽容解析；解析不出来 = 上限 60s（原先 0 → 立即超时）
+        let httpTimeout = Self.parseHTTPTimeout(options["timeout"], cap: maxHTTPTimeout)
 
         let timeoutItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -728,6 +735,21 @@ final class WellLXScriptRunner: @unchecked Sendable {
         guard let jsonString, !jsonString.isEmpty,
               let data = jsonString.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    /// 脚本 `lx.request` 超时解析（宽容版）：
+    /// 接受 NSNumber / Double / Int / String（"5000"）毫秒值；解析不到或非法
+    /// → 返回 cap（60s）。下限 1 秒兜底（防脚本传 0 / 负数造成秒失败）。
+    static func parseHTTPTimeout(_ value: Any?, cap: TimeInterval) -> TimeInterval {
+        var ms: Double?
+        switch value {
+        case let n as NSNumber: ms = n.doubleValue
+        case let d as Double: ms = d
+        case let s as String: ms = Double(s)
+        default: ms = nil
+        }
+        guard let ms, ms.isFinite, ms > 0 else { return cap }
+        return min(max(ms / 1000.0, 1.0), cap)
     }
 
     private func lxString(_ value: Any?) -> String? {

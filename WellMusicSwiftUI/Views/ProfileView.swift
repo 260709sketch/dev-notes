@@ -1018,6 +1018,11 @@ struct NeteaseLikedSongsView: View {
                 tracks = imported.tracks
                 if !imported.name.isEmpty { name = imported.name }
                 coverURL = imported.coverURL
+                // ★ 2026-10-16 第十轮问题6（实机复测仍灰心图）：主通道成功但封面为
+                //   空时也要补齐 —— 上次把兜底写在 catch 之后，主通道 return 就跳过了。
+                if (coverURL ?? "").isEmpty {
+                    coverURL = await likedCoverFallback(uid: Int(uid) ?? 0)
+                }
                 // 问题2：创建者 = 用户自己（头像 + 昵称）
                 if let n = imported.creatorName, !n.isEmpty { creatorName = n }
                 if let a = imported.creatorAvatarURL, !a.isEmpty { creatorAvatarURL = a }
@@ -1027,22 +1032,34 @@ struct NeteaseLikedSongsView: View {
         } catch {}
         // ★ 2026-10-16 第十轮问题6：歌单界面封面独立补齐 —— kumone 式走
         //   /user/playlist 里 specialType==5 那条的官方封面（前面通道给空则补上）
-        if (coverURL ?? "").isEmpty,
-           let lists = try? await NeteaseMusicAPI.shared.userPlaylists(uid: Int(uid) ?? 0),
-           let liked = lists.first(where: { $0.isLoved }) ?? lists.first,
-           let c = liked.coverURL, !c.isEmpty {
-            coverURL = c
+        if (coverURL ?? "").isEmpty {
+            coverURL = await likedCoverFallback(uid: Int(uid) ?? 0)
         }
         // 兜底：红心 id 列表 + 分块详情（顺序不定，仅保证不空）
         if let songs = try? await NeteaseMusicAPI.shared.likedSongs(uid: "\(uid)"), !songs.isEmpty {
             tracks = songs
-            // 封面用用户「我喜欢」歌单的真实封面（歌单 id == uid）
-            coverURL = try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)")
+            if (coverURL ?? "").isEmpty {
+                coverURL = await likedCoverFallback(uid: Int(uid) ?? 0)
+            }
             isLoading = false
             return
         }
         failed = true
         isLoading = false
+    }
+
+    /// 「我喜欢」封面兜底链（kumone 式）：user/playlist 里 specialType==5 那条的
+    /// coverImgUrl → 歌单详情接口（id == uid）→ nil。
+    private func likedCoverFallback(uid: Int) async -> String? {
+        if let lists = try? await NeteaseMusicAPI.shared.userPlaylists(uid: uid),
+           let liked = lists.first(where: { $0.isLoved }) ?? lists.first,
+           let c = liked.coverURL, !c.isEmpty {
+            return c
+        }
+        if let c = try? await NeteaseMusicAPI.shared.likedPlaylistCover(uid: "\(uid)"), !c.isEmpty {
+            return c
+        }
+        return nil
     }
 }
 
