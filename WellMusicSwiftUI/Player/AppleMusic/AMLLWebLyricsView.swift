@@ -125,8 +125,7 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         (function(){
           var st = document.createElement('style');
           st.textContent = ':root{--wellLyricAlign:center}'
-            + '[class*="lyricLine"],[class*="lyricMainLine"],[class*="lyricSubLine"],'
-            + '[class*="lyricTranslationLine"],[class*="nterlude"]'
+            + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
             + '{text-align:var(--wellLyricAlign)!important}';
           document.documentElement.appendChild(st);
         })();
@@ -198,7 +197,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         /// 上次下发的歌词对齐（-1 = 未下发过）
         private var lastAlignment: Int = -1
 
-        /// ★ 问题6：把对齐值写进页面 CSS 变量（值不变不重复下发）。
+        /// ★ 问题6/间奏点（2026-10-16 定案）：文本行用 CSS 变量对齐；
+        /// 间奏点（.interludeDots）是页面自带的 absolute 元素、**CSS 写死 left:0**，
+        /// 不响应 text-align —— 必须直接改它本体的定位：
+        /// 居中 = left:0+right:0+margin auto；右 = left:auto+right:0；左 = 原生。
         func applyAlignment(_ alignment: Int, web: WKWebView) {
             guard lastAlignment != alignment else { return }
             lastAlignment = alignment
@@ -208,9 +210,26 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             case 2: css = "right"
             default: css = "center"
             }
-            web.evaluateJavaScript(
-                "document.documentElement.style.setProperty('--wellLyricAlign','\(css)')",
-                completionHandler: nil)
+            let js = """
+            (function(){
+              document.documentElement.style.setProperty('--wellLyricAlign','\(css)');
+              var d = document.querySelector('.interludeDots');
+              if (d) {
+                var a = \(alignment);
+                if (a === 2) {
+                  d.style.left = 'auto'; d.style.right = '0';
+                  d.style.marginLeft = ''; d.style.marginRight = '';
+                } else if (a === 1) {
+                  d.style.left = '0'; d.style.right = '';
+                  d.style.marginLeft = ''; d.style.marginRight = '';
+                } else {
+                  d.style.left = '0'; d.style.right = '0';
+                  d.style.marginLeft = 'auto'; d.style.marginRight = 'auto';
+                }
+              }
+            })();
+            """
+            web.evaluateJavaScript(js, completionHandler: nil)
         }
         private var timer: Timer?
         /// 订阅 `PlayerCore.isScrubbing`，用于拖动收尾的精确重锚。
