@@ -216,7 +216,7 @@ struct AppleMusicLyricsView: View {
         }
     }
 
-    // ★ 2026-10-16：从 lyricsContent 拆出（原巨型 @ViewBuilder 让类型检查器超时）
+    // ★ 2026-10-16：拆出（原巨型 @ViewBuilder 让类型检查器超时）
     @ViewBuilder
     private var lyricsEmptyState: some View {
             if let errorMessage {
@@ -248,7 +248,7 @@ struct AppleMusicLyricsView: View {
 
     @ViewBuilder
     private var lyricsLoadedState: some View {
-            let blurFocusLyricID =
+ =
                 visualCascadeFocusLyricID
                 ?? highlightedLyricID
             let _ = lyricLayoutRevision
@@ -537,7 +537,6 @@ struct AppleMusicLyricsView: View {
                     visibleViewportHeight: visibleViewportHeight
                 )
             }
-        }
     }
 
     private func lyricRow(
@@ -3655,6 +3654,7 @@ struct AppleMusicLyricsView: View {
             }
         }
     }
+}
 
 private enum AppleMusicLyricsDisplayItem: Identifiable {
     case interlude(LyricInterlude)
