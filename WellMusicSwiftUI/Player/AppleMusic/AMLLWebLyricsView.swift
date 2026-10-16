@@ -125,7 +125,8 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         (function(){
           var st = document.createElement('style');
           st.textContent = ':root{--wellLyricAlign:center}'
-            + '[class*="lyricMainLine"],[class*="lyricSubLine"],[class*="lyricTranslationLine"]'
+            + '[class*="lyricLine"],[class*="lyricMainLine"],[class*="lyricSubLine"],'
+            + '[class*="lyricTranslationLine"],[class*="nterlude"]'
             + '{text-align:var(--wellLyricAlign)!important}';
           document.documentElement.appendChild(st);
         })();

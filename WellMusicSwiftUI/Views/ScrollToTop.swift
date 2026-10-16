@@ -50,10 +50,13 @@ struct WellScrollToTopModifier: ViewModifier {
     @State private var deltaBox = ScrollDeltaBox()
 
     func body(content: Content) -> some View {
+        // ★ 2026-10-16 用户（终）：一键回顶按钮**整个撤除**——不再渲染、不订阅滚动。
+        //   探针/挂点保留原位（惰性），页面零视觉变化。
         content
-            // ★★ 2026-10-16 五修：完全对齐 RN 版（ScrollToTopFAB）——
-            //   右下角 right 16 / 48pt 圆钮 / 阈值 320 / 方向感知（往回翻出现、
-            //   往下翻隐藏）/ 点击回顶并抑制回顶途中的方向判断
+    }
+
+    private var removedBody: some View {
+        EmptyView()
             .overlay(alignment: .bottomTrailing) {
                 if visible {
                     Button {
