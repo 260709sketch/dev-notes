@@ -182,8 +182,8 @@ struct WellCommentsSheet: View {
             failed = true
         }
         // ★ 2026-10-17 兜底：weapi 空结果时回退明文 v1（旧评论页同款，必有数据）
-        if list.isEmpty, let sid = songId {
-            let url = "https://music.163.com/api/v1/resource/comments/R_SO_4_\(sid)?limit=30&offset=0"
+        if list.isEmpty {
+            let url = "https://music.163.com/api/v1/resource/comments/R_SO_4_\(songId)?limit=30&offset=0"
             if let data = try? await URLSession.shared.data(from: URL(string: url)!).0,
                 let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let hotList = (obj["hotComments"] as? [[String: Any]]) ?? []
