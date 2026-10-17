@@ -34,13 +34,17 @@ final class SearchService {
         async let artistsTask = artists(key, platform: platform, limit: Sample.others)
         async let albumsTask = albums(key, platform: platform, limit: Sample.others)
         async let playlistsTask = playlists(key, platform: platform, limit: Sample.others)
+        // ★ 2026-10-17 用户：综合区「歌单」下要显示 MV —— 此前 searchAll 不拉 MV，
+        //   综合区货架永远空。
+        async let mvsTask = mvs(key, platform: platform, limit: Sample.others)
 
         var out = WellSearchResult()
-        let (s, ar, al, pl) = await (songsTask, artistsTask, albumsTask, playlistsTask)
+        let (s, ar, al, pl, mv) = await (songsTask, artistsTask, albumsTask, playlistsTask, mvsTask)
         out.songs = s.songs
         out.artists = ar.artists
         out.albums = al.albums
         out.playlists = pl.playlists
+        out.mvs = mv.mvs
         return out
     }
 

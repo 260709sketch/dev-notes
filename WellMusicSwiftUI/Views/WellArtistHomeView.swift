@@ -71,7 +71,7 @@ struct WellArtistHomeView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
                             artistHeader
-                            artistBioSection
+                            latestReleaseCard
                             hotSongsSection
                             albumsSection
                             similarArtistSection
@@ -105,49 +105,74 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        HStack(spacing: 14) {
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 80)
-                .frame(width: 80, height: 80)
-                .clipShape(Circle())
-                .background(Color.secondary.opacity(0.12), in: Circle())
+        // ★ 2026-10-17 按 Apple Music 歌手页截图重构：全宽大封面 + 底部名字
+        //   + ℹ️(简介)/▶(播放全部)/☆(收藏) 三钮排。
+        ZStack(alignment: .bottom) {
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fill)
+                .clipped()
 
-            VStack(alignment: .leading, spacing: 6) {
+            LinearGradient(colors: [.clear, .black.opacity(0.55)],
+                           startPoint: .center, endPoint: .bottom)
+                .allowsHitTesting(false)
+
+            VStack(spacing: 10) {
                 Text(resolvedName.isEmpty ? artistName : resolvedName)
-                    .font(.system(size: 20, weight: .bold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                // 统计行：按平台实际显示（2026-10-14 用户要求）——
-                // 热门歌曲数 = 接口返回条数（网易云固定 50）；
-                // 专辑数 = artist.albumSize（平台真实总数，周杰伦 44）。
-                Text("全部歌曲 \(hotSongs.count) 首 · 专辑 \(platformAlbumCount ?? albums.count) 张")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-    }
-
-    /// ★ 2026-10-17 歌手简介（最多两行；点「查看更多」底部弹窗显示全文）
-    @ViewBuilder
-    private var artistBioSection: some View {
-        if !briefDesc.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(briefDesc)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(.white)
                     .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button { showingBio = true } label: {
-                    Text("查看更多")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
+                    .multilineTextAlignment(.center)
+                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .padding(.horizontal, 16)
+
+                HStack(spacing: 26) {
+                    Button { showingBio = true } label: {
+                        Image(systemName: "info")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .background(.thinMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(briefDesc.isEmpty ? 0.4 : 1)
+
+                    Button {
+                        guard !displayedHotSongs.isEmpty else { return }
+                        PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .frame(width: 68, height: 68)
+                            .background(.white, in: Circle())
+                            .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(displayedHotSongs.isEmpty ? 0.4 : 1)
+
+                    if platform == .netease {
+                        Button {
+                            let target = !isFollowed
+                            isFollowed = target
+                            Task {
+                                guard !resolvedArtistId.isEmpty else { return }
+                                try? await NeteaseMusicAPI.shared.setArtistSubscribed(
+                                    id: resolvedArtistId, subscribed: target)
+                                ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
+                            }
+                        } label: {
+                            Image(systemName: isFollowed ? "star.fill" : "star")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(isFollowed ? .yellow : .primary)
+                                .frame(width: 44, height: 44)
+                                .background(.thinMaterial, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
+            .padding(.bottom, 14)
         }
     }
 
@@ -181,48 +206,6 @@ struct WellArtistHomeView: View {
 
             if !hotSongs.isEmpty {
                 // 播放全部（长条胶囊按钮）
-                // ★ 2026-10-17 用户：播放全部改短胶囊 + 新增同尺寸收藏按钮
-                HStack(spacing: 10) {
-                    Button {
-                        guard !displayedHotSongs.isEmpty else { return }
-                        PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
-                    } label: {
-                        Label("播放全部", systemImage: "play.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                            .background(AppTheme.accent, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
-                    if platform == .netease {
-                        Button {
-                            let target = !isFollowed
-                            isFollowed = target
-                            Task {
-                                guard !resolvedArtistId.isEmpty else { return }
-                                try? await NeteaseMusicAPI.shared.setArtistSubscribed(
-                                    id: resolvedArtistId, subscribed: target)
-                                ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
-                            }
-                        } label: {
-                            Label(isFollowed ? "已收藏" : "收藏",
-                                  systemImage: isFollowed ? "heart.fill" : "heart")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(isFollowed ? AppTheme.accent : Color.primary)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 10)
-                                .background(Color.primary.opacity(0.07), in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 2)
-            }
-
             if hotSongs.isEmpty {
                 Text("暂无歌曲")
                     .font(.system(size: 13))
@@ -282,6 +265,55 @@ struct WellArtistHomeView: View {
             } else {
                 Spacer(minLength: 0)
             }
+        }
+    }
+
+    // MARK: - 最新发行卡（Apple Music 截图同款；点击进专辑页）
+
+    @ViewBuilder
+    private var latestReleaseCard: some View {
+        if let latest = albums.first {
+            NavigationLink {
+                WellPlaylistDetailView(
+                    source: .album(id: latest.id, platform: latest.platform,
+                                   name: latest.name, artist: latest.artistName,
+                                   mid: latest.albumMid),
+                    coverURL: latest.picURL,
+                    creatorName: latest.artistName)
+            } label: {
+                HStack(spacing: 12) {
+                    WellRemoteImage(url: latest.picURL, displaySize: 72)
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let date = latest.publishDateText {
+                            Text(date)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(latest.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text(latest.albumTypeText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 34)
+                        .background(Color.primary.opacity(0.06), in: Circle())
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
         }
     }
 
@@ -727,4 +759,5 @@ actor WellArtistHomeCache {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
 }

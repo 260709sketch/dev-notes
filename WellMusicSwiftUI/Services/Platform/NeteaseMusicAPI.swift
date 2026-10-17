@@ -125,7 +125,12 @@ final class NeteaseMusicAPI {
         let cookie: String
         switch cookieStyle {
         case .device: cookie = neteaseWebCookieHeader()
-        case .session: cookie = NeteaseSession.shared.cookieHeader
+        case .session:
+            // ★ 2026-10-17：未登录时 session cookie 为空 → 心动等接口直接 -301 失败
+            //   （比 device 匿名态更差）。登录才用 session，否则回落匿名设备指纹。
+            cookie = NeteaseSession.shared.isLoggedIn
+                ? NeteaseSession.shared.cookieHeader
+                : neteaseWebCookieHeader()
         }
         let resp = try await NetworkClient.shared.postRaw(
             "https://music.163.com/weapi\(suffix)",
