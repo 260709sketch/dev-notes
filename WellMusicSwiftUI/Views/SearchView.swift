@@ -489,7 +489,7 @@ struct SearchView: View {
     private func artistCards(_ items: some Collection<WellArtistSummary>) -> some View {
         ForEach(Array(items)) { artist in
             NavigationLink {
-                WellArtistHomeView(artistId: artist.id, artistName: artist.name,
+                WellArtistHomeRouter(artistId: artist.id, artistName: artist.name,
                                    coverURL: artist.picURL, platform: artist.platform,
                                    artistMid: artist.mid)
             } label: {

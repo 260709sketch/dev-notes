@@ -16,6 +16,8 @@ struct SettingsView: View {
     @AppStorage(PlayerCore.fadeDurationKey) private var fadeDurationMs: Double = 500
     /// 自愿赞助（2026-10-16 用户问题8：展示收款码）
     @State private var showingSupportSheet = false
+    /// 歌手主页样式：v1 方形大图（沉浸）/ v2 圆形头像（主色底+恢复导航栏）
+    @AppStorage("wellmusic.artist.pageStyle") private var artistPageStyle: String = "v1"
 
 
     /// 底部栏位置微调的文案（正 = 更靠下）。
@@ -226,6 +228,13 @@ struct SettingsView: View {
                     Picker("播放器歌词引擎", selection: $settings.appleMusicUseAMLL) {
                         Text("AMLL 网页歌词（逐字特效）").tag(true)
                         Text("自带歌词（省电流畅）").tag(false)
+                    }
+                    .pickerStyle(.navigationLink)
+
+                    // ★ 2026-10-18 用户：歌手主页两种样式可切换
+                    Picker("歌手主页样式", selection: $artistPageStyle) {
+                        Text("方形大图（沉浸）").tag("v1")
+                        Text("圆形头像（主色底）").tag("v2")
                     }
                     .pickerStyle(.navigationLink)
                     Picker("播放器背景", selection: $settings.appleMusicBackgroundStyle) {

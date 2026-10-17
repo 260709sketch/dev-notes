@@ -84,10 +84,24 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // ★ 2026-10-18 用户要求"清除重来"：背景 = 封面主色**纯色铺底**
-                    //   （与专辑页全屏铺满同款：dominantColor → 纯色 →  ignoresSafeArea）。
-                    //   取色完成前用系统底色兜底；不再有任何模糊层/合成链。
-                    (coverTint == Color(.systemBackground) ? Color(uiColor: .systemBackground) : coverTint)
+                    // ★ 2026-10-18 用户（IMG_4076）：下面页面要的是**模糊延伸**——
+                    //   主色纯色打底 + 同封面的一张模糊图，从屏幕上方（头像下缘）开始，
+                    //   向下 35% 内渐隐消失 → 视觉上"从头像的模糊一路延到页面下面"，
+                    //   且底部回归纯色，不会整屏过曝。
+                    coverTint.ignoresSafeArea()
+                    WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .blur(radius: 30, opaque: true)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black, location: 0.0),
+                                    .init(color: .black, location: 0.30),
+                                    .init(color: .clear, location: 0.72),
+                                ],
+                                startPoint: .top, endPoint: .bottom))
+                        .opacity(0.55)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
 
@@ -139,23 +153,39 @@ struct WellArtistHomeView: View {
         //      —— 与专辑页 fullWidth 封面同一套 mask 逻辑；
         //   ④ 所有高度写死（屏宽/96pt），取色是异步的但**不改变布局** → 不会错乱。
         ZStack(alignment: .bottom) {
-            // ★ 2026-10-18 用户（IMG_4074 Lover）：头像**下半部分开始渐进模糊**
-            //   （VariableBlurImageView：start 0.62 → maxRadius 20），并**与 alpha 渐隐
-            //   一起**在底部融进主色纯色页 —— 即"模糊+渐隐"叠加，不是二选一。
-            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                             maxRadius: 20, start: 0.62, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .frame(height: UIScreen.main.bounds.width)
-                .clipped()
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0.0),
-                            .init(color: .black, location: 0.80),
-                            .init(color: .black.opacity(0.55), location: 0.90),
-                            .init(color: .clear, location: 1.0),
-                        ],
-                        startPoint: .top, endPoint: .bottom))
+            // ★ 2026-10-18 用户（IMG_4076 红黑一团 = Metal 合成失败回退）：
+            //   下缘渐糊改为**纯 SwiftUI**：清晰底图 + 同一张图 blur(22)，
+            //   用渐变 mask 让糊层从 55% 起逐渐显形 → "越往下越糊"，零 Metal、零回退风险。
+            ZStack(alignment: .bottom) {
+                WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: UIScreen.main.bounds.width)
+                    .clipped()
+                WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: UIScreen.main.bounds.width)
+                    .clipped()
+                    .blur(radius: 22, opaque: true)
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.52),
+                                .init(color: .black, location: 0.78),
+                                .init(color: .black.opacity(0.5), location: 0.90),
+                                .init(color: .clear, location: 1.0),
+                            ],
+                            startPoint: .top, endPoint: .bottom))
+            }
+            .frame(height: UIScreen.main.bounds.width)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.0),
+                        .init(color: .black, location: 0.86),
+                        .init(color: .black.opacity(0.4), location: 0.95),
+                        .init(color: .clear, location: 1.0),
+                    ],
+                    startPoint: .top, endPoint: .bottom))
 
             VStack(spacing: 14) {
                 Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
@@ -291,9 +321,9 @@ struct WellArtistHomeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(nowPlaying.isCurrent(item)
-                                     ? Color.accentColor
-                                     : (tintIsDark ? Color.white : Color.black.opacity(0.9)))
+                    // ★ 2026-10-18 用户：深色模式文字不再变蓝 —— 颜色跟随底色，
+                    //   "正在播放"由左侧音条动画（NowPlayingIndicator）区分。
+                    .foregroundStyle(tintIsDark ? Color.white : Color.black.opacity(0.9))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
@@ -416,7 +446,7 @@ struct WellArtistHomeView: View {
                     HStack(spacing: 16) {
                         ForEach(similarArtists) { artist in
                             NavigationLink {
-                                WellArtistHomeView(
+                                WellArtistHomeRouter(
                                     artistId: artist.id,
                                     artistName: artist.name,
                                     coverURL: artist.picURL,
@@ -847,4 +877,31 @@ actor WellArtistHomeCache {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+}
+
+/// 歌手主页路由：设置 → 外观 →「歌手主页样式」切换
+/// * v1 = 现版（方形大封面 + 下缘渐糊 + 沉浸导航）
+/// * v2 = 新版（圆形头像 + 提取主色底 + 恢复导航栏）
+struct WellArtistHomeRouter: View {
+    let artistId: String
+    let artistName: String
+    var coverURL: String?
+    var platform: MusicSource = .netease
+    var artistMid: String?
+
+    @AppStorage("wellmusic.artist.pageStyle") private var pageStyle: String = "v1"
+
+    var body: some View {
+        Group {
+            if pageStyle == "v2" {
+                WellArtistHomeViewV2(artistId: artistId, artistName: artistName,
+                                     coverURL: coverURL, platform: platform,
+                                     artistMid: artistMid)
+            } else {
+                WellArtistHomeView(artistId: artistId, artistName: artistName,
+                                   coverURL: coverURL, platform: platform,
+                                   artistMid: artistMid)
+            }
+        }
+    }
 }

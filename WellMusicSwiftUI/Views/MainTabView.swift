@@ -431,7 +431,7 @@ struct NowPlayingDestinationView: View {
         case .artist:
             // ★ 2026-10-14：**必须**把平台传下去。歌手主页原先只查网易云，
             //   QQ / 酷狗 的歌从播放页点歌手名跳进来会是一张全空的页面。
-            WellArtistHomeView(artistId: destination.platformId,
+            WellArtistHomeRouter(artistId: destination.platformId,
                                artistName: destination.name,
                                coverURL: destination.coverURL,
                                platform: destination.platform)
