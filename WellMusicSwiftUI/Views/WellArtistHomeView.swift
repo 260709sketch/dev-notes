@@ -204,8 +204,6 @@ struct WellArtistHomeView: View {
                 .font(.system(size: 17, weight: .bold))
                 .padding(.horizontal, 16)
 
-            if !hotSongs.isEmpty {
-                // 播放全部（长条胶囊按钮）
             if hotSongs.isEmpty {
                 Text("暂无歌曲")
                     .font(.system(size: 13))
@@ -759,5 +757,4 @@ actor WellArtistHomeCache {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
-}
 }
