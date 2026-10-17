@@ -36,6 +36,8 @@ struct WellArtistHomeView: View {
     @State private var similarArtists: [SimilarArtist] = []
     @State private var showingBio = false
     @State private var resolvedArtistId = ""
+    /// ★ 2026-10-17 用户：模糊底色取**封面提取色**（Apple Music 同款）
+    @State private var coverTint: Color = Color(.systemBackground)
 
     struct SimilarArtist: Identifiable {
         let id: String
@@ -67,7 +69,21 @@ struct WellArtistHomeView: View {
             } else if failed && hotSongs.isEmpty && albums.isEmpty {
                 retryState
             } else {
-                ScrollViewReader { proxy in
+                ZStack(alignment: .top) {
+                    // ★ 2026-10-17 用户：模糊从封面延伸到整个页面，**色调取封面提取色**
+                    ZStack {
+                        coverTint.ignoresSafeArea()
+                        WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
+                                         maxRadius: 34, start: 0.0)
+                            .opacity(0.55)
+                            .ignoresSafeArea()
+                        LinearGradient(colors: [Color(.systemBackground).opacity(0.18),
+                                                Color(.systemBackground).opacity(0.55)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
+                    }
+                    ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
                             artistHeader
@@ -85,6 +101,7 @@ struct WellArtistHomeView: View {
                     // ★ 2026-10-16 问题24：上滑浮现「回到顶部」浮钮
                     .modifier(WellScrollToTopPageModifier(
                         space: "well-artist-scroll", topID: "well-page-top", proxy: proxy))
+                    }
                 }
             }
         }
@@ -110,20 +127,12 @@ struct WellArtistHomeView: View {
         // ★ 2026-10-17 按截图精修：清晰封面只占上部，向下**大面积模糊延伸**（约 240pt）
         //   并渐隐融入页面背景；名字与 ℹ️/▶/☆ 三钮排在模糊区中部（截图同位置）。
         ZStack(alignment: .top) {
-            // 模糊延伸底层：同一张封面拉满整个 header 高度再 blur，
-            // 顶部与清晰层自然重合 → 无接缝
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
+            // 可变模糊底层（VariableBlur 技术）：上清晰 → 下渐糊，无接缝
+            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
+                             maxRadius: 28, start: 0.28)
                 .frame(maxWidth: .infinity)
                 .frame(height: 390)
                 .clipped()
-                .blur(radius: 46, opaque: true)
-                .overlay(alignment: .bottom) {
-                    // 渐隐融入页面背景（最后 120pt）
-                    LinearGradient(colors: [.clear, Color(.systemBackground)],
-                                   startPoint: .bottom, endPoint: .bottom)
-                        .allowsHitTesting(false)
-                        .frame(height: 0)
-                }
 
             // 清晰封面（上半部，底部 30% 叠渐变让模糊过渡更自然）
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
@@ -307,6 +316,15 @@ struct WellArtistHomeView: View {
                     .contentShape(Rectangle())
             }
         }
+    }
+
+    /// 从封面取主色（小图 64px 即可），供页面模糊背景着色
+    private func resolveCoverTint() async {
+        guard let raw = resolvedCover ?? coverURL, !raw.isEmpty,
+              let url = WellArtworkURL.resolved(raw,
+                                                pixelSize: WellArtworkURL.pixelSize(forPoints: 64)),
+              let image = await WellImageCache.shared.image(for: url) else { return }
+        coverTint = Color(uiColor: image.dominantColor())
     }
 
     // MARK: - 最新发行卡（Apple Music 截图同款；点击进专辑页）
@@ -546,6 +564,8 @@ struct WellArtistHomeView: View {
             similarArtists = sims.map { SimilarArtist(id: $0.id, name: $0.name, picURL: $0.picURL) }
         }
         platformAlbumCount = albumsResult.count
+        // ★ 封面提取色（模糊底色用）
+        await resolveCoverTint()
         if resolvedName.isEmpty { resolvedName = artistName }
         if resolvedCover == nil {
             // ⚠️ 刻意**不写成一串 `??`**：`String? ?? String? ?? ...` 对 `??` 的两个重载
