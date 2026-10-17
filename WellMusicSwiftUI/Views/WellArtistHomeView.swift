@@ -84,16 +84,10 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // ★ 2026-10-17 用户定稿结构：
-                    //   页面底 = **头像取色的纯色**（像专辑页全屏铺满的底色）
-                    //   + 一层低透明的可变模糊（只做层次，不抢色）。
+                    // ★ 2026-10-17 用户（IMG_4070 刺眼粉白）：背景**只保留取色纯色**
+                    //   （像 Tyler 参考图那种干净底色）；之前那层 30% 模糊叠在浅色封面上
+                    //   会把整屏糊成一片白，还冲掉头像 → 已移除。
                     coverTint.ignoresSafeArea()
-                    WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                     maxRadius: 40, start: 0.0)
-                        .opacity(0.30)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                        .ignoresSafeArea()
 
                     ScrollViewReader { proxy in
                     ScrollView {
@@ -136,18 +130,24 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 2026-10-17 用户定稿：
-        //   ① 头像 = **方形**（宽 = 屏宽），名字与播放钮都压在头像上（上、下都是头像）；
-        //   ② 头像**下方 30% 开始**用 VariableBlurImageView 渐进模糊（start 0.70）；
-        //   ③ 头像之下 = 头像取色的纯色底，铺满整页。
+        // ★ 2026-10-17 定稿（参考图 Tyler + 用户"头像下面渐变模糊过渡"）：
+        //   ① 头像 = 方形、fit、**清晰**（不裁左右）；
+        //   ② 头像**下缘 30% 起** VariableBlurImageView 渐进模糊（start 0.70, maxRadius 18）
+        //      ——这就是参考图人物下缘"化开"的效果；
+        //   ③ 最底部再用渐变融进取色纯色底（页面只有这一层纯色，不再有全屏糊层）。
         ZStack(alignment: .bottom) {
-            // ★ 2026-10-17 用户：头像**左右不要超出屏幕** → contentMode = .fit
-            //   （整张头像完整可见；多余区域露出取色底，不再裁切两侧）
             WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                             maxRadius: 26, start: 0.70, contentMode: .fit)
+                             maxRadius: 18, start: 0.70, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: UIScreen.main.bounds.width)
                 .clipped()
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [.clear, coverTint.opacity(0.5), coverTint],
+                        startPoint: .top, endPoint: .bottom)
+                        .frame(height: 120)
+                        .allowsHitTesting(false)
+                }
 
             VStack(spacing: 14) {
                 Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
