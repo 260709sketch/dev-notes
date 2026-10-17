@@ -23,9 +23,15 @@ struct WellScrollOffsetReporter: ViewModifier {
     func body(content: Content) -> some View {
         content.background(
             GeometryReader { geo in
+                // ★ 2026-10-17 性能（对比 Kumone：列表页**没有**滚动上报，我们没有理由
+                //   每帧都往上游传一次 preference）：
+                //   把偏移量化到 8pt 桶 —— 值没跨桶时 preference 相等，SwiftUI 不会触发
+                //   onPreferenceChange，滚动时的偏好传播从 60Hz 降到「每移动 8pt 一次」，
+                //   回顶按钮的 ±8pt 方向判定不受影响。
+                let raw = -geo.frame(in: .named(space)).minY
                 Color.clear.preference(
                     key: WellScrollOffsetKey.self,
-                    value: -geo.frame(in: .named(space)).minY
+                    value: (raw / 8).rounded() * 8
                 )
             }
         )
