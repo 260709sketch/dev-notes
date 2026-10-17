@@ -360,7 +360,14 @@ final class PlayerCore: NSObject, ObservableObject {
             guard let tracks = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 3),
                   !tracks.isEmpty, let self, self.isFMMode else { return }
             var seen = Set(self.queue.map { $0.keyOf })
-            let fresh = tracks.filter { seen.insert($0.keyOf).inserted }
+            var fresh = tracks.filter { seen.insert($0.keyOf).inserted }
+            if fresh.isEmpty {
+                // ★ 2026-10-17：服务端节流导致补货拿到同一批 → 等 3s 再要一次
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if let again = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 3) {
+                    fresh = again.filter { seen.insert($0.keyOf).inserted }
+                }
+            }
             if !fresh.isEmpty { self.addToQueue(fresh) }
         }
     }

@@ -36,7 +36,8 @@ final class NeteaseMusicAPI {
     /// 登录族 / 风控敏感接口走 weapi。两条通道都正常，别再说「加密通道已停用」。
     private static func apiRequest<T: Decodable>(_ path: String,
                                                  params: [String: Any] = [:],
-                                                 type: T.Type) async throws -> T {
+                                                 type: T.Type,
+                                                 headers extraHeaders: [String: String] = [:]) async throws -> T {
         var finalParams = params
         // 网易云对「会改状态」的接口（发验证码 / 登录 / 收藏）要求表单里的 `csrf_token`
         // 与 Cookie 里的 `__csrf` 一致。调用点大多写死空串，这里统一补一次 ——
@@ -52,13 +53,17 @@ final class NeteaseMusicAPI {
             "https://music.163.com/\(path)",
             body: body,
             contentType: "application/x-www-form-urlencoded",
-            headers: [
-                "Referer": "https://music.163.com/",
-                "Origin": "https://music.163.com",
-                // 登录后所有请求都要带票据，否则拿到的是匿名数据
-                // （发现页 / 每日推荐 / 我喜欢 这类会直接空手而归）。
-                "Cookie": NeteaseSession.shared.cookieHeader,
-            ]
+            headers: {
+                var h: [String: String] = [
+                    "Referer": "https://music.163.com/",
+                    "Origin": "https://music.163.com",
+                    // 登录后所有请求都要带票据，否则拿到的是匿名数据
+                    // （发现页 / 每日推荐 / 我喜欢 这类会直接空手而归）。
+                    "Cookie": NeteaseSession.shared.cookieHeader,
+                ]
+                for (k, v) in extraHeaders { h[k] = v }
+                return h
+            }()
         )
         // 服务端可能在响应头里续期票据（登录成功后 `MUSIC_U` 就是走这里下发的），
         // 顺手吸收掉。字段名大小写不敏感 —— `allHeaderFields` 给的 casing 不保证。
@@ -1788,15 +1793,31 @@ final class NeteaseMusicAPI {
         var collected: [MusicItem] = []
         var seen = Set<String>()
         for index in 0..<max(1, batches) {
+            // 74 版同款：每批间隔 500ms（明文 + iPhone UA 下服务端会正常前进）
             if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
-            // ★ 2026-10-17：明文 api/v1/radio/get 间歇性被风控（参考 Kumone 用 weapi）
-            let resp: FMResponse = try await Self.weapiRequest(
-                "/api/v1/radio/get", params: [:], type: FMResponse.self)
+            // ★ 2026-10-17 按 74 版参考实现对齐：漫游用**明文 api POST**
+            //   `api/v1/radio/get` + **iPhone UA**（74 版实测可用；weapi 加密版反而不给）。
+            let resp: FMResponse = try await Self.apiRequest(
+                "api/v1/radio/get", params: [:], type: FMResponse.self,
+                headers: ["User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"])
             try Self.ensureOK(resp.code, fallback: "私人漫游加载失败")
             for track in resp.data ?? [] {
                 guard let item = Self.mapFMTrack(track) else { continue }
                 guard seen.insert(item.keyOf).inserted else { continue }
                 collected.append(item)
+            }
+        }
+        // ★ 2026-10-17 兜底：节流导致只有一批（5 首）→ 用每日推荐补 10 首，
+        //   保证漫游队列不会永远 5 首。
+        if collected.count <= 5 {
+            if let daily = try? await dailyRecommendSongs() {
+                var seen = Set(collected.map { $0.keyOf })
+                var added = 0
+                for song in daily where added < 10 {
+                    if seen.insert(song.keyOf).inserted {
+                        collected.append(song); added += 1
+                    }
+                }
             }
         }
         return collected
@@ -1815,11 +1836,14 @@ final class NeteaseMusicAPI {
             "type": "fromPlayOne",
             "playlistId": playlistId,
             "startMusicId": songId,
-            "count": count,
+            "count": String(count),
             "csrf_token": "",
         ]
+        // ★ 2026-10-17 按 74 版对齐：心动必须用**登录态 Cookie**（此前 device 指纹
+        //   = 未登录态，数据少还易被风控）；count 用字符串 '1'（74 版同款）。
         let resp: IntelligenceResponse = try await Self.weapiRequest(
-            "/api/playmode/intelligence/list", params: params, type: IntelligenceResponse.self)
+            "/api/playmode/intelligence/list", params: params,
+            type: IntelligenceResponse.self, cookieStyle: .session)
         try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "心动模式加载失败")
         return (resp.data ?? []).compactMap { $0.songInfo }.compactMap(Self.mapSong)
     }
@@ -1832,8 +1856,11 @@ final class NeteaseMusicAPI {
         var seen = Set<String>()
         var seed = songId
         var dryRounds = 0
-        for _ in 0..<8 {
-            let batch = try await intelligenceList(songId: seed, playlistId: playlistId, count: 3)
+        for round in 0..<10 {
+            // ★ 2026-10-17：连续快速请求会被风控（第 2 轮就空 → 只剩 5 首）。
+            //   每轮间隔 0.8s，单轮失败不中断已收集部分。
+            if round > 0 { try? await Task.sleep(nanoseconds: 800_000_000) }
+            let batch = (try? await intelligenceList(songId: seed, playlistId: playlistId, count: 3)) ?? []
             let fresh = batch.filter { seen.insert($0.keyOf).inserted }
             if fresh.isEmpty {
                 dryRounds += 1
@@ -1844,6 +1871,15 @@ final class NeteaseMusicAPI {
                 seed = fresh.last?.neteaseId ?? seed
             }
             if collected.count >= target { break }
+        }
+        // ★ 2026-10-17 兜底：链式被风控时（<12 首）用「相似歌曲」补足到 target，
+        //   保证心动模式永远不止 5 首。
+        if collected.count < 12,
+           let similar = try? await simiSongs(songId: songId), !similar.isEmpty {
+            var seen = Set(collected.map { $0.keyOf })
+            for song in similar where collected.count < target {
+                if seen.insert(song.keyOf).inserted { collected.append(song) }
+            }
         }
         return collected
     }

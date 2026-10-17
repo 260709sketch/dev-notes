@@ -672,6 +672,28 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
       })
     }
     globalThis.fetch = _fetch
+
+    // ★ 2026-10-17 用户音源（Well四大平台聚合 v2.9.7）实测：脚本的更新自检用的是
+    //   **全局 `request(url, options, callback)`**（洛雪官方为脚本提供的旧式 HTTP API，
+    //   不是 lx.request）。此前我们没有这个全局 → checkUpdate() 一执行就
+    //   ReferenceError，被脚本自己的 try/catch 吞掉 → 永远没有更新提示。
+    //   官方签名：callback(err, resp, body)，resp = { statusCode, statusMessage,
+    //   headers, body }；返回 { abort() }。
+    if (typeof globalThis.request != 'function') {
+      globalThis.request = (url, options, callback) => {
+        const opts = options || {}
+        const cb = typeof options === 'function' ? options : callback
+        const realOpts = typeof options === 'function' ? {} : opts
+        try {
+          return globalThis.lx.request(url, realOpts, (err, resp, body) => {
+            if (typeof cb === 'function') cb(err, resp, body)
+          })
+        } catch (e) {
+          if (typeof cb === 'function') cb(e, null, null)
+          return { abort() {} }
+        }
+      }
+    }
   }
 
   globalThis.setTimeout = _setTimeout
