@@ -95,11 +95,11 @@ struct WellArtistHomeView: View {
                                      coverTint.opacity(0.82)],
                             startPoint: .top, endPoint: .bottom)
                             .ignoresSafeArea()
-                        // 再叠一层很淡的封面模糊做纹理（保留"封面延伸"的层次）
+                        // ★ 2026-10-17 重点（用户）：**封面底部那一段模糊要直接延续成页面背景**
+                        //   （不再是淡纹理）——贴底对齐 + 全不透明，过渡是连续的一张图。
                         WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                         maxRadius: 42, start: 0.0, alignBottom: true)
-                            .saturation(1.4)
-                            .opacity(0.35)
+                                         maxRadius: 46, start: 0.0, alignBottom: true)
+                            .saturation(1.3)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
@@ -159,7 +159,7 @@ struct WellArtistHomeView: View {
                 .mask(
                     LinearGradient(
                         stops: [.init(color: .black, location: 0.0),
-                                .init(color: .black, location: 0.86),
+                                .init(color: .black, location: 0.96),
                                 .init(color: .black.opacity(0.0), location: 1.0)],
                         startPoint: .top, endPoint: .bottom))
 
