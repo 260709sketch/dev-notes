@@ -105,25 +105,45 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 2026-10-17 按 Apple Music 歌手页截图重构：全宽大封面 + 底部名字
-        //   + ℹ️(简介)/▶(播放全部)/☆(收藏) 三钮排。
-        ZStack(alignment: .bottom) {
+        // ★ 2026-10-17 按截图精修：清晰封面只占上部，向下**大面积模糊延伸**（约 240pt）
+        //   并渐隐融入页面背景；名字与 ℹ️/▶/☆ 三钮排在模糊区中部（截图同位置）。
+        ZStack(alignment: .top) {
+            // 模糊延伸底层：同一张封面拉满整个 header 高度再 blur，
+            // 顶部与清晰层自然重合 → 无接缝
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
+                .frame(maxWidth: .infinity)
+                .frame(height: 720)
+                .clipped()
+                .blur(radius: 46, opaque: true)
+                .overlay(alignment: .bottom) {
+                    // 渐隐融入页面背景（最后 120pt）
+                    LinearGradient(colors: [.clear, Color(.systemBackground)],
+                                   startPoint: .bottom, endPoint: .bottom)
+                        .allowsHitTesting(false)
+                        .frame(height: 0)
+                }
+
+            // 清晰封面（上半部，底部 30% 叠渐变让模糊过渡更自然）
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(1, contentMode: .fill)
                 .clipped()
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [.clear, Color(.systemBackground).opacity(0.9)],
+                                   startPoint: .center, endPoint: .bottom)
+                        .frame(height: 90)
+                        .allowsHitTesting(false)
+                }
 
-            LinearGradient(colors: [.clear, .black.opacity(0.55)],
-                           startPoint: .center, endPoint: .bottom)
-                .allowsHitTesting(false)
-
-            VStack(spacing: 10) {
+            // 名字 + 控制排（挂在模糊区中部）
+            VStack(spacing: 14) {
+                Spacer(minLength: 0)
                 Text(resolvedName.isEmpty ? artistName : resolvedName)
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .shadow(color: .black.opacity(0.4), radius: 6)
+                    .shadow(color: .black.opacity(0.45), radius: 6)
                     .padding(.horizontal, 16)
 
                 HStack(spacing: 26) {
@@ -131,8 +151,8 @@ struct WellArtistHomeView: View {
                         Image(systemName: "info")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.primary)
-                            .frame(width: 44, height: 44)
-                            .background(.thinMaterial, in: Circle())
+                            .frame(width: 46, height: 46)
+                            .background(.regularMaterial, in: Circle())
                     }
                     .buttonStyle(.plain)
                     .opacity(briefDesc.isEmpty ? 0.4 : 1)
@@ -142,9 +162,9 @@ struct WellArtistHomeView: View {
                         PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
                     } label: {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(.system(size: 26, weight: .semibold))
                             .foregroundStyle(.black)
-                            .frame(width: 68, height: 68)
+                            .frame(width: 72, height: 72)
                             .background(.white, in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
                     }
@@ -163,16 +183,15 @@ struct WellArtistHomeView: View {
                             }
                         } label: {
                             Image(systemName: isFollowed ? "star.fill" : "star")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(isFollowed ? .yellow : .primary)
-                                .frame(width: 44, height: 44)
-                                .background(.thinMaterial, in: Circle())
+                                .frame(width: 46, height: 46)
+                                .background(.regularMaterial, in: Circle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
-            .padding(.bottom, 14)
         }
     }
 
@@ -196,13 +215,16 @@ struct WellArtistHomeView: View {
         .presentationDetents([.medium, .large])
     }
 
-    // MARK: - 热门歌曲
-
     private var hotSongsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("全部歌曲")
-                .font(.system(size: 17, weight: .bold))
-                .padding(.horizontal, 16)
+            HStack(spacing: 4) {
+                Text("全部歌曲")
+                    .font(.system(size: 17, weight: .bold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
 
             if hotSongs.isEmpty {
                 Text("暂无歌曲")
@@ -232,11 +254,10 @@ struct WellArtistHomeView: View {
         }
     }
 
-    /// 热门歌曲行：`[序号(前3高亮)] [封面40] 歌名 / 专辑名`
-    /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求）
+    /// 热门歌曲行：`[封面40] 歌名 / 歌手名 …菜单`
+    /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求；序号已按用户要求去除）
     private func hotSongRow(index: Int, item: MusicItem) -> some View {
         HStack(spacing: 12) {
-            // ★ 2026-10-17 用户「去除排序」：歌曲行不再显示序号
             WellRemoteImage(url: item.albumCoverURL, displaySize: 40)
                 .frame(width: 40, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -248,7 +269,7 @@ struct WellArtistHomeView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
-                // ★ 2026-10-17 用户：热门歌曲副标题显示**歌手名**（原为专辑名）
+                // ★ 2026-10-17 用户：歌曲行副标题显示**歌手名**（原为专辑名）
                 Text(item.artist ?? item.album ?? "")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -262,6 +283,26 @@ struct WellArtistHomeView: View {
                 NowPlayingIndicator()
             } else {
                 Spacer(minLength: 0)
+            }
+
+            // ★ 2026-10-17 截图同款：行尾 … 菜单
+            Menu {
+                Button {
+                    PlayerCore.shared.play(queue: [item], startIndex: 0)
+                } label: {
+                    Label("播放", systemImage: "play.fill")
+                }
+                Button {
+                    PlayerCore.shared.playNext(item)
+                } label: {
+                    Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
             }
         }
     }
