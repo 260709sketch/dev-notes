@@ -185,7 +185,7 @@ struct WellCommentsSheet: View {
         if list.isEmpty, let sid = songId {
             let url = "https://music.163.com/api/v1/resource/comments/R_SO_4_\(sid)?limit=30&offset=0"
             if let data = try? await URLSession.shared.data(from: URL(string: url)!).0,
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let hotList = (obj["hotComments"] as? [[String: Any]]) ?? []
                 let newList = (obj["comments"] as? [[String: Any]]) ?? []
                 total = (obj["total"] as? Int) ?? newList.count
