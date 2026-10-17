@@ -1241,8 +1241,9 @@ final class NeteaseMusicAPI {
         // ★ 2026-10-17 修复「最多 50 首」：该接口**每页上限就是 50**（请求 100 也回 50），
         //   之前拿 100 当页大小 → 第一页就误判“不足一页”提前停。改用 50/页 +
         //   接口的 more 标志（或空页）作为停止条件，最多 20 页 = 1000 首。
+        // ★ 2026-10-17 用户明确要求：**只拉 50 首**（多页串行会让首屏空等）
         let pageSize = 50
-        for page in 0..<20 {
+        for page in 0..<1 {
             var more: Bool?
             let batch = try await artistSongs(id: id, order: order,
                                               limit: pageSize, offset: page * pageSize,

@@ -84,14 +84,12 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // ★★ 2026-10-17 定案（用户「能做出来吗」）：整页只有**一张**连续模糊图。
-                    //   封面就是它的上半部分（hero 不再单独放图片）→ 结构上不可能有接缝。
+                    // 背景：整页一层大半径模糊（比封面更糊，作为"延伸"底）
                     WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                     maxRadius: 34, start: 0.18)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                     maxRadius: 52, start: 0.0, alignBottom: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
-                    Color.black.opacity(0.06).ignoresSafeArea().allowsHitTesting(false)
 
                     ScrollViewReader { proxy in
                     ScrollView {
@@ -134,69 +132,82 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 封面由**页面背景层**提供（同一张连续模糊图），这里只放名字与三钮，
-        //   固定在 430pt 区域底部 → 视觉上与"照片下缘"对齐。
-        VStack(spacing: 14) {
-            Spacer(minLength: 0)
-            Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
-                .font(.system(size: 44, weight: .black, design: .serif))
-                .kerning(-1)
-                .minimumScaleFactor(0.6)
-                .foregroundStyle(heroTitleColor)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 16)
+        // ★ 2026-10-17 最终形态（对应 Apple Music 参考图）：
+        //   歌手头像**清晰可见**，照片下缘 ~1/3 渐进模糊（VariableBlurImageView 真可变模糊），
+        //   名字 + ℹ️/▶/☆ 叠在模糊区上；页面背景是同一张封面的大半径模糊延伸。
+        ZStack(alignment: .bottom) {
+            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
+                             maxRadius: 30, start: 0.34)
+                .frame(maxWidth: .infinity)
+                .frame(height: 430)
+                .clipped()
+                .mask(
+                    LinearGradient(
+                        stops: [.init(color: .black, location: 0.0),
+                                .init(color: .black, location: 0.94),
+                                .init(color: .black.opacity(0.0), location: 1.0)],
+                        startPoint: .top, endPoint: .bottom))
 
-            HStack(spacing: 30) {
-                Button { showingBio = true } label: {
-                    Image(systemName: "info")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(heroGlyphColor)
-                        .frame(width: 46, height: 46)
-                        .background(tintIsDark ? Color.black.opacity(0.22)
-                                               : Color.black.opacity(0.08), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .opacity(briefDesc.isEmpty ? 0.45 : 1)
+            VStack(spacing: 14) {
+                Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
+                    .font(.system(size: 44, weight: .black, design: .serif))
+                    .kerning(-1)
+                    .minimumScaleFactor(0.6)
+                    .foregroundStyle(heroTitleColor)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
 
-                Button {
-                    guard !displayedHotSongs.isEmpty else { return }
-                    PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
-                } label: {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .frame(width: 72, height: 72)
-                        .background(heroAccent, in: Circle())
-                        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
-                }
-                .buttonStyle(.plain)
-                .opacity(displayedHotSongs.isEmpty ? 0.45 : 1)
-
-                if platform == .netease {
-                    Button {
-                        let target = !isFollowed
-                        isFollowed = target
-                        Task {
-                            guard !resolvedArtistId.isEmpty else { return }
-                            try? await NeteaseMusicAPI.shared.setArtistSubscribed(
-                                id: resolvedArtistId, subscribed: target)
-                            ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
-                        }
-                    } label: {
-                        Image(systemName: isFollowed ? "star.fill" : "star")
-                            .font(.system(size: 18, weight: .semibold))
+                HStack(spacing: 30) {
+                    Button { showingBio = true } label: {
+                        Image(systemName: "info")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(heroGlyphColor)
                             .frame(width: 46, height: 46)
                             .background(tintIsDark ? Color.black.opacity(0.22)
                                                    : Color.black.opacity(0.08), in: Circle())
                     }
                     .buttonStyle(.plain)
+                    .opacity(briefDesc.isEmpty ? 0.45 : 1)
+
+                    Button {
+                        guard !displayedHotSongs.isEmpty else { return }
+                        PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .frame(width: 72, height: 72)
+                            .background(heroAccent, in: Circle())
+                            .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(displayedHotSongs.isEmpty ? 0.45 : 1)
+
+                    if platform == .netease {
+                        Button {
+                            let target = !isFollowed
+                            isFollowed = target
+                            Task {
+                                guard !resolvedArtistId.isEmpty else { return }
+                                try? await NeteaseMusicAPI.shared.setArtistSubscribed(
+                                    id: resolvedArtistId, subscribed: target)
+                                ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
+                            }
+                        } label: {
+                            Image(systemName: isFollowed ? "star.fill" : "star")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(heroGlyphColor)
+                                .frame(width: 46, height: 46)
+                                .background(tintIsDark ? Color.black.opacity(0.22)
+                                                       : Color.black.opacity(0.08), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .padding(.bottom, 18)
         }
-        .frame(maxWidth: .infinity)
         .frame(height: 430)
     }
 
@@ -344,7 +355,7 @@ struct WellArtistHomeView: View {
                     creatorName: latest.artistName)
             } label: {
                 HStack(spacing: 12) {
-                    WellRemoteImage(url: latest.picURL, displaySize: 72)
+                    WellRemoteImage(url: latest.picURL, displaySize: 160)
                         .frame(width: 72, height: 72)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     VStack(alignment: .leading, spacing: 4) {
@@ -352,6 +363,8 @@ struct WellArtistHomeView: View {
                             Text(date)
                                 .font(.system(size: 12))
                                 .foregroundStyle(.blue)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
                         Text(latest.name)
                             .font(.system(size: 15, weight: .semibold))
