@@ -32,6 +32,11 @@ struct WellArtistHomeView: View {
     @State private var searchText = ""
     // ★ 2026-10-17 歌手页重构（Kumone 风格）：简介 / 收藏态 / 相似歌手
     @State private var briefDesc = ""
+    @Environment(\.colorScheme) private var colorScheme
+    /// 歌手名字体：true = 衬线大字（默认），false = 系统字体
+    @AppStorage("wellmusic.artist.serifTitle") private var serifTitle = true
+    /// 下滑刷新：用户下滑超过阈值才后台重拉（不在打开时一起刷，避免变慢）
+    @State private var didPullRefresh = false
     @State private var isFollowed = false
     @State private var similarArtists: [SimilarArtist] = []
     @State private var showingBio = false
@@ -40,18 +45,79 @@ struct WellArtistHomeView: View {
     @State private var coverTint: Color = Color(.systemBackground)
     /// 提取色是否偏深（决定页面文字用白/黑，参考图深蓝底 → 白字）
     @State private var tintIsDark = false
-    /// 强调色：深底用暖黄（Nirvana 参考图），浅底用白（AC/DC 参考图）
+    // MARK: - 主题色系统（2026-10-18 用户色域白名单）
+
+    /// HSV
+    private static func hsv(_ ui: UIColor) -> (h: CGFloat, s: CGFloat, v: CGFloat) {
+        var h: CGFloat = 0, sa: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+        ui.getHue(&h, saturation: &sa, brightness: &v, alpha: &a)
+        return (h * 360, sa, v)
+    }
+
+    /// 浅色模式允许提取的色相（度）：粉/蓝/浅蓝/绿/淡黄/褐，外加低饱和的浅灰米
+    private static func lightAllowed(_ h: CGFloat, _ s: CGFloat, _ v: CGFloat) -> Bool {
+        if s < 0.12 { return true }                      // 浅灰/米白
+        if (320...360).contains(h) { return true }        // 粉/玫红
+        if (190...260).contains(h) { return true }        // 蓝/浅蓝
+        if (80...170).contains(h) { return true }         // 绿
+        if (35...70).contains(h) { return true }          // 淡黄
+        if (15...40).contains(h) { return true }          // 褐/橙
+        return false
+    }
+
+    /// 深色模式允许提取的色相：深蓝/深绿等适合暗背景的（且本身够暗）
+    private static func darkAllowed(_ h: CGFloat, _ s: CGFloat, _ v: CGFloat) -> Bool {
+        guard v < 0.62 else { return false }
+        if (200...255).contains(h) { return true }        // 深蓝
+        if (90...175).contains(h) { return true }         // 深绿
+        if (15...45).contains(h), v < 0.45 { return true } // 深褐
+        return false
+    }
+
+    /// 背景色：命中色域 → 用提取色（深色模式压暗一档）；未命中 → 浅色白 / 深色黑
+    private var backdropTint: Color {
+        let ui = UIColor(coverTint)
+        let (h, sv, v) = Self.hsv(ui)
+        let isDark = colorScheme == .dark
+        if isDark {
+            guard Self.darkAllowed(h, sv, v) else { return Color(red: 0.07, green: 0.07, blue: 0.08) }
+            let f: CGFloat = 0.22
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return Color(red: Double(r * (1 - f)), green: Double(g * (1 - f)), blue: Double(b * (1 - f)))
+        }
+        guard Self.lightAllowed(h, sv, v) else { return Color(red: 0.99, green: 0.99, blue: 0.99) }
+        return coverTint
+    }
+
+    /// 背景是否偏深（决定文字/图标黑白）
+    private var backdropIsDark: Bool {
+        let ui = UIColor(backdropTint)
+        let (_, _, v) = Self.hsv(ui)
+        return v < 0.55
+    }
+
+    /// 主题色：从背景提取色派生（不再固定黄/白）；白/黑底时回落系统蓝
     private var heroAccent: Color {
-        tintIsDark ? Color(red: 0.98, green: 0.76, blue: 0.16) : .white
+        let base = backdropTint
+        let ui = UIColor(base)
+        let (h, s, v) = Self.hsv(ui)
+        // 白/黑底 → 系统蓝；有色底 → 提亮提饱和的派生色
+        if s < 0.08 || (v > 0.93 && s < 0.2) { return Color.blue }
+        return Color(hue: Double(h / 360), saturation: Double(min(1, s * 1.15 + 0.12)),
+                     brightness: Double(min(1, v * (backdropIsDark ? 1.35 : 1.12))))
     }
-    /// 名字颜色：深底用强调色，浅底用近黑
+
+    /// 名字颜色
     private var heroTitleColor: Color {
-        tintIsDark ? heroAccent : Color.black.opacity(0.82)
+        backdropIsDark ? .white : Color.black.opacity(0.85)
     }
-    /// 两侧按钮前景色
+
+    /// 两侧按钮（ℹ️/☆）图标色
     private var heroGlyphColor: Color {
-        tintIsDark ? heroAccent : Color.black.opacity(0.75)
+        backdropIsDark ? .white : Color.black.opacity(0.7)
     }
+
 
     struct SimilarArtist: Identifiable {
         let id: String
@@ -84,26 +150,9 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // ★ 2026-10-18 用户（IMG_4076）：下面页面要的是**模糊延伸**——
-                    //   主色纯色打底 + 同封面的一张模糊图，从屏幕上方（头像下缘）开始，
-                    //   向下 35% 内渐隐消失 → 视觉上"从头像的模糊一路延到页面下面"，
-                    //   且底部回归纯色，不会整屏过曝。
-                    coverTint.ignoresSafeArea()
-                    WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                        .blur(radius: 30, opaque: true)
-                        .mask(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .black, location: 0.0),
-                                    .init(color: .black, location: 0.30),
-                                    .init(color: .clear, location: 0.72),
-                                ],
-                                startPoint: .top, endPoint: .bottom))
-                        .opacity(0.55)
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
+                    // ★ 2026-10-18 新版：背景 = 提取封面主色（与"居中留白"同款），
+                    //   深色模式下压暗一档保证可读；无模糊层。
+                    backdropTint.ignoresSafeArea().allowsHitTesting(false)
 
                     ScrollViewReader { proxy in
                     ScrollView {
@@ -116,6 +165,9 @@ struct WellArtistHomeView: View {
                             Color.clear.frame(height: 170)
                         }
                         .modifier(WellScrollOffsetReporter(space: "well-artist-scroll"))
+                        .onPreferenceChange(WellScrollOffsetKey.self) { offset in
+                            pullRefreshIfNeeded(offset: offset)
+                        }
                         .id("well-page-top")
                         .padding(.top, 6)
                     }
@@ -127,102 +179,16 @@ struct WellArtistHomeView: View {
                 }
             }
         }
-        // ★ 2026-10-16 用户（问题19）：搜索页进歌手主页，导航栏不要显示
-        //   「歌手主页」字样（返回按钮右边保持干净；歌手名在页面大头部里）
+        // ★ 2026-10-18 用户问题8：导航栏**不显示歌手名字**
+        // ★ 2026-10-18 用户问题14：导航栏右侧 = 三个点（菜单）+ 分享歌手主页按钮
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        // ★ 2026-10-17：hero 沉浸——导航栏背景隐藏，封面顶到状态栏下
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .sheet(isPresented: $showingBio) { bioSheet }
-        // ★ 2026-10-14 用户：移除导航栏上的搜索框。
-        //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
-        //   —— 导航栏下方常驻一条「搜索歌手歌曲」，用户要求去掉。
-        .task {
-            guard hotSongs.isEmpty && albums.isEmpty else { return }
-            await load()
-        }
-    }
-
-    // MARK: - Header
-
-    private var artistHeader: some View {
-        // ★ 2026-10-18 重写（对齐 IMG_4064 Sabrina + 专辑页全屏铺满模式）：
-        //   ① 头像 = **方形**（宽 = 屏宽）、fit、左右不裁；
-        //   ② 名字 + ℹ️/▶/☆ 压在头像**下缘**（ Sabrina 参考图同款位置）；
-        //   ③ 头像底部用 **alpha 渐隐**（不是模糊）融进主色纯色底
-        //      —— 与专辑页 fullWidth 封面同一套 mask 逻辑；
-        //   ④ 所有高度写死（屏宽/96pt），取色是异步的但**不改变布局** → 不会错乱。
-        ZStack(alignment: .bottom) {
-            // ★ 2026-10-18 用户（IMG_4076 红黑一团 = Metal 合成失败回退）：
-            //   下缘渐糊改为**纯 SwiftUI**：清晰底图 + 同一张图 blur(22)，
-            //   用渐变 mask 让糊层从 55% 起逐渐显形 → "越往下越糊"，零 Metal、零回退风险。
-            ZStack(alignment: .bottom) {
-                WellRemoteImage(url: resolvedCover ?? coverURL, contentMode: .fit, displaySize: 720)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: UIScreen.main.bounds.width)
-                    .clipped()
-                WellRemoteImage(url: resolvedCover ?? coverURL, contentMode: .fit, displaySize: 720)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: UIScreen.main.bounds.width)
-                    .clipped()
-                    .blur(radius: 22, opaque: true)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0.52),
-                                .init(color: .black, location: 0.78),
-                                .init(color: .black.opacity(0.5), location: 0.90),
-                                .init(color: .clear, location: 1.0),
-                            ],
-                            startPoint: .top, endPoint: .bottom))
-            }
-            .frame(height: UIScreen.main.bounds.width)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0.0),
-                        .init(color: .black, location: 0.86),
-                        .init(color: .black.opacity(0.4), location: 0.95),
-                        .init(color: .clear, location: 1.0),
-                    ],
-                    startPoint: .top, endPoint: .bottom))
-
-            VStack(spacing: 14) {
-                Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
-                    .font(.system(size: 44, weight: .black, design: .serif))
-                    .kerning(-1)
-                    .minimumScaleFactor(0.6)
-                    .foregroundStyle(heroTitleColor)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-
-                HStack(spacing: 30) {
-                    Button { showingBio = true } label: {
-                        Image(systemName: "info")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(heroGlyphColor)
-                            .frame(width: 46, height: 46)
-                            .background(tintIsDark ? Color.black.opacity(0.22)
-                                                   : Color.black.opacity(0.08), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(briefDesc.isEmpty ? 0.45 : 1)
-
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
                     Button {
-                        guard !displayedHotSongs.isEmpty else { return }
-                        PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
-                    } label: {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(.black)
-                            .frame(width: 72, height: 72)
-                            .background(heroAccent, in: Circle())
-                            .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(displayedHotSongs.isEmpty ? 0.45 : 1)
-
+                        shareArtistPage()
+                    } label: { Label("分享歌手页", systemImage: "square.and.arrow.up") }
                     if platform == .netease {
                         Button {
                             let target = !isFollowed
@@ -234,27 +200,160 @@ struct WellArtistHomeView: View {
                                 ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
                             }
                         } label: {
-                            Image(systemName: isFollowed ? "star.fill" : "star")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(heroGlyphColor)
-                                .frame(width: 46, height: 46)
-                                .background(tintIsDark ? Color.black.opacity(0.22)
-                                                       : Color.black.opacity(0.08), in: Circle())
+                            Label(isFollowed ? "取消收藏歌手" : "收藏歌手",
+                                  systemImage: isFollowed ? "heart.fill" : "heart")
                         }
-                        .buttonStyle(.plain)
                     }
+                    Button {
+                        serifTitle.toggle()
+                    } label: {
+                        Label(serifTitle ? "歌手名改用系统字体" : "歌手名改用衬线字体",
+                              systemImage: "textformat")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(heroGlyphColor)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
             }
-            .padding(.bottom, 22)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { shareArtistPage() } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(heroGlyphColor)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+            }
         }
-        .frame(height: UIScreen.main.bounds.width)
+        .sheet(isPresented: $showingBio) { bioSheet }
+        // ★ 2026-10-14 用户：移除导航栏上的搜索框。
+        //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
+        //   —— 导航栏下方常驻一条「搜索歌手歌曲」，用户要求去掉。
+        .task {
+            guard hotSongs.isEmpty && albums.isEmpty else { return }
+            await load(force: false)
+        }
+    }
+
+    // MARK: - 分享 / 刷新
+
+    /// 歌手主页分享链接（真实平台地址）
+    private var artistShareURL: URL? {
+        switch platform {
+        case .qq:  return URL(string: "https://y.qq.com/n/ryqq/singer/\(resolvedArtistId)")
+        case .kugou: return URL(string: "https://www.kugou.com/singer/\(resolvedArtistId)")
+        default:   return URL(string: "https://music.163.com/#/artist?id=\(resolvedArtistId)")
+        }
+    }
+
+    private func shareArtistPage() {
+        guard let url = artistShareURL else { return }
+        let name = resolvedName.isEmpty ? artistName : resolvedName
+        let items: [Any] = ["\(name) - 歌手主页", url]
+        let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        rootViewController()?.present(vc, animated: true)
+    }
+
+    private func rootViewController() -> UIViewController? {
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+            .first?.rootViewController
+    }
+
+    /// 下滑刷新：用户下滑超过 140pt 才后台静默重拉（不在打开时刷，避免变慢）
+    private func pullRefreshIfNeeded(offset: CGFloat) {
+        guard !didPullRefresh, offset > 140 else { return }
+        didPullRefresh = true
+        Task { await load(force: true) }
+    }
+
+    // MARK: - Header
+
+    private var artistHeader: some View {
+        // ★ 2026-10-18 新版（用户 IMG_4077）：**圆形头像**在名字上方，
+        //   直径 = 屏宽 × 0.46（比参考图那张唱片小一档）；名字与三钮样式保持现版。
+        VStack(spacing: 12) {
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
+                .frame(width: UIScreen.main.bounds.width * 0.56,
+                       height: UIScreen.main.bounds.width * 0.56)
+                .clipShape(Circle())
+                .background(Color.secondary.opacity(0.12), in: Circle())
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .padding(.top, 10)
+
+            Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
+                .font(serifTitle
+                      ? .system(size: 44, weight: .black, design: .serif)
+                      : .system(size: 34, weight: .bold))
+                .kerning(serifTitle ? -1 : 0)
+                .minimumScaleFactor(0.6)
+                .foregroundStyle(heroTitleColor)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+
+            HStack(spacing: 30) {
+                Button { showingBio = true } label: {
+                    Image(systemName: "info")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(heroGlyphColor)
+                        .frame(width: 46, height: 46)
+                        .background(tintIsDark ? Color.black.opacity(0.22)
+                                               : Color.black.opacity(0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .opacity(briefDesc.isEmpty ? 0.45 : 1)
+
+                Button {
+                    guard !displayedHotSongs.isEmpty else { return }
+                    PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .frame(width: 72, height: 72)
+                        .background(heroAccent, in: Circle())
+                        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+                }
+                .buttonStyle(.plain)
+                .opacity(displayedHotSongs.isEmpty ? 0.45 : 1)
+
+                if platform == .netease {
+                    Button {
+                        let target = !isFollowed
+                        isFollowed = target
+                        Task {
+                            guard !resolvedArtistId.isEmpty else { return }
+                            try? await NeteaseMusicAPI.shared.setArtistSubscribed(
+                                id: resolvedArtistId, subscribed: target)
+                            ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
+                        }
+                    } label: {
+                        Image(systemName: isFollowed ? "star.fill" : "star")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(heroGlyphColor)
+                            .frame(width: 46, height: 46)
+                            .background(tintIsDark ? Color.black.opacity(0.22)
+                                                   : Color.black.opacity(0.08), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 6)
     }
 
     /// 简介全文（底部弹窗）
     private var bioSheet: some View {
         NavigationStack {
             ScrollView {
-                Text(briefDesc)
+                Text(briefDesc.isEmpty
+                     ? (platform == .netease ? "暂无歌手简介" : "该平台暂未提供歌手简介")
+                     : briefDesc)
                     .font(.system(size: 15))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(20)
@@ -278,7 +377,7 @@ struct WellArtistHomeView: View {
                     .foregroundStyle(tintIsDark ? .white : Color.black.opacity(0.9))
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(tintIsDark ? Color.white.opacity(0.7) : .secondary)
+                    .foregroundStyle(backdropIsDark ? Color.white.opacity(0.7) : .secondary)
             }
             .padding(.horizontal, 16)
 
@@ -323,15 +422,16 @@ struct WellArtistHomeView: View {
                     .font(.system(size: 14, weight: .medium))
                     // ★ 2026-10-18 用户：深色模式文字不再变蓝 —— 颜色跟随底色，
                     //   "正在播放"由左侧音条动画（NowPlayingIndicator）区分。
-                    .foregroundStyle(tintIsDark ? Color.white : Color.black.opacity(0.9))
+                    .foregroundStyle(backdropIsDark ? Color.white : Color.black.opacity(0.9))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
                 // ★ 2026-10-17 用户：歌曲行副标题显示**歌手名**（原为专辑名）
-                Text(item.album ?? item.artist ?? "")
+                // ★ 2026-10-18 用户问题13：歌曲名下面显示**歌手名**（与平台一致）
+                Text(item.artist ?? item.album ?? "")
                     .font(.system(size: 11))
-                    .foregroundStyle(tintIsDark ? Color.white.opacity(0.72)
-                                                : Color.black.opacity(0.55))
+                    .foregroundStyle(backdropIsDark ? Color.white.opacity(0.72)
+                                                    : Color.black.opacity(0.55))
                     .lineLimit(1)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
@@ -359,8 +459,9 @@ struct WellArtistHomeView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30)
+                    .foregroundStyle(backdropIsDark ? Color.white.opacity(0.75)
+                                                    : Color.black.opacity(0.45))
+                    .frame(width: 44, height: 44)   // ★ 命中区加大，避免误触整行播放
                     .contentShape(Rectangle())
             }
         }
@@ -440,27 +541,29 @@ struct WellArtistHomeView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("相似歌手")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(tintIsDark ? .white : .primary)
+                    .foregroundStyle(backdropIsDark ? .white : Color.black.opacity(0.9))
                     .padding(.horizontal, 16)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 16) {
                         ForEach(similarArtists) { artist in
                             NavigationLink {
-                                WellArtistHomeRouter(
+                                WellArtistHomeView(
                                     artistId: artist.id,
                                     artistName: artist.name,
                                     coverURL: artist.picURL,
                                     platform: platform)
                             } label: {
                                 VStack(spacing: 8) {
-                                    WellRemoteImage(url: artist.picURL, displaySize: 80)
-                                        .frame(width: 80, height: 80)
+                                    WellRemoteImage(url: artist.picURL, displaySize: 110)
+                                        .frame(width: 110, height: 110)
                                         .clipShape(Circle())
                                         .background(Color.secondary.opacity(0.12), in: Circle())
                                     Text(artist.name)
                                         .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(backdropIsDark ? .white
+                                                                        : Color.black.opacity(0.85))
                                         .lineLimit(1)
-                                        .frame(width: 80)
+                                        .frame(width: 110)
                                 }
                             }
                             .buttonStyle(.plain)
@@ -556,7 +659,7 @@ struct WellArtistHomeView: View {
         }
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
         isLoading = true
         failed = false
 
@@ -591,6 +694,9 @@ struct WellArtistHomeView: View {
             albums = cached.albums
             platformAlbumCount = cached.albumCount
             isLoading = false
+            // ★ 2026-10-18 用户问题9：打开时**只吃缓存**（秒开）；网络刷新留给
+            //   用户下滑触发（pullRefreshIfNeeded → load(force: true)）。
+            if !force { return }
         }
 
         // mid 缺失才按歌手名搜索解析身份（调用方已带 mid 时直接跳过，省一轮网络往返）
@@ -768,140 +874,4 @@ struct WellArtistHomeView: View {
 ///   拉到新内容就覆盖缓存（新专辑/新头像随即被图片缓存接住）→ 数据变了才更新界面。
 ///
 /// 容量：整体受「设置 → 存储 → 缓存上限」约束（`CacheBudget` 按最旧优先淘汰）。
-actor WellArtistHomeCache {
-    static let shared = WellArtistHomeCache()
 
-    /// 缓存多久算「旧」（超过则在出缓存的同时后台重拉；现在是每次进入都会后台重拉，
-    /// 这个值只用于存储页展示与「多久没被访问就淘汰」的判断）。
-    static let staleAfter: TimeInterval = 6 * 60 * 60
-
-    struct Snapshot: Codable {
-        var artistId: String
-        var artistMid: String?
-        var name: String
-        var avatar: String?
-        var songs: [MusicItem]
-        var albums: [WellAlbumSummary]
-        var albumCount: Int?
-        /// 写入时间（存储页展示「缓存于 …」用）
-        var savedAt: Date = Date()
-    }
-
-    /// 内存层（同一会话内秒开，不用每次读盘）。
-    private var memory: [String: Snapshot] = [:]
-    private let maxMemoryEntries = 60
-
-    private nonisolated(unsafe) let directory: URL
-
-    private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        directory = caches.appendingPathComponent("artist-home", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    // MARK: 读写
-
-    /// 取缓存（内存 → 磁盘）。读盘时顺手刷新文件时间，作为 LRU 的「最近使用」标记。
-    func get(_ key: String) -> Snapshot? {
-        if let hit = memory[key] { return hit }
-        let url = fileURL(for: key)
-        guard let data = try? Data(contentsOf: url),
-              let snapshot = try? Self.decoder.decode(Snapshot.self, from: data) else { return nil }
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
-        memory[key] = snapshot
-        trimMemory()
-        return snapshot
-    }
-
-    /// 写缓存（内存 + 磁盘）。
-    func set(_ key: String, _ snapshot: Snapshot) {
-        memory[key] = snapshot
-        trimMemory()
-        guard let data = try? Self.encoder.encode(snapshot) else { return }
-        try? data.write(to: fileURL(for: key), options: .atomic)
-        Task { @MainActor in CacheBudget.enforceIfNeeded() }
-    }
-
-    /// 清空歌手主页缓存（存储页用）。
-    func clear() {
-        memory.removeAll()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        for file in files { try? FileManager.default.removeItem(at: file) }
-    }
-
-    // MARK: 存储占用（存储页 / 总预算用）
-
-    nonisolated func diskEntries() -> [CacheFileEntry] {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
-        return files.compactMap { file in
-            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-            return CacheFileEntry(url: file,
-                                  size: Int64(values.fileSize ?? 0),
-                                  date: values.contentModificationDate ?? .distantPast,
-                                  kind: .artist)
-        }
-    }
-
-    nonisolated func diskUsage() -> Int64 {
-        diskEntries().reduce(Int64(0)) { $0 + $1.size }
-    }
-
-    /// 缓存了多少位歌手（存储页展示用）。
-    nonisolated func cachedCount() -> Int {
-        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.count ?? 0
-    }
-
-    // MARK: 内部
-
-    private func fileURL(for key: String) -> URL {
-        directory.appendingPathComponent(Data(key.utf8).md5Hex() + ".json")
-    }
-
-    private func trimMemory() {
-        guard memory.count > maxMemoryEntries else { return }
-        for key in memory.keys.prefix(memory.count - maxMemoryEntries) {
-            memory.removeValue(forKey: key)
-        }
-    }
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-}
-
-/// 歌手主页路由：设置 → 外观 →「歌手主页样式」切换
-/// * v1 = 现版（方形大封面 + 下缘渐糊 + 沉浸导航）
-/// * v2 = 新版（圆形头像 + 提取主色底 + 恢复导航栏）
-struct WellArtistHomeRouter: View {
-    let artistId: String
-    let artistName: String
-    var coverURL: String?
-    var platform: MusicSource = .netease
-    var artistMid: String?
-
-    @AppStorage("wellmusic.artist.pageStyle") private var pageStyle: String = "v1"
-
-    var body: some View {
-        Group {
-            if pageStyle == "v2" {
-                WellArtistHomeViewV2(artistId: artistId, artistName: artistName,
-                                     coverURL: coverURL, platform: platform,
-                                     artistMid: artistMid)
-            } else {
-                WellArtistHomeView(artistId: artistId, artistName: artistName,
-                                   coverURL: coverURL, platform: platform,
-                                   artistMid: artistMid)
-            }
-        }
-    }
-}

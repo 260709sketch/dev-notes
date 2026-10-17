@@ -1361,7 +1361,10 @@ struct AppleMusicPlayerView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     if lyricAlignment != 1 { Spacer(minLength: 0) }
                     Text(line.text.isEmpty ? " " : line.text)
-                        .font(.system(size: isFocused ? 27 : 23, weight: isFocused ? .bold : .semibold))
+                        // ★ 2026-10-18 用户问题11：自带歌词**跟随播放器调整页的字号**
+                        //   （与 AMLL 共用 appleMusicAmllFontSize，一改两边同时变）
+                        .font(.system(size: CGFloat(settings.appleMusicAmllFontSize) + (isFocused ? 0 : -4),
+                                      weight: isFocused ? .bold : .semibold))
                         .foregroundStyle(primaryColor.opacity(isFocused ? 1 : 0.36))
                         .fixedSize(horizontal: false, vertical: true)
                     if isFocused && isDraggingLyrics {
