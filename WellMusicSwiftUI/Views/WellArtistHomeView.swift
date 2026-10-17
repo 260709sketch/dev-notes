@@ -84,10 +84,12 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // ★ 2026-10-17 用户（IMG_4070 刺眼粉白）：背景**只保留取色纯色**
-                    //   （像 Tyler 参考图那种干净底色）；之前那层 30% 模糊叠在浅色封面上
-                    //   会把整屏糊成一片白，还冲掉头像 → 已移除。
-                    coverTint.ignoresSafeArea()
+                    // ★ 2026-10-18 用户要求"清除重来"：背景 = 封面主色**纯色铺底**
+                    //   （与专辑页全屏铺满同款：dominantColor → 纯色 →  ignoresSafeArea）。
+                    //   取色完成前用系统底色兜底；不再有任何模糊层/合成链。
+                    (coverTint == Color(.systemBackground) ? Color(uiColor: .systemBackground) : coverTint)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
 
                     ScrollViewReader { proxy in
                     ScrollView {
@@ -130,22 +132,26 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 2026-10-17 排查结论（深色/浅色封面都会被冲花）：
-        //   问题出在给头像走 WellVariableBlur 那条链（下载→Metal 合成→失败回退直连 URL），
-        //   该链在歌手页不可靠（合成失败时回退图把整块糊成一片）。头像改用全 App 通用的
-        //   WellRemoteImage（可靠），参考图人物下缘的"化开"其实是 **alpha 渐隐**，不是模糊。
+        // ★ 2026-10-18 重写（对齐 IMG_4064 Sabrina + 专辑页全屏铺满模式）：
+        //   ① 头像 = **方形**（宽 = 屏宽）、fit、左右不裁；
+        //   ② 名字 + ℹ️/▶/☆ 压在头像**下缘**（ Sabrina 参考图同款位置）；
+        //   ③ 头像底部用 **alpha 渐隐**（不是模糊）融进主色纯色底
+        //      —— 与专辑页 fullWidth 封面同一套 mask 逻辑；
+        //   ④ 所有高度写死（屏宽/96pt），取色是异步的但**不改变布局** → 不会错乱。
         ZStack(alignment: .bottom) {
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 640, contentMode: .fit)
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: UIScreen.main.bounds.width)
                 .clipped()
-                .overlay(alignment: .bottom) {
+                .mask(
                     LinearGradient(
-                        colors: [.clear, coverTint.opacity(0.45), coverTint],
-                        startPoint: .top, endPoint: .bottom)
-                        .frame(height: 160)
-                        .allowsHitTesting(false)
-                }
+                        stops: [
+                            .init(color: .black, location: 0.0),
+                            .init(color: .black, location: 0.78),
+                            .init(color: .black.opacity(0.55), location: 0.90),
+                            .init(color: .clear, location: 1.0),
+                        ],
+                        startPoint: .top, endPoint: .bottom))
 
             VStack(spacing: 14) {
                 Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
