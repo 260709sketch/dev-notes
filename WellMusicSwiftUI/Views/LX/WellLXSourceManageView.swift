@@ -14,6 +14,9 @@ struct WellLXSourceManageView: View {
     @State private var importError: String?
     @State private var testingIDs = Set<String>()
     @State private var updateCheckingIDs = Set<String>()
+    @State private var showSharePicker = false
+    @State private var shareItems: [Any] = []
+    @State private var showShareSheet = false
     /// 「检查更新」发现新版本后的确认弹窗载荷
     @State private var updatePromptSource: WellLXSourceInfo?
     @State private var updatePromptVersion = ""
@@ -33,6 +36,37 @@ struct WellLXSourceManageView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        // ★ 2026-10-17 用户：新增「分享音源」——可选当前音源或全部
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showSharePicker = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(store.sources.isEmpty)
+            }
+        }
+        .confirmationDialog("分享音源", isPresented: $showSharePicker, titleVisibility: .visible) {
+            Button("分享当前音源") {
+                if let active = store.activeSource ?? store.sources.first,
+                   let file = store.shareFile(for: active) {
+                    shareItems = [file]
+                    showShareSheet = true
+                }
+            }
+            Button("分享全部音源（\(store.sources.count) 个）") {
+                let files = store.shareFilesForAll()
+                if !files.isEmpty {
+                    shareItems = files
+                    showShareSheet = true
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .sheet(isPresented: $showShareSheet) {
+            WellLXShareSheet(items: shareItems)
+        }
         .task { await store.bootstrapIfNeeded() }
         .fullScreenCover(isPresented: $showFilePicker) {
             WellScriptDocumentPicker(
@@ -440,4 +474,15 @@ private struct WellScriptInputSheet: View {
 
 #Preview {
     NavigationStack { WellLXSourceManageView() }
+}
+
+/// 系统分享面板包装（UIActivityViewController）
+private struct WellLXShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

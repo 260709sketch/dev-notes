@@ -30,6 +30,18 @@ struct WellArtistHomeView: View {
     @State private var isLoading = true
     @State private var failed = false
     @State private var searchText = ""
+    // ★ 2026-10-17 歌手页重构（Kumone 风格）：简介 / 收藏态 / 相似歌手
+    @State private var briefDesc = ""
+    @State private var isFollowed = false
+    @State private var similarArtists: [SimilarArtist] = []
+    @State private var showingBio = false
+    @State private var resolvedArtistId = ""
+
+    struct SimilarArtist: Identifiable {
+        let id: String
+        let name: String
+        let picURL: String?
+    }
     /// ★ 2026-10-16 问题8：正在播放标识（低频订阅，见 NowPlayingTracker）
     @ObservedObject private var nowPlaying = NowPlayingTracker.shared
 
@@ -59,8 +71,10 @@ struct WellArtistHomeView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
                             artistHeader
+                            artistBioSection
                             hotSongsSection
                             albumsSection
+                            similarArtistSection
                             Color.clear.frame(height: 170)
                         }
                         .modifier(WellScrollOffsetReporter(space: "well-artist-scroll"))
@@ -78,6 +92,7 @@ struct WellArtistHomeView: View {
         //   「歌手主页」字样（返回按钮右边保持干净；歌手名在页面大头部里）
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingBio) { bioSheet }
         // ★ 2026-10-14 用户：移除导航栏上的搜索框。
         //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
         //   —— 导航栏下方常驻一条「搜索歌手歌曲」，用户要求去掉。
@@ -91,8 +106,8 @@ struct WellArtistHomeView: View {
 
     private var artistHeader: some View {
         HStack(spacing: 14) {
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 72)
-                .frame(width: 72, height: 72)
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 80)
+                .frame(width: 80, height: 80)
                 .clipShape(Circle())
                 .background(Color.secondary.opacity(0.12), in: Circle())
 
@@ -114,6 +129,48 @@ struct WellArtistHomeView: View {
         .padding(.horizontal, 16)
     }
 
+    /// ★ 2026-10-17 歌手简介（最多两行；点「查看更多」底部弹窗显示全文）
+    @ViewBuilder
+    private var artistBioSection: some View {
+        if !briefDesc.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(briefDesc)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { showingBio = true } label: {
+                    Text("查看更多")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+        }
+    }
+
+    /// 简介全文（底部弹窗）
+    private var bioSheet: some View {
+        NavigationStack {
+            ScrollView {
+                Text(briefDesc)
+                    .font(.system(size: 15))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .navigationTitle("歌手简介")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { showingBio = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
     // MARK: - 热门歌曲
 
     private var hotSongsSection: some View {
@@ -124,18 +181,44 @@ struct WellArtistHomeView: View {
 
             if !hotSongs.isEmpty {
                 // 播放全部（长条胶囊按钮）
-                Button {
-                    guard !displayedHotSongs.isEmpty else { return }
-                    PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
-                } label: {
-                    Label("播放全部", systemImage: "play.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background(AppTheme.accent, in: Capsule())
+                // ★ 2026-10-17 用户：播放全部改短胶囊 + 新增同尺寸收藏按钮
+                HStack(spacing: 10) {
+                    Button {
+                        guard !displayedHotSongs.isEmpty else { return }
+                        PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
+                    } label: {
+                        Label("播放全部", systemImage: "play.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
+                            .background(AppTheme.accent, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    if platform == .netease {
+                        Button {
+                            let target = !isFollowed
+                            isFollowed = target
+                            Task {
+                                guard !resolvedArtistId.isEmpty else { return }
+                                try? await NeteaseMusicAPI.shared.setArtistSubscribed(
+                                    id: resolvedArtistId, subscribed: target)
+                                ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
+                            }
+                        } label: {
+                            Label(isFollowed ? "已收藏" : "收藏",
+                                  systemImage: isFollowed ? "heart.fill" : "heart")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(isFollowed ? AppTheme.accent : Color.primary)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 10)
+                                .background(Color.primary.opacity(0.07), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 2)
             }
@@ -172,14 +255,7 @@ struct WellArtistHomeView: View {
     /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求）
     private func hotSongRow(index: Int, item: MusicItem) -> some View {
         HStack(spacing: 12) {
-            Text("\(index + 1)")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(index < 3 ? AppTheme.accent : Color.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(width: 32, alignment: .trailing)
-
+            // ★ 2026-10-17 用户「去除排序」：歌曲行不再显示序号
             WellRemoteImage(url: item.albumCoverURL, displaySize: 40)
                 .frame(width: 40, height: 40)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -205,6 +281,45 @@ struct WellArtistHomeView: View {
                 NowPlayingIndicator()
             } else {
                 Spacer(minLength: 0)
+            }
+        }
+    }
+
+    // MARK: - 相似歌手（Kumone 同款：圆头像横滑）
+
+    @ViewBuilder
+    private var similarArtistSection: some View {
+        if !similarArtists.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("相似歌手")
+                    .font(.system(size: 17, weight: .bold))
+                    .padding(.horizontal, 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(similarArtists) { artist in
+                            NavigationLink {
+                                WellArtistHomeView(
+                                    artistId: artist.id,
+                                    artistName: artist.name,
+                                    coverURL: artist.picURL,
+                                    platform: platform)
+                            } label: {
+                                VStack(spacing: 8) {
+                                    WellRemoteImage(url: artist.picURL, displaySize: 80)
+                                        .frame(width: 80, height: 80)
+                                        .clipShape(Circle())
+                                        .background(Color.secondary.opacity(0.12), in: Circle())
+                                    Text(artist.name)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .lineLimit(1)
+                                        .frame(width: 80)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
             }
         }
     }
@@ -349,6 +464,14 @@ struct WellArtistHomeView: View {
 
         hotSongs = songsResult.songs
         albums = albumsResult.albums
+        // ★ 2026-10-17 歌手页重构：简介 / 收藏态 / 相似歌手
+        if let brief = songsResult.brief, !brief.isEmpty { briefDesc = brief }
+        if let followed = songsResult.followed { isFollowed = followed }
+        resolvedArtistId = realId
+        if platform == .netease, !realId.isEmpty {
+            let sims = (try? await NeteaseMusicAPI.shared.simiArtists(artistId: realId)) ?? []
+            similarArtists = sims.map { SimilarArtist(id: $0.id, name: $0.name, picURL: $0.picURL) }
+        }
         platformAlbumCount = albumsResult.count
         if resolvedName.isEmpty { resolvedName = artistName }
         if resolvedCover == nil {
@@ -388,7 +511,8 @@ struct WellArtistHomeView: View {
     }
 
     /// 按平台取歌手热门歌曲；顺带带回平台给的歌手头像（酷狗 `singer/info` 有）。
-    private func loadTopSongs(id: String, mid: String?) async -> (songs: [MusicItem], avatar: String?) {
+    private func loadTopSongs(id: String, mid: String?)
+        async -> (songs: [MusicItem], avatar: String?, brief: String?, followed: Bool?) {
         switch platform {
         case .qq:
             // QQ 歌手歌曲要的是 **singer mid**（不是歌曲 mid）
@@ -403,7 +527,7 @@ struct WellArtistHomeView: View {
                     for item in result.list where seen.insert(item.keyOf).inserted { all.append(item) }
                     if !result.hasMore { break }
                 }
-                if !all.isEmpty { return (all, nil) }
+                if !all.isEmpty { return (all, nil, nil, nil) }
             }
         case .kugou:
             if !id.isEmpty,
@@ -417,7 +541,7 @@ struct WellArtistHomeView: View {
                         singerId: id, page: page, limit: 30), !more.list.isEmpty else { break }
                     for item in more.list where seen.insert(item.keyOf).inserted { all.append(item) }
                 }
-                return (all, detail.avatar)
+                return (all, detail.avatar, nil, nil)
             }
         default:
             if !id.isEmpty {
@@ -429,15 +553,16 @@ struct WellArtistHomeView: View {
                     profile = try? await NeteaseMusicAPI.shared.artistProfile(id: id)
                 }
                 if let profile, !profile.hotSongs.isEmpty {
-                    return (profile.hotSongs, profile.avatarURL)
+                    return (profile.hotSongs, profile.avatarURL,
+                            profile.briefDesc, profile.isFollowed)
                 }
                 // 歌曲仍空但拿到了头像 → 头像照用，歌曲交给外层搜索兜底
                 if let profile, let avatar = profile.avatarURL {
-                    return ([], avatar)
+                    return ([], avatar, profile.briefDesc, profile.isFollowed)
                 }
             }
         }
-        return ([], nil)
+        return ([], nil, nil, nil)
     }
 
     /// 按平台取歌手专辑。QQ 走 get_singer_album（需 mid）、酷狗走 v5 singer/album（需数字 id）；

@@ -420,6 +420,7 @@ final class NeteaseMusicAPI {
             var briefDesc: String?
             var musicSize: Int?
             var songSize: Int?
+            var followed: Bool?
         }
     }
 
@@ -430,6 +431,7 @@ final class NeteaseMusicAPI {
         var briefDesc: String?
         var hotSongs: [MusicItem]
         var totalSongCount: Int = 0
+        var isFollowed: Bool = false
     }
 
     /// 播放地址响应。
@@ -1222,7 +1224,8 @@ final class NeteaseMusicAPI {
                              avatarURL: (avatar?.isEmpty == false) ? avatar : nil,
                              briefDesc: artist?.briefDesc,
                              hotSongs: songs,
-                             totalSongCount: expected > 0 ? expected : songs.count)
+                             totalSongCount: expected > 0 ? expected : songs.count,
+                             isFollowed: artist?.followed ?? false)
     }
 
     /// ★ 2026-10-17 用户：歌手页「全部歌曲」——分页把歌手歌曲**全量**拉齐
@@ -1239,6 +1242,45 @@ final class NeteaseMusicAPI {
             if batch.count < pageSize { break }
         }
         return all
+    }
+
+    /// ★ 2026-10-17 相似歌手（Kumone 同款区块）：weapi /api/discovery/simiArtist
+    func simiArtists(artistId: String) async throws -> [(id: String, name: String, picURL: String?)] {
+        let resp: SimiArtistResponse = try await Self.weapiRequest(
+            "/api/discovery/simiArtist", params: ["artistid": artistId], type: SimiArtistResponse.self)
+        return (resp.artists ?? []).compactMap { a in
+            guard let aid = a.id, let name = a.name, !name.isEmpty else { return nil }
+            return (String(aid), name, a.picUrl ?? a.img1v1Url)
+        }
+    }
+
+    private struct SimiArtistResponse: Decodable {
+        var code: Int?
+        var artists: [Item]?
+        struct Item: Decodable {
+            var id: Int64?
+            var name: String?
+            var picUrl: String?
+            var img1v1Url: String?
+        }
+    }
+
+    /// 收藏 / 取消收藏歌手（weapi /api/artist/sub|unsub）
+    func setArtistSubscribed(id: String, subscribed: Bool) async throws {
+        let params: [String: Any] = [
+            "artistId": id,
+            "artistIds": "[\\(id)]",
+            "csrf_token": "",
+        ]
+        let path = subscribed ? "/api/artist/sub" : "/api/artist/unsub"
+        let resp: CodeOnlyResponse = try await Self.weapiRequest(
+            path, params: params, type: CodeOnlyResponse.self, cookieStyle: .session)
+        try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "收藏歌手失败")
+    }
+
+    private struct CodeOnlyResponse: Decodable {
+        var code: Int?
+        var message: String?
     }
 
     /// 歌手歌曲（order：hot 热门序 / time 时间序）。官方增强版 artist_songs 同款参数。

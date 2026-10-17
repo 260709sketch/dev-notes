@@ -841,6 +841,35 @@ final class WellLXSourceStore: ObservableObject {
 
     // MARK: 持久化
 
+    // MARK: - 分享音源（★ 2026-10-17 用户：自定义音源页新增分享）
+
+    /// 单个音源 → 临时 .js 文件（UIActivityViewController 用）
+    func shareFile(for source: WellLXSourceInfo) -> URL? {
+        guard let text = scriptText(for: source) else { return nil }
+        return writeShareFile(name: source.name, text: text)
+    }
+
+    /// 全部音源 → 临时 .js 文件数组
+    func shareFilesForAll() -> [URL] {
+        sources.compactMap { source in
+            guard let text = scriptText(for: source) else { return nil }
+            return writeShareFile(name: source.name, text: text)
+        }
+    }
+
+    private func writeShareFile(name: String, text: String) -> URL? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LXShare", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let safe = name.replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let url = dir.appendingPathComponent("\(safe).js")
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch { return nil }
+    }
+
     private func scriptText(for source: WellLXSourceInfo) -> String? {
         try? String(contentsOf: scriptURL(for: source.id), encoding: .utf8)
     }

@@ -456,6 +456,12 @@ struct SearchView: View {
                 playlistCards(model.result.playlists.prefix(8))
             }
         }
+        // ★ 2026-10-17 用户：综合区「歌单」下面新增 MV（横滑卡片）
+        if !model.result.mvs.isEmpty {
+            WellSearchShelf(title: "MV", seeAll: { model.type = .mvs }) {
+                mvShelfCards(model.result.mvs.prefix(8))
+            }
+        }
         if currentEmpty && !model.isLoading {
             VStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
@@ -523,6 +529,43 @@ struct SearchView: View {
             } label: {
                 WellSearchCoverCard(coverURL: playlist.coverURL, title: playlist.name,
                                     subtitle: playlist.creatorName, playCount: playlist.playCount)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// ★ 2026-10-17 综合区 MV 货架卡片（16:9 封面 + 名称 + 歌手）
+    private func mvShelfCards(_ items: some Collection<WellMVSummary>) -> some View {
+        ForEach(Array(items)) { mv in
+            Button {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                 to: nil, from: nil, for: nil)
+                playingMV = mv
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    ZStack(alignment: .bottomTrailing) {
+                        WellRemoteImage(url: mv.coverURL, displaySize: 320)
+                            .frame(width: 176, height: 99)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        Text("MV")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(.black.opacity(0.55), in: Capsule())
+                            .padding(5)
+                    }
+                    Text(mv.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                        .frame(width: 176, alignment: .leading)
+                    Text(mv.artistName ?? "")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(width: 176, alignment: .leading)
+                }
             }
             .buttonStyle(.plain)
         }
