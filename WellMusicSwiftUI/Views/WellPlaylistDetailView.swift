@@ -174,10 +174,6 @@ struct WellPlaylistDetailView: View {
             guard tracks.isEmpty else { return }
             await load()
         }
-        // ★ 2026-10-17 评论详情页
-        .sheet(item: $commentsItem) { song in
-            WellCommentsSheet(songId: song.neteaseId)
-        }
     }
 
     // MARK: - 背景（封面主色纯色铺底 + 封面下段溶解）
@@ -542,9 +538,6 @@ struct WellPlaylistDetailView: View {
         }
     }
 
-    /// 评论详情页（2026-10-17）
-    @State private var commentsItem: MusicItem?
-
     /// 歌曲行长按菜单（播放 / 收藏 / 查看专辑 / 查看歌手 / 分享）。
     @ViewBuilder
     private func songContextMenu(_ item: MusicItem) -> some View {
@@ -567,15 +560,6 @@ struct WellPlaylistDetailView: View {
             appState.toggleFavorite(item)
         } label: {
             Label(isFav ? "取消收藏" : "收藏", systemImage: isFav ? "star.slash" : "star")
-        }
-
-        // ★ 2026-10-17 评论详情页（网易歌曲才有；评论接口只覆盖网易）
-        if item.neteaseId != nil {
-            Button {
-                commentsItem = item
-            } label: {
-                Label("评论", systemImage: "text.bubble")
-            }
         }
 
         // 查看专辑（有平台专辑 id 才给跳，避免进错页）
