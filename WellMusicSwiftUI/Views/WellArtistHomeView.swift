@@ -139,7 +139,11 @@ struct WellArtistHomeView: View {
         //      —— 与专辑页 fullWidth 封面同一套 mask 逻辑；
         //   ④ 所有高度写死（屏宽/96pt），取色是异步的但**不改变布局** → 不会错乱。
         ZStack(alignment: .bottom) {
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
+            // ★ 2026-10-18 用户（IMG_4074 Lover）：头像**下半部分开始渐进模糊**
+            //   （VariableBlurImageView：start 0.62 → maxRadius 20），并**与 alpha 渐隐
+            //   一起**在底部融进主色纯色页 —— 即"模糊+渐隐"叠加，不是二选一。
+            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
+                             maxRadius: 20, start: 0.62, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: UIScreen.main.bounds.width)
                 .clipped()
@@ -147,7 +151,7 @@ struct WellArtistHomeView: View {
                     LinearGradient(
                         stops: [
                             .init(color: .black, location: 0.0),
-                            .init(color: .black, location: 0.78),
+                            .init(color: .black, location: 0.80),
                             .init(color: .black.opacity(0.55), location: 0.90),
                             .init(color: .clear, location: 1.0),
                         ],
