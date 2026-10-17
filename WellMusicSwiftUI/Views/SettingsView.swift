@@ -220,8 +220,12 @@ struct SettingsView: View {
                         Text("全宽铺满（榜单风）").tag("fullWidth")
                     }
                     .pickerStyle(.navigationLink)
-                    Picker("播放视觉风格", selection: .constant("appleMusic")) {
-                        Text("Apple Music 风").tag("appleMusic")
+                    // ★ 2026-10-17 用户「外观分组哪些没用去掉」：移除「播放视觉风格」
+                    //   —— 常量单选项，选了也不生效，纯摆设。
+                    // 同一批：把「播放器歌词引擎」提到外观分组（原来只在播放调整页）
+                    Picker("播放器歌词引擎", selection: $settings.appleMusicUseAMLL) {
+                        Text("AMLL 网页歌词（逐字特效）").tag(true)
+                        Text("自带歌词（省电流畅）").tag(false)
                     }
                     .pickerStyle(.navigationLink)
                     Picker("播放器背景", selection: $settings.appleMusicBackgroundStyle) {

@@ -7,7 +7,10 @@ import Combine
 /// web view. The lyric lines and clock samples are pushed in; the page animates with AMLL's own spring layout, blur and
 /// word highlight and reports taps on a line back so the song can jump there.
 struct AMLLWebLyricsView: View {
-    @EnvironmentObject private var player: PlayerService
+    // ★ 2026-10-17 性能：**不订阅** PlayerService —— 它 10Hz 发布同步状态，
+    //   订阅会让整个歌词页（含 WKWebView 容器）每秒重绘 10 次，是开歌词后
+    //   明显掉帧的主因之一（Kumone 不订阅、所以不卡）。歌词内容从单例直读，
+    //   由 coordinator 的 0.1s 心跳自检是否需要换歌词。
     @EnvironmentObject private var settings: SettingsManager
     @AppStorage("wellmusic.lyricOffset") private var lyricOffset = 0.0
     /// ★ 第十一轮问题6：歌词对齐（0 居中 / 1 左 / 2 右；播放器调整页分段控制）
@@ -20,7 +23,7 @@ struct AMLLWebLyricsView: View {
 
     /// The lyrics of the song that is playing (empty while they load). The web view itself is never torn down between
     /// songs: rebuilding it reloads the whole page, which is what made the lyrics flash on every song change.
-    private var lyrics: ParsedLyrics { player.lyrics ?? ParsedLyrics() }
+    private var lyrics: ParsedLyrics { PlayerService.shared.lyrics ?? ParsedLyrics() }
 
     /// The page relies on CSS nesting and registered custom properties (WebKit 16.4+).
     static var isSupported: Bool {
@@ -73,7 +76,7 @@ struct AMLLWebLyricsView: View {
 
     @ViewBuilder
     private var stateOverlay: some View {
-        if player.lyrics == nil {
+        if PlayerService.shared.lyrics == nil {
             // ★ 2026-10-16 第十轮问题8：无歌词歌曲原来永远转圈 —— 给 3 秒宽限，
             //   过后仍是 nil 就按「暂无歌词」展示（kumone 同款体验）。
             if nilGraceElapsed {
@@ -88,7 +91,7 @@ struct AMLLWebLyricsView: View {
             } else {
                 ProgressView().controlSize(.small).tint(.white)
             }
-        } else if player.lyrics?.isInstrumental == true {
+        } else if PlayerService.shared.lyrics?.isInstrumental == true {
             VStack(spacing: 10) {
                 Image(systemName: "music.quarternote.3")
                     .font(.system(size: 36, weight: .light))
@@ -97,7 +100,7 @@ struct AMLLWebLyricsView: View {
                     .font(.system(size: 15))
                     .foregroundStyle(.white.opacity(0.6))
             }
-        } else if player.lyrics?.isEmpty == true {
+        } else if PlayerService.shared.lyrics?.isEmpty == true {
             VStack(spacing: 10) {
                 Image(systemName: "quote.bubble")
                     .font(.system(size: 32, weight: .light))
@@ -293,6 +296,22 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
         private var scrubObserver: AnyCancellable?
         /// 订阅 `PlayerCore.scrubTime`，拖动中逐次跟手推送。
         private var scrubTimeObserver: AnyCancellable?
+        /// ★ 2026-10-17：视图不再订阅 PlayerService，靠这里每 0.1s 自检歌词是否换代
+        ///   （cheap key：行数 + 首行文本/时间 + 尾行时间）。
+        private var lastLyricKey: String? = nil
+
+        func pollLyricsRevision() {
+            let current = PlayerService.shared.lyrics ?? ParsedLyrics()
+            let key = "\(current.lines.count)|\(current.lines.first?.text ?? "")|\(current.lines.first?.time ?? -1)|\(current.lines.last?.time ?? -1)"
+            guard key != lastLyricKey else { return }
+            lastLyricKey = key
+            update(lyrics: current,
+                   showsTranslation: lastShowsTranslation,
+                   showsRomaji: lastShowsRomaji,
+                   fontSize: fontSize,
+                   fontWeight: fontWeight)
+        }
+
         /// 拖动的收尾重锚：`isScrubbing` 转 false 的那次回调可能发生在 seek
         /// 真正落地**之前**，所以让出一个 runloop 再读位置。
         private var settleWork: DispatchWorkItem?
@@ -302,7 +321,10 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             // 常态采样：页面会在两次采样之间做线性外推，所以 10Hz 就足够精确，
             // 不必每次都用跨进程的 `evaluateJavaScript` 去骚扰页面。
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.pushClock() }
+                MainActor.assumeIsolated {
+                    self?.pushClock()
+                    self?.pollLyricsRevision()
+                }
             }
 
             // ★ 拖动中：手指每移动一次就立刻推一次（频率 = 手指事件频率，约 60Hz）。
@@ -366,7 +388,13 @@ private struct AMLLWebRepresentable: UIViewRepresentable {
             web?.configuration.userContentController.removeScriptMessageHandler(forName: "amll")
         }
 
+        /// 最近一次 update 的模式参数（poll 自检重推时复用）
+        private var lastShowsTranslation = false
+        private var lastShowsRomaji = false
+
         func update(lyrics: ParsedLyrics, showsTranslation: Bool, showsRomaji: Bool, fontSize: CGFloat, fontWeight: Int) {
+            lastShowsTranslation = showsTranslation
+            lastShowsRomaji = showsRomaji
             // updateUIView runs on every SwiftUI update, which are many while a song loads: hashing every word of the
             // lyrics each time is wasteful, so the signature uses the line count, the ends and the middle of the lyrics.
             var hasher = Hasher()
