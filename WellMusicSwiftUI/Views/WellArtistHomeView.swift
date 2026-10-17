@@ -40,8 +40,18 @@ struct WellArtistHomeView: View {
     @State private var coverTint: Color = Color(.systemBackground)
     /// 提取色是否偏深（决定页面文字用白/黑，参考图深蓝底 → 白字）
     @State private var tintIsDark = false
-    /// 强调色（参考图：黄色系；播放钮/星/名字用它）
-    private let heroAccent = Color(red: 0.98, green: 0.76, blue: 0.16)
+    /// 强调色：深底用暖黄（Nirvana 参考图），浅底用白（AC/DC 参考图）
+    private var heroAccent: Color {
+        tintIsDark ? Color(red: 0.98, green: 0.76, blue: 0.16) : .white
+    }
+    /// 名字颜色：深底用强调色，浅底用近黑
+    private var heroTitleColor: Color {
+        tintIsDark ? heroAccent : Color.black.opacity(0.82)
+    }
+    /// 两侧按钮前景色
+    private var heroGlyphColor: Color {
+        tintIsDark ? heroAccent : Color.black.opacity(0.75)
+    }
 
     struct SimilarArtist: Identifiable {
         let id: String
@@ -138,32 +148,27 @@ struct WellArtistHomeView: View {
         //   封面 = **全宽大图（约 430pt）**，照片**下半部渐变模糊**（上清晰→下渐糊），
         //   名字 + ℹ️/▶/☆ 叠在模糊区上。模糊由 WellVariableBlur 一次合成。
         ZStack(alignment: .bottom) {
-            // 照片本身（清晰），下缘 35% 渐隐 → 融入提取色底（参考图效果）
-            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 640)
+            // ★ 2026-10-17 参考图（Nirvana）重点：**照片内部渐进模糊**——
+            //   上部人脸清晰，往下半径连续增大到 ~30（VariableBlurImageView 真可变模糊），
+            //   最底部再用 mask 淡出融入底色。不是"清晰+贴一层渐变"。
+            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
+                             maxRadius: 30, start: 0.34)
                 .frame(maxWidth: .infinity)
                 .frame(height: 430)
                 .clipped()
                 .mask(
                     LinearGradient(
-                        stops: [.init(color: .black, location: 0.58),
+                        stops: [.init(color: .black, location: 0.0),
+                                .init(color: .black, location: 0.86),
                                 .init(color: .black.opacity(0.0), location: 1.0)],
                         startPoint: .top, endPoint: .bottom))
-                // 下缘再补一层极轻的可变模糊，让过渡不那么"贴纸感"
-                .overlay(alignment: .bottom) {
-                    WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                     maxRadius: 18, start: 0.0)
-                        .frame(height: 150)
-                        .mask(LinearGradient(colors: [.clear, .black],
-                                             startPoint: .top, endPoint: .bottom))
-                        .allowsHitTesting(false)
-                }
 
             VStack(spacing: 14) {
                 Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
                     .font(.system(size: 44, weight: .black, design: .serif))
                     .kerning(-1)
                     .minimumScaleFactor(0.6)
-                    .foregroundStyle(heroAccent)
+                    .foregroundStyle(heroTitleColor)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .shadow(color: .black.opacity(0.35), radius: 8)
@@ -173,9 +178,10 @@ struct WellArtistHomeView: View {
                     Button { showingBio = true } label: {
                         Image(systemName: "info")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(heroAccent)
+                            .foregroundStyle(heroGlyphColor)
                             .frame(width: 46, height: 46)
-                            .background(Color.black.opacity(0.22), in: Circle())
+                            .background(tintIsDark ? Color.black.opacity(0.22)
+                                                   : Color.black.opacity(0.08), in: Circle())
                     }
                     .buttonStyle(.plain)
                     .opacity(briefDesc.isEmpty ? 0.45 : 1)
@@ -207,9 +213,10 @@ struct WellArtistHomeView: View {
                         } label: {
                             Image(systemName: isFollowed ? "star.fill" : "star")
                                 .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(heroAccent)
+                                .foregroundStyle(heroGlyphColor)
                                 .frame(width: 46, height: 46)
-                                .background(Color.black.opacity(0.22), in: Circle())
+                                .background(tintIsDark ? Color.black.opacity(0.22)
+                                                       : Color.black.opacity(0.08), in: Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -242,9 +249,9 @@ struct WellArtistHomeView: View {
     private var hotSongsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("全部歌曲")
+                Text("歌曲排行")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(tintIsDark ? .white : .primary)
+                    .foregroundStyle(tintIsDark ? .white : Color.black.opacity(0.9))
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(tintIsDark ? Color.white.opacity(0.7) : .secondary)
@@ -292,14 +299,15 @@ struct WellArtistHomeView: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(nowPlaying.isCurrent(item)
                                      ? Color.accentColor
-                                     : (tintIsDark ? Color.white : Color.primary))
+                                     : (tintIsDark ? Color.white : Color.black.opacity(0.9)))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
                 // ★ 2026-10-17 用户：歌曲行副标题显示**歌手名**（原为专辑名）
                 Text(item.album ?? item.artist ?? "")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.white.opacity(0.72))
+                    .foregroundStyle(tintIsDark ? Color.white.opacity(0.72)
+                                                : Color.black.opacity(0.55))
                     .lineLimit(1)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
