@@ -315,6 +315,7 @@ final class PlayerCore: NSObject, ObservableObject {
     /// 进入漫游会话（由「私人漫游」入口在起播后调用）
     func beginFMSession() {
         isFMMode = true
+        heartContext = nil   // ★ 2026-10-17 互斥：漫游与心动不要同时补货
         refillFMIfNeeded()
         refillHeartIfNeeded()
     }
@@ -353,7 +354,7 @@ final class PlayerCore: NSObject, ObservableObject {
         guard isFMMode, !fmRefilling else { return }
         let played = (currentIndex ?? -1) + 1
         let remaining = max(queue.count - played, 0)
-        guard remaining <= 2 else { return }
+        guard remaining <= 3 else { return }
         fmRefilling = true
         Task { @MainActor [weak self] in
             defer { self?.fmRefilling = false }
@@ -366,6 +367,24 @@ final class PlayerCore: NSObject, ObservableObject {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if let again = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 3) {
                     fresh = again.filter { seen.insert($0.keyOf).inserted }
+                }
+            }
+            // ★ 2026-10-17 硬兜底（用户：播到第九首不拉下一批）：
+            //   radio 拿不到新歌时，依次用「每日推荐 → 当前歌的相似歌曲」补齐，
+            //   保证漫游永远不会因为补货落空而停。
+            if fresh.isEmpty,
+               let daily = try? await NeteaseMusicAPI.shared.dailyRecommendSongs() {
+                var added = 0
+                for song in daily where added < 10 {
+                    if seen.insert(song.keyOf).inserted { fresh.append(song); added += 1 }
+                }
+            }
+            if fresh.isEmpty,
+               let seed = self.currentItem?.neteaseId, !seed.isEmpty,
+               let similar = try? await NeteaseMusicAPI.shared.simiSongs(songId: seed) {
+                var added = 0
+                for song in similar where added < 10 {
+                    if seen.insert(song.keyOf).inserted { fresh.append(song); added += 1 }
                 }
             }
             if !fresh.isEmpty { self.addToQueue(fresh) }

@@ -105,7 +105,7 @@ struct WellArtistHomeView: View {
                 // 统计行：按平台实际显示（2026-10-14 用户要求）——
                 // 热门歌曲数 = 接口返回条数（网易云固定 50）；
                 // 专辑数 = artist.albumSize（平台真实总数，周杰伦 44）。
-                Text("热门歌曲 \(hotSongs.count) 首 · 专辑 \(platformAlbumCount ?? albums.count) 张")
+                Text("全部歌曲 \(hotSongs.count) 首 · 专辑 \(platformAlbumCount ?? albums.count) 张")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -118,7 +118,7 @@ struct WellArtistHomeView: View {
 
     private var hotSongsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("热门歌曲")
+            Text("全部歌曲")
                 .font(.system(size: 17, weight: .bold))
                 .padding(.horizontal, 16)
 
@@ -393,16 +393,31 @@ struct WellArtistHomeView: View {
         case .qq:
             // QQ 歌手歌曲要的是 **singer mid**（不是歌曲 mid）
             let key = (mid?.isEmpty == false) ? (mid ?? id) : id
-            if !key.isEmpty,
-               let result = try? await QQMusicAPI.shared.singerSongs(singerMid: key, begin: 0, num: 50),
-               !result.list.isEmpty {
-                return (result.list, nil)
+            if !key.isEmpty {
+                // ★ 2026-10-17 全量：分页拉（50/页 × 最多 3 页），数量向平台靠拢
+                var all: [MusicItem] = []
+                var seen = Set<String>()
+                for page in 0..<3 {
+                    guard let result = try? await QQMusicAPI.shared.singerSongs(
+                        singerMid: key, begin: page * 50, num: 50), !result.list.isEmpty else { break }
+                    for item in result.list where seen.insert(item.keyOf).inserted { all.append(item) }
+                    if !result.hasMore { break }
+                }
+                if !all.isEmpty { return (all, nil) }
             }
         case .kugou:
             if !id.isEmpty,
                let detail = try? await KugouMusicAPI.shared.singerDetail(singerId: id),
                !detail.songs.isEmpty {
-                return (detail.songs, detail.avatar)
+                // ★ 2026-10-17 全量：再按分页补两页（30/页）
+                var all = detail.songs
+                var seen = Set(all.map { $0.keyOf })
+                for page in 2...3 {
+                    guard let more = try? await KugouMusicAPI.shared.singerSongs(
+                        singerId: id, page: page, limit: 30), !more.list.isEmpty else { break }
+                    for item in more.list where seen.insert(item.keyOf).inserted { all.append(item) }
+                }
+                return (all, detail.avatar)
             }
         default:
             if !id.isEmpty {

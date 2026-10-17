@@ -418,6 +418,8 @@ final class NeteaseMusicAPI {
             var cover: String?
             var avatar: String?
             var briefDesc: String?
+            var musicSize: Int?
+            var songSize: Int?
         }
     }
 
@@ -427,6 +429,7 @@ final class NeteaseMusicAPI {
         var avatarURL: String?
         var briefDesc: String?
         var hotSongs: [MusicItem]
+        var totalSongCount: Int = 0
     }
 
     /// 播放地址响应。
@@ -1211,15 +1214,32 @@ final class NeteaseMusicAPI {
             "api/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
         var songs = (resp.hotSongs ?? []).compactMap(Self.mapSong)
         if songs.isEmpty {
-            // 官方增强版的 hot 排序歌曲接口（分页），比 v1/artist 稳
-            songs = (try? await artistSongs(id: id, order: "hot", limit: 50, offset: 0)) ?? []
+            songs = (try? await artistAllSongs(id: id)) ?? []
         }
         let artist = resp.artist
         let avatar = artist?.picUrl ?? artist?.img1v1Url ?? artist?.cover ?? artist?.avatar
+        let expected = artist?.musicSize ?? artist?.songSize ?? 0
         return ArtistProfile(name: artist?.name,
                              avatarURL: (avatar?.isEmpty == false) ? avatar : nil,
                              briefDesc: artist?.briefDesc,
-                             hotSongs: songs)
+                             hotSongs: songs,
+                             totalSongCount: expected > 0 ? expected : songs.count)
+    }
+
+    /// ★ 2026-10-17 用户：歌手页「全部歌曲」——分页把歌手歌曲**全量**拉齐
+    ///   （artist_songs limit=100/页，最多 10 页 = 1000 首），数量与平台一致。
+    func artistAllSongs(id: String, order: String = "hot") async throws -> [MusicItem] {
+        var all: [MusicItem] = []
+        var seen = Set<String>()
+        let pageSize = 100
+        for page in 0..<10 {
+            let batch = try await artistSongs(id: id, order: order,
+                                              limit: pageSize, offset: page * pageSize)
+            if batch.isEmpty { break }
+            for item in batch where seen.insert(item.keyOf).inserted { all.append(item) }
+            if batch.count < pageSize { break }
+        }
+        return all
     }
 
     /// 歌手歌曲（order：hot 热门序 / time 时间序）。官方增强版 artist_songs 同款参数。
