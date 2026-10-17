@@ -34,9 +34,18 @@ struct WellVariableBlur: View {
                     .resizable()
                     .scaledToFill()
                     .blur(radius: 24, opaque: true)
+            } else if let url {
+                // ★ 2026-10-17：Metal 合成还没完成/失败时，**必须**有可见回退，
+                //   否则整块区域空白（用户「歌手头像呢」）。用远程图 + 轻模糊顶上。
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill().blur(radius: 18, opaque: true)
+                    } else {
+                        Color.secondary.opacity(0.12)
+                    }
+                }
             } else {
-                // 透明回退：露出页面底色（此前是半透明灰块，加载中被看成"黑色模糊"）
-                Color.clear
+                Color.secondary.opacity(0.12)
             }
         }
         .task(id: url) { await render() }

@@ -254,7 +254,7 @@ struct WellArtistHomeView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
             } else {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(Array(displayedHotSongs.enumerated()), id: \.element.id) { index, item in
                         Button {
                             PlayerCore.shared.play(queue: displayedHotSongs, startIndex: index)
@@ -389,6 +389,7 @@ struct WellArtistHomeView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 10)
+            .frame(height: 96)
         }
     }
 
