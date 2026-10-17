@@ -176,7 +176,7 @@ struct WellPlaylistDetailView: View {
         }
         // ★ 2026-10-17 评论详情页
         .sheet(item: $commentsItem) { song in
-            WellCommentsSheet(item: song)
+            WellCommentsSheet(songId: song.neteaseId)
         }
     }
 

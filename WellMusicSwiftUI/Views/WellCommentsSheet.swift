@@ -3,7 +3,8 @@ import SwiftUI
 /// 歌曲评论详情页（★ 2026-10-17 新功能：排序 tab + 热评 + 楼中楼）。
 /// 数据走 NeteaseMusicAPI weapi 三端点；仅网易歌曲有入口。
 struct WellCommentsSheet: View {
-    let item: MusicItem
+    /// 网易数字歌曲 id（nil = 非网易歌曲，无评论）
+    let songId: String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var sortIndex = 0          // 0 推荐(99) / 1 最热(2) / 2 最新(3)
@@ -19,7 +20,6 @@ struct WellCommentsSheet: View {
     @State private var floorTotals: [String: Int] = [:]
     @State private var floorLoading = Set<String>()
 
-    private var songId: String? { item.neteaseId }
     private var sortType: Int { [99, 2, 3][sortIndex] }
 
     var body: some View {

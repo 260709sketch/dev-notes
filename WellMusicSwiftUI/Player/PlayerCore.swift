@@ -412,7 +412,8 @@ final class PlayerCore: NSObject, ObservableObject {
                         for (k, v) in resolved.headers { req.setValue(v, forHTTPHeaderField: k) }
                         if let resp = try? await URLSession.shared.data(for: req) as? (URLResponse, Data),
                            let http = resp.0 as? HTTPURLResponse,
-                           let len = http.expectedContentLength, len > 0, dur > 0 {
+                           dur > 0, http.expectedContentLength > 0 {
+                            let len = http.expectedContentLength
                             let kbps = Int((Double(len) * 8 / dur) / 1000)
                             let verdict = kbps >= 850 ? "✓ 达到无损" : "✗ 未达无损（可能被降级）"
                             PlayerDiag.log("音质核验 [\(qName)] \(title)：\(kbps) kbps \(verdict)")
