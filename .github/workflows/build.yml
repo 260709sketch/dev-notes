@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -136,3 +139,17 @@ jobs:
             build/ipa/WellMusicSwiftUI-unsigned.ipa
             build/sim/Build/Products/*/WellMusicSwiftUI.app
           if-no-files-found: error
+
+      # ★ 2026-10-17：成功构建自动发 GitHub Release（tag = 1.0.<run_number>）——
+      #   App 内「软件检查更新」读 releases/latest，此前没有 Release 所以永远失败。
+      - name: Create GitHub Release
+        if: success()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="1.0.${{ github.run_number }}"
+          gh release create "$TAG" \
+            --title "Well Music Build #${{ github.run_number }}" \
+            --notes "自动构建（Build #${{ github.run_number }}，commit ${{ github.sha }}）。下载 WellMusicSwiftUI-unsigned.ipa 后自行签名安装。" \
+            build/ipa/WellMusicSwiftUI-unsigned.ipa
