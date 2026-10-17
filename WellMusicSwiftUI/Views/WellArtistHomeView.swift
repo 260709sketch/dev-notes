@@ -84,9 +84,13 @@ struct WellArtistHomeView: View {
                 retryState
             } else {
                 ZStack(alignment: .top) {
-                    // 背景：整页一层大半径模糊（比封面更糊，作为"延伸"底）
+                    // ★ 2026-10-17 用户定稿结构：
+                    //   页面底 = **头像取色的纯色**（像专辑页全屏铺满的底色）
+                    //   + 一层低透明的可变模糊（只做层次，不抢色）。
+                    coverTint.ignoresSafeArea()
                     WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                     maxRadius: 52, start: 0.0, alignBottom: true)
+                                     maxRadius: 40, start: 0.0)
+                        .opacity(0.30)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
@@ -132,21 +136,18 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 2026-10-17 最终形态（对应 Apple Music 参考图）：
-        //   歌手头像**清晰可见**，照片下缘 ~1/3 渐进模糊（VariableBlurImageView 真可变模糊），
-        //   名字 + ℹ️/▶/☆ 叠在模糊区上；页面背景是同一张封面的大半径模糊延伸。
+        // ★ 2026-10-17 用户定稿：
+        //   ① 头像 = **方形**（宽 = 屏宽），名字与播放钮都压在头像上（上、下都是头像）；
+        //   ② 头像**下方 30% 开始**用 VariableBlurImageView 渐进模糊（start 0.70）；
+        //   ③ 头像之下 = 头像取色的纯色底，铺满整页。
         ZStack(alignment: .bottom) {
+            // ★ 2026-10-17 用户：头像**左右不要超出屏幕** → contentMode = .fit
+            //   （整张头像完整可见；多余区域露出取色底，不再裁切两侧）
             WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                             maxRadius: 30, start: 0.34)
+                             maxRadius: 26, start: 0.70, contentMode: .fit)
                 .frame(maxWidth: .infinity)
-                .frame(height: 430)
+                .frame(height: UIScreen.main.bounds.width)
                 .clipped()
-                .mask(
-                    LinearGradient(
-                        stops: [.init(color: .black, location: 0.0),
-                                .init(color: .black, location: 0.94),
-                                .init(color: .black.opacity(0.0), location: 1.0)],
-                        startPoint: .top, endPoint: .bottom))
 
             VStack(spacing: 14) {
                 Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
@@ -206,9 +207,9 @@ struct WellArtistHomeView: View {
                     }
                 }
             }
-            .padding(.bottom, 18)
+            .padding(.bottom, 22)
         }
-        .frame(height: 430)
+        .frame(height: UIScreen.main.bounds.width)
     }
 
     /// 简介全文（底部弹窗）

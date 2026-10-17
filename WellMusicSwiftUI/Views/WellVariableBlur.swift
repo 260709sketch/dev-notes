@@ -16,6 +16,8 @@ struct WellVariableBlur: View {
     var start: CGFloat = 0.30
     /// 贴底对齐：页面背景用——显示封面**底边**那一截，视觉上从封面延伸下来
     var alignBottom: Bool = false
+    /// 填充方式：.fit = 整张图完整可见（左右/上下都不裁出屏外）；.fill = 铺满裁切
+    var contentMode: ContentMode = .fill
 
     @State private var rendered: UIImage?
 
@@ -24,7 +26,7 @@ struct WellVariableBlur: View {
             if let rendered {
                 Image(uiImage: rendered)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: alignBottom ? .bottom : .center)
                     .clipped()
@@ -32,7 +34,7 @@ struct WellVariableBlur: View {
                 // 合成完成前的过渡（视觉上不突兀）
                 Image(uiImage: cached)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
                     .blur(radius: 24, opaque: true)
             } else if let url {
                 // ★ 2026-10-17：Metal 合成还没完成/失败时，**必须**有可见回退，
