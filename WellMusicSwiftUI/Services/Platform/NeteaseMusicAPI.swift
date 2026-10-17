@@ -1179,7 +1179,9 @@ final class NeteaseMusicAPI {
 
     /// 歌手热门歌曲
     func artistTopSongs(id: String) async throws -> [MusicItem] {
-        let resp: ArtistDetailResponse = try await Self.apiRequest(
+        // ★ 2026-10-17 用户反馈「所有歌手主页歌曲不显示」→ 明文 api/v1/artist/{id}
+        //   被风控（与心动模式同款病：明文路径拿不到数据）→ 切 weapi 同路径。
+        let resp: ArtistDetailResponse = try await Self.weapiRequest(
             "api/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
         return (resp.hotSongs ?? []).compactMap(Self.mapSong)
     }
@@ -1782,6 +1784,141 @@ final class NeteaseMusicAPI {
             if collected.count >= target { break }
         }
         return collected
+    }
+
+    // MARK: - 评论详情页（★ 2026-10-17：weapi 三端点，参考 api-enhanced-main）
+    //
+    // comment_new（排序分页）/ comment_hot（热评）/ comment_floor（楼中楼）。
+    // 歌曲资源类型 = R_SO_4。
+
+    struct NeteaseComment: Identifiable, Hashable {
+        let id: String
+        let nickname: String
+        let avatarURL: String?
+        let content: String
+        let timeText: String
+        let likedCount: Int
+        let replyCount: Int
+    }
+
+    private struct CommentUserDTO: Decodable {
+        var nickname: String?
+        var avatarUrl: String?
+    }
+
+    private struct CommentDTO: Decodable {
+        var commentId: Int64?
+        var content: String?
+        var time: Double?
+        var likedCount: Int?
+        var replyCount: Int?
+        var user: CommentUserDTO?
+    }
+
+    private struct CommentNewResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var data: Data?
+        struct Data: Decodable {
+            var comments: [CommentDTO]?
+            var totalCount: Int?
+            var hasMore: Bool?
+        }
+    }
+
+    private struct CommentHotResponse: Decodable {
+        var code: Int?
+        var hotComments: [CommentDTO]?
+        var total: Int?
+        var more: Bool?
+    }
+
+    private struct CommentFloorResponse: Decodable {
+        var code: Int?
+        var message: String?
+        var data: Data?
+        struct Data: Decodable {
+            var comments: [CommentDTO]?
+            var totalCount: Int?
+        }
+    }
+
+    private static let commentTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+
+    private static func mapComment(_ c: CommentDTO) -> NeteaseComment {
+        let timeMs = c.time ?? 0
+        let timeText = timeMs > 0
+            ? commentTimeFormatter.string(from: Date(timeIntervalSince1970: timeMs / 1000))
+            : ""
+        return NeteaseComment(
+            id: c.commentId.map(String.init) ?? UUID().uuidString,
+            nickname: c.user?.nickname ?? "网易云用户",
+            avatarURL: c.user?.avatarUrl,
+            content: c.content ?? "",
+            timeText: timeText,
+            likedCount: c.likedCount ?? 0,
+            replyCount: c.replyCount ?? 0)
+    }
+
+    private static func mapComments(_ list: [CommentDTO]?) -> [NeteaseComment] {
+        (list ?? []).map(mapComment)
+    }
+
+    /// 新版评论列表。sortType：99 推荐 / 2 最热 / 3 最新。
+    func songComments(songId: String, sortType: Int, pageNo: Int, pageSize: Int = 20)
+        async throws -> (comments: [NeteaseComment], total: Int, hasMore: Bool) {
+        let cursor = "\((pageNo - 1) * pageSize)"
+        let params: [String: Any] = [
+            "threadId": "R_SO_4_\(songId)",
+            "pageNo": pageNo,
+            "pageSize": pageSize,
+            "sortType": sortType,
+            "cursor": cursor,
+            "csrf_token": "",
+        ]
+        let resp: CommentNewResponse = try await Self.weapiRequest(
+            "/api/resource/comments/R_SO_4_\(songId)", params: params, type: CommentNewResponse.self)
+        try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "评论加载失败")
+        let d = resp.data
+        return (mapComments(d?.comments), d?.totalCount ?? 0, d?.hasMore ?? false)
+    }
+
+    /// 热门评论
+    func songHotComments(songId: String, offset: Int = 0, limit: Int = 20)
+        async throws -> (comments: [NeteaseComment], total: Int) {
+        let params: [String: Any] = [
+            "rid": songId,
+            "offset": offset,
+            "limit": limit,
+            "beforeTime": 0,
+            "csrf_token": "",
+        ]
+        let resp: CommentHotResponse = try await Self.weapiRequest(
+            "/api/v1/resource/hotcomments/R_SO_4_\(songId)", params: params, type: CommentHotResponse.self)
+        try Self.ensureOK(resp.code, fallback: "热评加载失败")
+        return (mapComments(resp.hotComments), resp.total ?? 0)
+    }
+
+    /// 楼中楼（一条评论的回复列表）
+    func songCommentFloor(songId: String, parentCommentId: String, time: Int = -1, limit: Int = 20)
+        async throws -> (replies: [NeteaseComment], total: Int) {
+        let params: [String: Any] = [
+            "parentCommentId": parentCommentId,
+            "threadId": "R_SO_4_\(songId)",
+            "time": time,
+            "limit": limit,
+            "csrf_token": "",
+        ]
+        let resp: CommentFloorResponse = try await Self.weapiRequest(
+            "/api/resource/comment/floor/get", params: params, type: CommentFloorResponse.self)
+        try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "回复加载失败")
+        let d = resp.data
+        return (mapComments(d?.comments), d?.totalCount ?? 0)
     }
 
     /// 私人 FM 的歌曲结构**两套都可能出现**：老格式（`artists` / `album` /

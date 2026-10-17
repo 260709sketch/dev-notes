@@ -870,7 +870,7 @@ final class QQMusicAPI {
             let name = (dict["album_name"] as? String) ?? (dict["albumName"] as? String) ?? (dict["name"] as? String) ?? ""
             guard !name.isEmpty else { return nil }
             let mid = (dict["album_mid"] as? String) ?? (dict["albumMID"] as? String) ?? (dict["mid"] as? String) ?? ""
-            let pic = mid.isEmpty ? nil : Self.albumCoverImage(mid, size: 480)
+            let pic = mid.isEmpty ? nil : Self.albumCoverImage(mid, size: 300)
             let singerName = (dict["singer_name"] as? String) ?? (dict["singerName"] as? String) ?? ""
             // pub_time 是秒级时间戳 → 存毫秒（与网易云对齐）
             let pubSeconds = (dict["pub_time"] as? Int) ?? (dict["publishTime"] as? Int) ?? 0
