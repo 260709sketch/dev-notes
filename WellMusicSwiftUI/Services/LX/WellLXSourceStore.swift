@@ -565,6 +565,22 @@ final class WellLXSourceStore: ObservableObject {
         guard let script = scriptText(for: source) else { return .unavailable }
         let declared = WellLXProtocol.extractSrcUrl(from: script) ?? ""
         guard let url = Self.normalizedScriptURL(declared), !declared.isEmpty else {
+            // ★ 2026-10-17 官方 LX 机制（用户画链路确认）：检查更新由**脚本自检**——
+            //   脚本加载 → inited 回调 → 脚本自查并 lx.send(EVENT_NAMES.updateAlert)
+            //   → 弹窗。此前无 srcUrl 直接放弃，脚本从没跑过 → 「检查不了」。
+            //   现在把脚本在引擎里跑一遍，给 8 秒窗口等自报（自报会进
+            //   pendingUpdateAlert 并弹全局弹窗）；超时 = 未发现更新。
+            if let script = scriptText(for: source) {
+                let noticeBefore = pendingUpdateAlert
+                try? await WellLXEngine.shared.load(source: source, script: script)
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline {
+                    if pendingUpdateAlert != nil, pendingUpdateAlert != noticeBefore {
+                        return .upToDate   // 脚本已自弹更新弹窗
+                    }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+            }
             return .unavailable
         }
         guard let remote = try? await fetchScript(from: url) else {

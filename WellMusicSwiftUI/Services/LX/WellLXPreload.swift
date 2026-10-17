@@ -136,6 +136,7 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
   const eventNames = Object.values(EVENT_NAMES)
   const events = {
     request: null,
+    inited: null,
   }
   const allSources = ['kw', 'kg', 'tx', 'wy', 'mg', 'local']
   const supportQualitys = {
@@ -372,6 +373,21 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
       return
     }
     nativeCall(NATIVE_EVENTS_NAMES.init, { info: sourceInfo, status: true })
+    // ★ 2026-10-17：init 上报成功后，回调脚本注册的 inited 处理器
+    //   （官方 init 数据形状的超集：openDevTools/env/version/scriptVersion）。
+    //   音源脚本的更新自检通常就在这个处理器里跑。
+    if (events.inited) {
+      setTimeout(() => {
+        try {
+          events.inited({
+            openDevTools: false,
+            env: 'mobile',
+            version: '2.0.0',
+            scriptVersion: version,
+          })
+        } catch (e) {}
+      }, 0)
+    }
   }
   const handleShowUpdateAlert = (data, resolve, reject) => {
     if (!data || typeof data != 'object') return reject(new Error('parameter format error.'))
@@ -514,6 +530,11 @@ globalThis.lx_setup = (key, id, name, description, version, author, homepage, ra
       switch (eventName) {
         case EVENT_NAMES.request:
           events.request = handler
+          break
+        case EVENT_NAMES.inited:
+          // ★ 2026-10-17：官方 lx-music-mobile 支持 —— 音源脚本把更新自检等
+          //   初始化后逻辑注册在这里；此前我们 reject 导致脚本在该行崩溃。
+          events.inited = handler
           break
         default: return Promise.reject(new Error('The event is not supported: ' + eventName))
       }
