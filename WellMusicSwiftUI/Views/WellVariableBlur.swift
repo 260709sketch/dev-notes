@@ -30,7 +30,8 @@ struct WellVariableBlur: View {
                     .scaledToFill()
                     .blur(radius: 24, opaque: true)
             } else {
-                Color.secondary.opacity(0.15)
+                // 透明回退：露出页面底色（此前是半透明灰块，加载中被看成"黑色模糊"）
+                Color.clear
             }
         }
         .task(id: url) { await render() }

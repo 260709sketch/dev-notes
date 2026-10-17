@@ -78,11 +78,12 @@ struct WellArtistHomeView: View {
                         // ★ 2026-10-17 用户：下面整个页面背景也必须是**封面模糊**（不是纯色）
                         WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
                                          maxRadius: 40, start: 0.0)
+                            // ★ 深色封面模糊后容易糊成一片黑：提饱和 + 微提亮
+                            .saturation(1.4)
+                            .brightness(0.05)
                             .ignoresSafeArea()
-                        // 只加很轻的压暗，保证文字可读（不洗白模糊）
-                        LinearGradient(colors: [Color.black.opacity(0.10),
-                                                Color.black.opacity(0.28)],
-                                       startPoint: .top, endPoint: .bottom)
+                        // 极轻压暗（几乎不影响观感，只保证白字可读）
+                        Color.black.opacity(0.08)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
