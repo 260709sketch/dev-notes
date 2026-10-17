@@ -114,7 +114,7 @@ struct WellArtistHomeView: View {
             // 顶部与清晰层自然重合 → 无接缝
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
                 .frame(maxWidth: .infinity)
-                .frame(height: UIScreen.main.bounds.width + 240)
+                .frame(height: 390)
                 .clipped()
                 .blur(radius: 46, opaque: true)
                 .overlay(alignment: .bottom) {
@@ -128,7 +128,7 @@ struct WellArtistHomeView: View {
             // 清晰封面（上半部，底部 30% 叠渐变让模糊过渡更自然）
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
                 .frame(maxWidth: .infinity)
-                .frame(height: UIScreen.main.bounds.width)   // ★ 固定方形（fill 会撑高）
+                .frame(height: 260)   // ★ 用户：手机不是平板，封面别占半屏
                 .clipped()
                 .overlay(alignment: .bottom) {
                     LinearGradient(colors: [.clear, Color(.systemBackground).opacity(0.9)],
@@ -141,7 +141,7 @@ struct WellArtistHomeView: View {
             VStack(spacing: 14) {
                 Spacer(minLength: 0)
                 Text(resolvedName.isEmpty ? artistName : resolvedName)
-                    .font(.system(size: 30, weight: .bold))
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
@@ -153,7 +153,7 @@ struct WellArtistHomeView: View {
                         Image(systemName: "info")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.primary)
-                            .frame(width: 46, height: 46)
+                            .frame(width: 40, height: 40)
                             .background(.regularMaterial, in: Circle())
                     }
                     .buttonStyle(.plain)
@@ -166,7 +166,7 @@ struct WellArtistHomeView: View {
                         Image(systemName: "play.fill")
                             .font(.system(size: 26, weight: .semibold))
                             .foregroundStyle(.black)
-                            .frame(width: 72, height: 72)
+                            .frame(width: 60, height: 60)
                             .background(.white, in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
                     }
