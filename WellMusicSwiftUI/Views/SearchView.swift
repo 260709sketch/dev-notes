@@ -657,19 +657,16 @@ struct WellMVPlayerView: View {
     ///（点一下出现，再点消失；4 秒无操作自动隐藏，不挡视野）
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
-    // ★ 2026-10-17 自绘控制条：进度与时长
-    @State private var mvCurrentTime: Double = 0
-    @State private var mvDurationSeconds: Double = 0
-    @State private var progressTask: Task<Void, Never>?
+
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             if let player {
-                // ★ 2026-10-17 用户：MV 快进/倒退点了没反应 → 系统 VideoPlayer 的控制条
-                //   被我们的全屏手势吞掉。改为无控制条容器 + 自绘控制条（seek 稳定可控）。
-                WellAVPlayerContainer(player: player)
+                // ★ 2026-10-17 用户：快进/倒退用 **iOS 原生**控制条（系统 VideoPlayer）。
+                //   吞点击的全屏手势已移除，系统控制条可正常点按。
+                VideoPlayer(player: player)
                     .ignoresSafeArea()
             } else if failed {
                 VStack(spacing: 12) {
@@ -728,95 +725,10 @@ struct WellMVPlayerView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
-                .opacity(controlsVisible ? 1 : 0)
-                .animation(.easeInOut(duration: 0.2), value: controlsVisible)
-                .allowsHitTesting(controlsVisible)
                 Spacer()
-                // ★ 2026-10-17 自绘播放控制条（快进/倒退真正可用）
-                if let player {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 14) {
-                            Text(timeText(mvCurrentTime))
-                                .font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.8))
-                            // 进度条（可拖动）
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(.white.opacity(0.25))
-                                        .frame(height: 4)
-                                    Capsule().fill(.white)
-                                        .frame(width: max(0, min(1, progressFraction)) * geo.size.width,
-                                               height: 4)
-                                }
-                                .frame(height: 20, alignment: .center)
-                                .contentShape(Rectangle())
-                                .gesture(DragGesture(minimumDistance: 0).onEnded { value in
-                                    let frac = max(0, min(1, value.location.x / geo.size.width))
-                                    guard mvDurationSeconds > 0 else { return }
-                                    player.seek(to: CMTime(seconds: frac * mvDurationSeconds,
-                                                           preferredTimescale: 600),
-                                                toleranceBefore: .zero, toleranceAfter: .zero)
-                                })
-                            }
-                            .frame(height: 20)
-                            Text(timeText(mvDurationSeconds))
-                                .font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        HStack(spacing: 36) {
-                            Spacer()
-                            Button {
-                                seek(by: -15, player: player)
-                                scheduleHide()
-                            } label: {
-                                Image(systemName: "gobackward.15")
-                                    .font(.system(size: 26))
-                                    .foregroundStyle(.white)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                if player.timeControlStatus == .playing {
-                                    player.pause()
-                                } else {
-                                    player.play()
-                                }
-                                scheduleHide()
-                            } label: {
-                                Image(systemName: player.timeControlStatus == .playing
-                                      ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 30))
-                                    .foregroundStyle(.white)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                seek(by: 15, player: player)
-                                scheduleHide()
-                            } label: {
-                                Image(systemName: "goforward.15")
-                                    .font(.system(size: 26))
-                                    .foregroundStyle(.white)
-                            }
-                            .buttonStyle(.plain)
-                            Spacer()
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 28)
-                    .opacity(controlsVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: controlsVisible)
-                    .allowsHitTesting(controlsVisible)
-                }
             }
         }
         .statusBarHidden()
-        .contentShape(Rectangle())
-        .onTapGesture {
-            controlsVisible.toggle()
-            scheduleHide()
-        }
-        .onAppear { scheduleHide() }
         .onDisappear { hideTask?.cancel() }
         .task {
             // ★ 2026-10-15 用户：进 MV 页先收起搜索页遗留的键盘
@@ -845,63 +757,14 @@ struct WellMVPlayerView: View {
             let avPlayer = AVPlayer(url: url)
             player = avPlayer
             avPlayer.play()
-            // ★ 2026-10-17：进度轮询（0.5s）+ 时长
-            progressTask?.cancel()
-            progressTask = Task {
-                while !Task.isCancelled {
-                    if let p = self.player {
-                        mvCurrentTime = p.currentTime().seconds.isFinite ? p.currentTime().seconds : 0
-                        let dur = p.currentItem?.duration.seconds ?? 0
-                        if dur.isFinite, dur > 0 { mvDurationSeconds = dur }
-                    }
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                }
-            }
         }
         .onDisappear {
-            progressTask?.cancel()
             player?.pause()
             player = nil
             restorePortrait()   // 双保险（点 X 之外的所有关闭路径）
         }
     }
 
-    // MARK: - 控制条辅助（2026-10-17）
-
-    private var progressFraction: Double {
-        guard mvDurationSeconds > 0 else { return 0 }
-        return max(0, min(1, mvCurrentTime / mvDurationSeconds))
-    }
-
-    private func timeText(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "00:00" }
-        let total = Int(seconds)
-        let m = total / 60
-        let s = total % 60
-        return String(format: "%02d:%02d", m, s)
-    }
-
-    private func seek(by delta: Double, player: AVPlayer) {
-        let current = player.currentTime().seconds
-        guard current.isFinite else { return }
-        let upper = mvDurationSeconds > 0 ? mvDurationSeconds : current + delta
-        let target = max(0, min(upper, current + delta))
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
-        mvCurrentTime = target
-    }
-
-    // MARK: 关闭
-
-    /// 关 MV 页：先等方向复位动画走完再 dismiss，关完再强制根窗口重新布局。
-    ///
-    /// ★ 2026-10-15 用户：「播放 MV 退出来到发现页或其他页面会有些歌单和按钮错乱」——
-    /// 根因是横屏↔竖屏切换与 fullScreenCover 的 dismiss 挤在同一帧：
-    /// 底层页仍按横屏尺寸测量过，dismiss 后没有重新布局，货架/按钮就停留在
-    /// 错误的几何位置上。两招合用：① 把 dismiss 推迟到旋转动画之后；
-    /// ② dismiss 后对场景的窗口强制 setNeedsLayout + layoutIfNeeded，
-    /// 让底层 SwiftUI 树按竖屏重新测量。
-    /// 4 秒无操作自动隐藏顶部条（用户点按会重置计时）
     private func scheduleHide() {
         hideTask?.cancel()
         controlsVisible = true
@@ -1004,20 +867,3 @@ struct WellRemotePlaylistView: View {
     SearchView()
 }
 
-/// 无系统控制条的 AVPlayer 容器（★ 2026-10-17：MV 快进/倒退改自绘控制条，
-/// 系统 VideoPlayer 的控制条会被全屏手势吞掉）
-private struct WellAVPlayerContainer: UIViewControllerRepresentable {
-    let player: AVPlayer
-
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
-        vc.player = player
-        vc.showsPlaybackControls = false
-        vc.videoGravity = .resizeAspect
-        return vc
-    }
-
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
-        if controller.player !== player { controller.player = player }
-    }
-}

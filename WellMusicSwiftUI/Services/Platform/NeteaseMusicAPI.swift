@@ -1238,12 +1238,18 @@ final class NeteaseMusicAPI {
     func artistAllSongs(id: String, order: String = "hot") async throws -> [MusicItem] {
         var all: [MusicItem] = []
         var seen = Set<String>()
-        let pageSize = 100
-        for page in 0..<10 {
+        // ★ 2026-10-17 修复「最多 50 首」：该接口**每页上限就是 50**（请求 100 也回 50），
+        //   之前拿 100 当页大小 → 第一页就误判“不足一页”提前停。改用 50/页 +
+        //   接口的 more 标志（或空页）作为停止条件，最多 20 页 = 1000 首。
+        let pageSize = 50
+        for page in 0..<20 {
+            var more: Bool?
             let batch = try await artistSongs(id: id, order: order,
-                                              limit: pageSize, offset: page * pageSize)
+                                              limit: pageSize, offset: page * pageSize,
+                                              moreOut: &more)
             if batch.isEmpty { break }
             for item in batch where seen.insert(item.keyOf).inserted { all.append(item) }
+            if more == false { break }
             if batch.count < pageSize { break }
         }
         return all
@@ -1289,6 +1295,29 @@ final class NeteaseMusicAPI {
     }
 
     /// 歌手歌曲（order：hot 热门序 / time 时间序）。官方增强版 artist_songs 同款参数。
+    /// （moreOut：可选，带回接口的 more 标志供分页判断）
+    func artistSongs(id: String, order: String = "hot", limit: Int = 50, offset: Int = 0,
+                     moreOut: inout Bool?) async throws -> [MusicItem] {
+        let params: [String: Any] = [
+            "id": id,
+            "private_cloud": "true",
+            "work_type": 1,
+            "order": order,
+            "offset": offset,
+            "limit": limit,
+            "csrf_token": "",
+        ]
+        let resp: ArtistSongsResponse = try await Self.weapiRequest(
+            "/api/v1/artist/songs", params: params, type: ArtistSongsResponse.self)
+        moreOut = resp.more
+        return (resp.songs ?? []).compactMap(Self.mapSong)
+    }
+
+    func artistSongs(id: String, order: String = "hot", limit: Int = 50, offset: Int = 0)
+        async throws -> [MusicItem] {
+        var more: Bool?
+        return try await artistSongs(id: id, order: order, limit: limit, offset: offset, moreOut: &more)
+    }
     func artistSongs(id: String, order: String = "hot", limit: Int = 50, offset: Int = 0)
         async throws -> [MusicItem] {
         let params: [String: Any] = [
@@ -1308,6 +1337,7 @@ final class NeteaseMusicAPI {
     private struct ArtistSongsResponse: Decodable {
         var code: Int?
         var songs: [Song]?
+        var more: Bool?
     }
 
     func artistTopSongs(id: String) async throws -> [MusicItem] {

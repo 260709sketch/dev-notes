@@ -92,6 +92,8 @@ struct WellArtistHomeView: View {
         //   「歌手主页」字样（返回按钮右边保持干净；歌手名在页面大头部里）
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        // ★ 2026-10-17：hero 沉浸——导航栏背景隐藏，封面顶到状态栏下
+        .toolbarBackground(.hidden, for: .navigationBar)
         .sheet(isPresented: $showingBio) { bioSheet }
         // ★ 2026-10-14 用户：移除导航栏上的搜索框。
         //   原实现为 `.searchable(placement: .navigationBarDrawer(displayMode: .always))`
@@ -112,7 +114,7 @@ struct WellArtistHomeView: View {
             // 顶部与清晰层自然重合 → 无接缝
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
                 .frame(maxWidth: .infinity)
-                .frame(height: 720)
+                .frame(height: UIScreen.main.bounds.width + 240)
                 .clipped()
                 .blur(radius: 46, opaque: true)
                 .overlay(alignment: .bottom) {
@@ -126,7 +128,7 @@ struct WellArtistHomeView: View {
             // 清晰封面（上半部，底部 30% 叠渐变让模糊过渡更自然）
             WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 480)
                 .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fill)
+                .frame(height: UIScreen.main.bounds.width)   // ★ 固定方形（fill 会撑高）
                 .clipped()
                 .overlay(alignment: .bottom) {
                     LinearGradient(colors: [.clear, Color(.systemBackground).opacity(0.9)],
@@ -258,8 +260,8 @@ struct WellArtistHomeView: View {
     /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求；序号已按用户要求去除）
     private func hotSongRow(index: Int, item: MusicItem) -> some View {
         HStack(spacing: 12) {
-            WellRemoteImage(url: item.albumCoverURL, displaySize: 40)
-                .frame(width: 40, height: 40)
+            WellRemoteImage(url: item.albumCoverURL, displaySize: 120)
+                .frame(width: 48, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
