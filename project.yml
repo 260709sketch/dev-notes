@@ -17,6 +17,10 @@ packages:
   MPVKit:
     url: https://github.com/mpvkit/MPVKit.git
     exactVersion: 1.1.0-n9.0.2
+  # ★ 2026-10-17 用户指定：VariableBlurImageView（Metal 实现的可变模糊，公开 API）
+  VariableBlurImageView:
+    url: https://github.com/Eskils/VariableBlurImageView
+    from: 1.1.2
 targets:
   WellMusicSwiftUI:
     type: application
@@ -26,6 +30,8 @@ targets:
     dependencies:
       - package: MPVKit
         product: MPVKit
+      - package: VariableBlurImageView
+        product: VariableBlurImageView
     info:
       path: WellMusicSwiftUI/Supporting/Info.plist
       properties:

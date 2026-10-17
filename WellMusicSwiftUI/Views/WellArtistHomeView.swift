@@ -77,7 +77,7 @@ struct WellArtistHomeView: View {
                         coverTint.ignoresSafeArea()
                         // ★ 2026-10-17 用户：下面整个页面背景也必须是**封面模糊**（不是纯色）
                         WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                                         maxRadius: 40, start: 0.0)
+                                         maxRadius: 42, start: 0.0, alignBottom: true)
                             // ★ 深色封面模糊后容易糊成一片黑：提饱和 + 微提亮
                             .saturation(1.4)
                             .brightness(0.05)

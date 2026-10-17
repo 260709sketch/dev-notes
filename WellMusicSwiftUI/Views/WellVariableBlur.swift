@@ -1,6 +1,6 @@
 import SwiftUI
-import CoreImage
 import UIKit
+import VariableBlurImageView
 
 /// 可变模糊背景（VariableBlur 同款技术，Apple Music 头图那种「上清晰 → 下渐糊」）。
 ///
@@ -14,6 +14,8 @@ struct WellVariableBlur: View {
     var maxRadius: CGFloat = 28
     /// 从该相对高度开始变糊（0 顶 → 1 底）
     var start: CGFloat = 0.30
+    /// 贴底对齐：页面背景用——显示封面**底边**那一截，视觉上从封面延伸下来
+    var alignBottom: Bool = false
 
     @State private var rendered: UIImage?
 
@@ -23,6 +25,9 @@ struct WellVariableBlur: View {
                 Image(uiImage: rendered)
                     .resizable()
                     .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: alignBottom ? .bottom : .center)
+                    .clipped()
             } else if let cached = url.flatMap({ WellImageCache.shared.syncCachedImage(for: $0) }) {
                 // 合成完成前的过渡（视觉上不突兀）
                 Image(uiImage: cached)
@@ -54,30 +59,19 @@ struct WellVariableBlur: View {
     @MainActor private static var cache: [String: UIImage] = [:]
 
     private static func composite(_ image: UIImage, maxRadius: CGFloat, start: CGFloat) -> UIImage? {
-        guard let ci = CIImage(image: image) else { return nil }
-        let extent = ci.extent
-        // 大半径高斯模糊（clamped 防止边缘透明）
-        let blur = ci.clampedToExtent()
-            .applyingGaussianBlur(sigma: maxRadius)
-            .cropped(to: extent)
-        // 纵向渐变遮罩：start 处黑（显示清晰层）→ 底部白（显示模糊层）
-        guard let gradient = CIFilter(name: "CILinearGradient",
-                                      parameters: [
-                                        "inputPoint0": CIVector(x: extent.midX,
-                                                                y: extent.minY + extent.height * (1 - start)),
-                                        "inputPoint1": CIVector(x: extent.midX, y: extent.minY),
-                                        "inputColor0": CIColor(red: 0, green: 0, blue: 0, alpha: 1),
-                                        "inputColor1": CIColor(red: 1, green: 1, blue: 1, alpha: 1),
-                                      ])?.outputImage else { return nil }
-        let mask = gradient.cropped(to: extent)
-        guard let blended = CIFilter(name: "CIBlendWithMask",
-                                     parameters: [
-                                        kCIInputImageKey: blur,
-                                        kCIInputBackgroundImageKey: ci,
-                                        kCIInputMaskImageKey: mask,
-                                     ])?.outputImage else { return nil }
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        guard let cg = context.createCGImage(blended, from: extent) else { return nil }
-        return UIImage(cgImage: cg)
+        // ★ 2026-10-17 用户指定 Eskils/VariableBlurImageView：Metal 真·可变模糊
+        //   （半径沿纵向连续变化 0 → maxRadius），比「均匀模糊 + 渐变混合」更接近 Apple Music。
+        //   引擎吃/吐 CGImage（已核对源码签名：applyVerticalVariableBlur(toImage:...) throws -> CGImage）。
+        guard let cg = image.cgImage else { return nil }
+        let h = CGFloat(cg.height)
+        let startPoint = max(0, min(h, h * start))
+        let engine = VariableBlurEngine()
+        guard let out = try? engine.applyVerticalVariableBlur(
+            toImage: cg,
+            startPoint: startPoint,
+            endPoint: h,
+            startRadius: 0,
+            endRadius: maxRadius) else { return nil }
+        return UIImage(cgImage: out)
     }
 }
