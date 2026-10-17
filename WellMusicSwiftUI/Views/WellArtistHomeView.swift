@@ -130,22 +130,20 @@ struct WellArtistHomeView: View {
     // MARK: - Header
 
     private var artistHeader: some View {
-        // ★ 2026-10-17 定稿（参考图 Tyler + 用户"头像下面渐变模糊过渡"）：
-        //   ① 头像 = 方形、fit、**清晰**（不裁左右）；
-        //   ② 头像**下缘 30% 起** VariableBlurImageView 渐进模糊（start 0.70, maxRadius 18）
-        //      ——这就是参考图人物下缘"化开"的效果；
-        //   ③ 最底部再用渐变融进取色纯色底（页面只有这一层纯色，不再有全屏糊层）。
+        // ★ 2026-10-17 排查结论（深色/浅色封面都会被冲花）：
+        //   问题出在给头像走 WellVariableBlur 那条链（下载→Metal 合成→失败回退直连 URL），
+        //   该链在歌手页不可靠（合成失败时回退图把整块糊成一片）。头像改用全 App 通用的
+        //   WellRemoteImage（可靠），参考图人物下缘的"化开"其实是 **alpha 渐隐**，不是模糊。
         ZStack(alignment: .bottom) {
-            WellVariableBlur(url: (resolvedCover ?? coverURL).flatMap(URL.init(string:)),
-                             maxRadius: 18, start: 0.70, contentMode: .fit)
+            WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 640, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .frame(height: UIScreen.main.bounds.width)
                 .clipped()
                 .overlay(alignment: .bottom) {
                     LinearGradient(
-                        colors: [.clear, coverTint.opacity(0.5), coverTint],
+                        colors: [.clear, coverTint.opacity(0.45), coverTint],
                         startPoint: .top, endPoint: .bottom)
-                        .frame(height: 120)
+                        .frame(height: 160)
                         .allowsHitTesting(false)
                 }
 
