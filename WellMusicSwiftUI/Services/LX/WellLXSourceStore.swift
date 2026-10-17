@@ -484,6 +484,19 @@ final class WellLXSourceStore: ObservableObject {
             log: log,
             updateUrl: updateUrl
         )
+        // ★ 2026-10-17：脚本自报的更新也支持「立即更新」——后台拉取新脚本
+        //   内容填进 inAppUpdateScript（拉到后按钮自动出现）。
+        if !updateUrl.isEmpty {
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let fetched = try? await fetchScript(from: updateUrl),
+                      fetched.contains("@name") || fetched.contains("lx_setup")
+                          || fetched.contains("globalThis") else { return }
+                if self.pendingUpdateAlert?.updateUrl == updateUrl {
+                    self.pendingUpdateAlert?.inAppUpdateScript = fetched
+                }
+            }
+        }
     }
 
     func dismissUpdateAlert() {
