@@ -44,6 +44,10 @@ struct WellAdvancedFeaturesView: View {
                     get: { (UserDefaults.standard.object(forKey: WellLXSourceUpdateConfig.autoCheckUpdateKey) as? Bool) ?? true },
                     set: { UserDefaults.standard.set($0, forKey: WellLXSourceUpdateConfig.autoCheckUpdateKey) }
                 ))
+                Toggle("启动时执行音源自检", isOn: Binding(
+                    get: { (UserDefaults.standard.object(forKey: WellLXSourceUpdateConfig.autoSelfCheckKey) as? Bool) ?? true },
+                    set: { UserDefaults.standard.set($0, forKey: WellLXSourceUpdateConfig.autoSelfCheckKey) }
+                ))
                 Toggle("自动更新（直接替换本地脚本）", isOn: Binding(
                     get: { (UserDefaults.standard.object(forKey: WellLXSourceUpdateConfig.autoApplyUpdateKey) as? Bool) ?? false },
                     set: { UserDefaults.standard.set($0, forKey: WellLXSourceUpdateConfig.autoApplyUpdateKey) }

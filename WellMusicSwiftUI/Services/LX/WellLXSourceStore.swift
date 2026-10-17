@@ -160,6 +160,8 @@ enum WellLXSourceUpdateConfig {
     static let autoCheckUpdateKey = "well.lx.autoCheckUpdate"
     /// 发现新版本时自动覆盖本地脚本（默认关 = 弹窗让用户确认）
     static let autoApplyUpdateKey = "well.lx.autoApplyUpdate"
+    /// 启动时执行「音源自检」（脚本自查更新；无 srcUrl 音源唯一的自检途径）
+    static let autoSelfCheckKey = "well.lx.autoSelfCheckUpdate"
 }
 
 /// 自定义音源（LX 脚本）仓库：负责导入、持久化、激活、测试与取链日志。
@@ -478,6 +480,23 @@ final class WellLXSourceStore: ObservableObject {
             ))
             return
         }
+        // ★ 2026-10-17 用户：要更新才弹窗，不需要更新不要提示。
+        //   脚本自检在「没配更新地址」时会自报一条诊断（log=未声明更新地址），
+        //   它没有可执行动作（无链接/无脚本）→ 只记日志，不弹卡片。
+        guard !updateUrl.isEmpty else {
+            appendLog(WellLXRequestLog(
+                trackTitle: "音源更新自检",
+                trackArtist: target?.name ?? name,
+                requestedQuality: "—",
+                actualQuality: "—",
+                url: "—",
+                duration: 0,
+                success: true,
+                message: "无更新地址，已静默（\(log)）"
+            ))
+            return
+        }
+
         pendingUpdateAlert = WellLXUpdateNotice(
             sourceID: target?.id,
             sourceName: name.isEmpty ? (target?.name ?? "音源") : name,
@@ -516,6 +535,9 @@ final class WellLXSourceStore: ObservableObject {
     static let autoCheckUpdateKey = WellLXSourceUpdateConfig.autoCheckUpdateKey
     /// 发现新版本时自动覆盖本地脚本（默认关 = 弹窗让用户确认）
     static let autoApplyUpdateKey = WellLXSourceUpdateConfig.autoApplyUpdateKey
+    /// ★ 2026-10-17 用户：启动时对「无 srcUrl」音源执行**脚本自检**
+    ///   （脚本加载 → inited → 自查 → updateAlert），默认开。
+    static let autoSelfCheckKey = WellLXSourceUpdateConfig.autoSelfCheckKey
 
     private var didLaunchUpdateCheck = false
 
@@ -530,7 +552,8 @@ final class WellLXSourceStore: ObservableObject {
         for source in sources {
             // 用户已关掉这个音源的更新提示 → 跳过，不打扰
             guard allowsUpdateAlert(for: source.id) else { continue }
-            let result = await checkUpdate(for: source)
+            let selfCheckOn = (d.object(forKey: WellLXSourceUpdateConfig.autoSelfCheckKey) as? Bool) ?? true
+            let result = await checkUpdate(for: source, allowSelfCheck: selfCheckOn)
             guard case .newer(let version, let script) = result else { continue }
 
             if (d.object(forKey: WellLXSourceUpdateConfig.autoApplyUpdateKey) as? Bool) ?? false {
@@ -575,7 +598,7 @@ final class WellLXSourceStore: ObservableObject {
 
     /// 手动检查更新：拉取音源脚本自己声明的 `srcUrl`，比对头部 `@version`。
     /// 没有 srcUrl 的音源直接返回 `.unavailable`。
-    func checkUpdate(for source: WellLXSourceInfo) async -> WellLXUpdateCheckResult {
+    func checkUpdate(for source: WellLXSourceInfo, allowSelfCheck: Bool = true) async -> WellLXUpdateCheckResult {
         guard let script = scriptText(for: source) else { return .unavailable }
         let declared = WellLXProtocol.extractSrcUrl(from: script) ?? ""
         guard let url = Self.normalizedScriptURL(declared), !declared.isEmpty else {
@@ -584,7 +607,7 @@ final class WellLXSourceStore: ObservableObject {
             //   → 弹窗。此前无 srcUrl 直接放弃，脚本从没跑过 → 「检查不了」。
             //   现在把脚本在引擎里跑一遍，给 8 秒窗口等自报（自报会进
             //   pendingUpdateAlert 并弹全局弹窗）；超时 = 未发现更新。
-            if let script = scriptText(for: source) {
+            if allowSelfCheck, let script = scriptText(for: source) {
                 let noticeBefore = pendingUpdateAlert
                 try? await WellLXEngine.shared.load(source: source, script: script)
                 let deadline = Date().addingTimeInterval(8)
