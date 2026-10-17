@@ -288,8 +288,9 @@ struct WellLXUpdateAlertPresenter: View {
                 set: { newValue in if !newValue { store.dismissUpdateAlert() } }
             )) {
                 if let notice = store.pendingUpdateAlert {
-                    WellLXUpdateBottomCard(notice: notice)
-                        .presentationDetents([.medium])
+                    // ★ 2026-10-17：换成 Kumone 同款更新卡片（分状态：可更新/应用中/已更新）
+                    WellLXUpdateSheet(notice: notice)
+                        .presentationDetents([.height(380)])
                 }
             }
     }
@@ -616,4 +617,92 @@ struct ArtworkView: View {
 
 #Preview {
     MainTabView()
+}
+
+/// 音源更新卡片（★ 2026-10-17 Kumone IOSUpdaterSheet 同款设计）：
+/// 大图标 + 版本信息 + 渐变胶囊主按钮 + 稍后；状态：可更新 / 应用中 / 已更新。
+private struct WellLXUpdateSheet: View {
+    let notice: WellLXUpdateNotice
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var store = WellLXSourceStore.shared
+    @State private var applying = false
+    @State private var applied = false
+
+    private var accent: Color { Color(red: 0.25, green: 0.52, blue: 0.96) }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            if applied {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.green)
+                Text("已更新到最新版本").font(.headline)
+                doneButton
+            } else {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(accent)
+                VStack(spacing: 4) {
+                    Text("\(notice.sourceName) 有更新").font(.headline)
+                    if notice.inAppUpdateScript != nil {
+                        Text("新版本脚本已就绪，可一键覆盖")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if !notice.log.isEmpty {
+                    Text(notice.log)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(8)
+                }
+                if applying {
+                    ProgressView().controlSize(.large)
+                } else {
+                    if let script = notice.inAppUpdateScript, let id = notice.sourceID {
+                        Button {
+                            applying = true
+                            Task {
+                                if let target = store.sources.first(where: { $0.id == id }) {
+                                    try? await store.applyUpdate(script, to: target)
+                                }
+                                applied = true
+                            }
+                        } label: {
+                            Text("立即更新")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(accent, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if notice.hasLink, let url = URL(string: notice.updateUrl) {
+                        Button("打开更新地址") {
+                            UIApplication.shared.open(url)
+                            store.dismissUpdateAlert()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(accent)
+                    }
+                    Button("稍后") { store.dismissUpdateAlert() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var doneButton: some View {
+        Button("完成") { store.dismissUpdateAlert() }
+            .font(.system(size: 15, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+    }
 }
