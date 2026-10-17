@@ -42,8 +42,12 @@ struct WellArtistHomeViewV2: View {
     @State private var tintIsDark = false
     /// 背景色（提取主色；深色模式压暗一档）
     private var backdropTint: Color {
-        guard tintIsDark else { return coverTint }
-        return Color(uiColor: UIColor(coverTint).blended(withFraction: 0.18, of: .black))
+        guard tintIsDark, let ui = UIColor(coverTint).cgColor.components,
+              ui.count >= 3 else { return coverTint }
+        // 深色模式：向黑色混入 18% 压暗一档（保持色相）
+        let f = 0.18
+        let r = (ui[0] * (1 - f)), g = (ui[1] * (1 - f)), bl = (ui[2] * (1 - f))
+        return Color(red: Double(r), green: Double(g), blue: Double(bl))
     }
 
     /// 强调色：深底用暖黄（Nirvana 参考图），浅底用白（AC/DC 参考图）
@@ -724,113 +728,4 @@ struct WellArtistHomeViewV2: View {
 ///   拉到新内容就覆盖缓存（新专辑/新头像随即被图片缓存接住）→ 数据变了才更新界面。
 ///
 /// 容量：整体受「设置 → 存储 → 缓存上限」约束（`CacheBudget` 按最旧优先淘汰）。
-actor WellArtistHomeCache {
-    static let shared = WellArtistHomeCache()
 
-    /// 缓存多久算「旧」（超过则在出缓存的同时后台重拉；现在是每次进入都会后台重拉，
-    /// 这个值只用于存储页展示与「多久没被访问就淘汰」的判断）。
-    static let staleAfter: TimeInterval = 6 * 60 * 60
-
-    struct Snapshot: Codable {
-        var artistId: String
-        var artistMid: String?
-        var name: String
-        var avatar: String?
-        var songs: [MusicItem]
-        var albums: [WellAlbumSummary]
-        var albumCount: Int?
-        /// 写入时间（存储页展示「缓存于 …」用）
-        var savedAt: Date = Date()
-    }
-
-    /// 内存层（同一会话内秒开，不用每次读盘）。
-    private var memory: [String: Snapshot] = [:]
-    private let maxMemoryEntries = 60
-
-    private nonisolated(unsafe) let directory: URL
-
-    private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        directory = caches.appendingPathComponent("artist-home", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    // MARK: 读写
-
-    /// 取缓存（内存 → 磁盘）。读盘时顺手刷新文件时间，作为 LRU 的「最近使用」标记。
-    func get(_ key: String) -> Snapshot? {
-        if let hit = memory[key] { return hit }
-        let url = fileURL(for: key)
-        guard let data = try? Data(contentsOf: url),
-              let snapshot = try? Self.decoder.decode(Snapshot.self, from: data) else { return nil }
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
-        memory[key] = snapshot
-        trimMemory()
-        return snapshot
-    }
-
-    /// 写缓存（内存 + 磁盘）。
-    func set(_ key: String, _ snapshot: Snapshot) {
-        memory[key] = snapshot
-        trimMemory()
-        guard let data = try? Self.encoder.encode(snapshot) else { return }
-        try? data.write(to: fileURL(for: key), options: .atomic)
-        Task { @MainActor in CacheBudget.enforceIfNeeded() }
-    }
-
-    /// 清空歌手主页缓存（存储页用）。
-    func clear() {
-        memory.removeAll()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        for file in files { try? FileManager.default.removeItem(at: file) }
-    }
-
-    // MARK: 存储占用（存储页 / 总预算用）
-
-    nonisolated func diskEntries() -> [CacheFileEntry] {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
-        return files.compactMap { file in
-            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-            return CacheFileEntry(url: file,
-                                  size: Int64(values.fileSize ?? 0),
-                                  date: values.contentModificationDate ?? .distantPast,
-                                  kind: .artist)
-        }
-    }
-
-    nonisolated func diskUsage() -> Int64 {
-        diskEntries().reduce(Int64(0)) { $0 + $1.size }
-    }
-
-    /// 缓存了多少位歌手（存储页展示用）。
-    nonisolated func cachedCount() -> Int {
-        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.count ?? 0
-    }
-
-    // MARK: 内部
-
-    private func fileURL(for key: String) -> URL {
-        directory.appendingPathComponent(Data(key.utf8).md5Hex() + ".json")
-    }
-
-    private func trimMemory() {
-        guard memory.count > maxMemoryEntries else { return }
-        for key in memory.keys.prefix(memory.count - maxMemoryEntries) {
-            memory.removeValue(forKey: key)
-        }
-    }
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-}

@@ -157,11 +157,11 @@ struct WellArtistHomeView: View {
             //   下缘渐糊改为**纯 SwiftUI**：清晰底图 + 同一张图 blur(22)，
             //   用渐变 mask 让糊层从 55% 起逐渐显形 → "越往下越糊"，零 Metal、零回退风险。
             ZStack(alignment: .bottom) {
-                WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
+                WellRemoteImage(url: resolvedCover ?? coverURL, contentMode: .fit, displaySize: 720)
                     .frame(maxWidth: .infinity)
                     .frame(height: UIScreen.main.bounds.width)
                     .clipped()
-                WellRemoteImage(url: resolvedCover ?? coverURL, displaySize: 720, contentMode: .fit)
+                WellRemoteImage(url: resolvedCover ?? coverURL, contentMode: .fit, displaySize: 720)
                     .frame(maxWidth: .infinity)
                     .frame(height: UIScreen.main.bounds.width)
                     .clipped()
