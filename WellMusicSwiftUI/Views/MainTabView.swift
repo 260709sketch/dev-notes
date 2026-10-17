@@ -302,6 +302,10 @@ private struct WellLXUpdateBottomCard: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = WellLXSourceStore.shared
 
+    private var cleanLog: String {
+        notice.log.replacingOccurrences(of: "vv", with: "v")
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             VStack(spacing: 8) {

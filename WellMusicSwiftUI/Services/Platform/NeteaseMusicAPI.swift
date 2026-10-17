@@ -1318,22 +1318,6 @@ final class NeteaseMusicAPI {
         var more: Bool?
         return try await artistSongs(id: id, order: order, limit: limit, offset: offset, moreOut: &more)
     }
-    func artistSongs(id: String, order: String = "hot", limit: Int = 50, offset: Int = 0)
-        async throws -> [MusicItem] {
-        let params: [String: Any] = [
-            "id": id,
-            "private_cloud": "true",
-            "work_type": 1,
-            "order": order,
-            "offset": offset,
-            "limit": limit,
-            "csrf_token": "",
-        ]
-        let resp: ArtistSongsResponse = try await Self.weapiRequest(
-            "/api/v1/artist/songs", params: params, type: ArtistSongsResponse.self)
-        return (resp.songs ?? []).compactMap(Self.mapSong)
-    }
-
     private struct ArtistSongsResponse: Decodable {
         var code: Int?
         var songs: [Song]?
