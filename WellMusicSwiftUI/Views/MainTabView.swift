@@ -288,9 +288,9 @@ struct WellLXUpdateAlertPresenter: View {
                 set: { newValue in if !newValue { store.dismissUpdateAlert() } }
             )) {
                 if let notice = store.pendingUpdateAlert {
-                    // ★ 2026-10-17：换成 Kumone 同款更新卡片（分状态：可更新/应用中/已更新）
+                    // ★ 2026-10-17 用户：要「自愿赞助」那种 iOS 原生底部弹出样式
+                    //   （之前的 presentationDetents 从 0×0 挂载点会退化成居中小卡）。
                     WellLXUpdateSheet(notice: notice)
-                        .presentationDetents([.height(380)])
                 }
             }
     }
@@ -307,8 +307,8 @@ private struct WellLXUpdateBottomCard: View {
             VStack(spacing: 8) {
                 Text("\(notice.sourceName) 有更新")
                     .font(.headline)
-                if !notice.log.isEmpty {
-                    Text(notice.log)
+                if !cleanLog.isEmpty {
+                    Text(cleanLog)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -629,8 +629,25 @@ private struct WellLXUpdateSheet: View {
     @State private var applied = false
 
     private var accent: Color { Color(red: 0.25, green: 0.52, blue: 0.96) }
+    /// 服务端版本串可能自带 v 前缀 → 脚本拼 log 时出现 "vv1.2.0"，显示时清一下
+    private var cleanLog: String {
+        notice.log.replacingOccurrences(of: "vv", with: "v")
+    }
 
     var body: some View {
+        NavigationStack {
+            updateContent
+                .navigationTitle("音源更新")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成") { store.dismissUpdateAlert() }
+                    }
+                }
+        }
+    }
+
+    private var updateContent: some View {
         VStack(spacing: 22) {
             if applied {
                 Image(systemName: "checkmark.circle.fill")
