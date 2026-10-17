@@ -362,7 +362,8 @@ struct WellArtistHomeView: View {
         }
 
         // 热门歌曲兜底：接口异常时用同名搜索补全（同样封顶 50 首）
-        if hotSongs.isEmpty, let sp {
+        if hotSongs.isEmpty {
+            let sp = searchPlatform ?? .netease
             hotSongs = await SearchService.shared
                 .search(keyword: artistName, platform: sp, type: .songs, limit: 50).songs
         }
@@ -371,7 +372,9 @@ struct WellArtistHomeView: View {
         isLoading = false
 
         // 写入快照缓存（供下次进入秒开；失败态不缓存）
-        if !failed, !hotSongs.isEmpty || !albums.isEmpty {
+        // ★ 2026-10-17「间歇性 0 首」：旧条件允许「有专辑没歌曲」快照入库，
+        //   风控瞬时失败被缓存放大 → 必须歌曲非空才缓存。
+        if !failed, !hotSongs.isEmpty {
             await WellArtistHomeCache.shared.set(cacheKey, WellArtistHomeCache.Snapshot(
                 artistId: realId,
                 artistMid: realMid,
@@ -401,10 +404,17 @@ struct WellArtistHomeView: View {
                 return (detail.songs, detail.avatar)
             }
         default:
-            if !id.isEmpty,
-               let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
-               !list.isEmpty {
-                return (list, nil)
+            if !id.isEmpty {
+                if let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
+                   !list.isEmpty {
+                    return (list, nil)
+                }
+                // ★ 2026-10-17 间歇性 0 首：风控瞬时失败，1.2s 后重试一次
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
+                   !list.isEmpty {
+                    return (list, nil)
+                }
             }
         }
         return ([], nil)
@@ -434,7 +444,7 @@ struct WellArtistHomeView: View {
                 return (result.albums, result.platformAlbumCount)
             }
         }
-        guard let sp = searchPlatform else { return ([], nil) }
+        let sp = searchPlatform ?? .netease
         let found = await SearchService.shared
             .search(keyword: artistName, platform: sp, type: .albums, limit: 50).albums
         return (found, nil)

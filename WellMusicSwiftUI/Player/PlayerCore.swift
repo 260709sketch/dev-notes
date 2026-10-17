@@ -316,6 +316,7 @@ final class PlayerCore: NSObject, ObservableObject {
     func beginFMSession() {
         isFMMode = true
         refillFMIfNeeded()
+        refillHeartIfNeeded()
     }
 
     func endFMSession() {
@@ -324,6 +325,30 @@ final class PlayerCore: NSObject, ObservableObject {
     }
 
     /// 剩余 ≤2 首且未在补货 → 拉一批追加队尾（Kumone 的 fmAdvance 同款语义）
+    /// ★ 2026-10-17 心动模式上下文：队列将尽时按新随机种子再生（Kumone 同款）
+    var heartContext: (playlistId: String, seedPool: [String])?
+    private var heartRegenerating = false
+
+    private func refillHeartIfNeeded() {
+        guard heartContext != nil, !heartRegenerating, !isFMMode else { return }
+        let played = (currentIndex ?? -1) + 1
+        guard queue.count - played <= 2 else { return }
+        heartRegenerating = true
+        Task { @MainActor [weak self] in
+            defer { self?.heartRegenerating = false }
+            guard let self, let ctx = self.heartContext else { return }
+            let seed = ctx.seedPool.randomElement()
+                ?? self.queue.last?.neteaseId ?? ""
+            guard !seed.isEmpty,
+                  let more = try? await NeteaseMusicAPI.shared.intelligenceChain(
+                      songId: seed, playlistId: ctx.playlistId, target: 20),
+                  !more.isEmpty else { return }
+            var seen = Set(self.queue.map { $0.keyOf })
+            let fresh = more.filter { seen.insert($0.keyOf).inserted }
+            if !fresh.isEmpty { self.addToQueue(fresh) }
+        }
+    }
+
     private func refillFMIfNeeded() {
         guard isFMMode, !fmRefilling else { return }
         let played = (currentIndex ?? -1) + 1
@@ -372,6 +397,27 @@ final class PlayerCore: NSObject, ObservableObject {
                 guard let url = URL(string: resolved.url) else {
                     isLoading = false
                     return
+                }
+                // ★ 2026-10-17 用户：「无损以上音质到底是不是真无损」——
+                //   请求无损/Hi-Res 档时，用 Content-Length ÷ 时长 反推码率核验
+                //   （FLAC≈900-1200kbps，<850 即未达无损）。仅记日志，不影响播放。
+                if AppState.shared.audioQuality.rawValue >= 2 {
+                    let qName = AppState.shared.audioQuality.displayName
+                    let dur = item.duration
+                    let title = item.title
+                    Task.detached {
+                        var req = URLRequest(url: url)
+                        req.httpMethod = "HEAD"
+                        req.timeoutInterval = 10
+                        for (k, v) in resolved.headers { req.setValue(v, forHTTPHeaderField: k) }
+                        if let resp = try? await URLSession.shared.data(for: req) as? (URLResponse, Data),
+                           let http = resp.0 as? HTTPURLResponse,
+                           let len = http.expectedContentLength, len > 0, dur > 0 {
+                            let kbps = Int((Double(len) * 8 / dur) / 1000)
+                            let verdict = kbps >= 850 ? "✓ 达到无损" : "✗ 未达无损（可能被降级）"
+                            PlayerDiag.log("音质核验 [\(qName)] \(title)：\(kbps) kbps \(verdict)")
+                        }
+                    }
                 }
                 if resolved.isFallbackSource, let name = resolved.fromCustomSource {
                     // ★ 第十一轮问题3：「自动换源：内置音源」也受内置音源提醒开关控制
@@ -672,6 +718,7 @@ final class PlayerCore: NSObject, ObservableObject {
         guard !queue.isEmpty else { return }
         // ★ 私人漫游：推进时按剩余量自动补货（原来播完就停）
         refillFMIfNeeded()
+        refillHeartIfNeeded()
         let mode = AppState.shared.playMode
         switch mode {
         case 1: // 单曲循环

@@ -873,7 +873,19 @@ final class QQMusicAPI {
             let pic = mid.isEmpty ? nil : Self.albumCoverImage(mid, size: 300)
             let singerName = (dict["singer_name"] as? String) ?? (dict["singerName"] as? String) ?? ""
             // pub_time 是秒级时间戳 → 存毫秒（与网易云对齐）
-            let pubSeconds = (dict["pub_time"] as? Int) ?? (dict["publishTime"] as? Int) ?? 0
+            // ★ 2026-10-17：get_singer_album 的 pub_time 是 "yyyy-MM-dd" **字符串**，
+            //   按 Int 解永远得 0 → 专辑不显示发行日期。两形态都接。
+            let pubSeconds: Int = {
+                if let v = dict["pub_time"] as? Int { return v }
+                if let str = (dict["pub_time"] as? String) ?? (dict["pubTime"] as? String) {
+                    let f = DateFormatter()
+                    f.dateFormat = "yyyy-MM-dd"
+                    f.locale = Locale(identifier: "zh_CN")
+                    f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+                    if let d = f.date(from: str) { return Int(d.timeIntervalSince1970) }
+                }
+                return (dict["publishTime"] as? Int) ?? 0
+            }()
             let albumType = (dict["albumtype"] as? String) ?? (dict["album_type"] as? String) ?? (dict["albumType"] as? String) ?? ""
             let songCount = (dict["song_count"] as? Int) ?? (dict["songCount"] as? Int) ?? (dict["songcount"] as? Int) ?? (dict["total"] as? Int) ?? (dict["count"] as? Int) ?? (dict["size"] as? Int) ?? 0
             let ftype = (dict["ftype"] as? Int) ?? 0

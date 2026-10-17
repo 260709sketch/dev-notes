@@ -1728,8 +1728,9 @@ final class NeteaseMusicAPI {
         var seen = Set<String>()
         for index in 0..<max(1, batches) {
             if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
-            let resp: FMResponse = try await Self.apiRequest(
-                "api/v1/radio/get", params: [:], type: FMResponse.self)
+            // ★ 2026-10-17：明文 api/v1/radio/get 间歇性被风控（参考 Kumone 用 weapi）
+            let resp: FMResponse = try await Self.weapiRequest(
+                "/api/v1/radio/get", params: [:], type: FMResponse.self)
             try Self.ensureOK(resp.code, fallback: "私人漫游加载失败")
             for track in resp.data ?? [] {
                 guard let item = Self.mapFMTrack(track) else { continue }

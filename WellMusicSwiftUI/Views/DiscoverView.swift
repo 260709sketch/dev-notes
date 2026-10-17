@@ -418,12 +418,14 @@ struct DiscoverView: View {
             if let songs = try? await NeteaseMusicAPI.shared.intelligenceChain(songId: seedId, playlistId: likedId),
                !songs.isEmpty {
                 PlayerCore.shared.play(queue: songs, startIndex: 0)
+                PlayerCore.shared.heartContext = (likedId, likedTracks.compactMap(\.neteaseId))
                 ToastCenter.shared.show("已开启心动模式")
                 return
             }
             // ② 相似歌曲兜底
             if let songs = try? await NeteaseMusicAPI.shared.simiSongs(songId: seedId), !songs.isEmpty {
                 PlayerCore.shared.play(queue: songs, startIndex: 0)
+                PlayerCore.shared.heartContext = (likedId, likedTracks.compactMap(\.neteaseId))
                 ToastCenter.shared.show("已开启心动模式")
                 return
             }
@@ -436,6 +438,7 @@ struct DiscoverView: View {
         }
         if !likedTracks.isEmpty {
             PlayerCore.shared.play(queue: likedTracks.shuffled(), startIndex: 0)
+            PlayerCore.shared.heartContext = (likedId, likedTracks.compactMap(\.neteaseId))
             ToastCenter.shared.show("已开启心动模式")
             return
         }

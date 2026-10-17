@@ -7,8 +7,21 @@ import AVKit
 final class WellSearchViewModel: ObservableObject {
     /// 初始平台（2026-10-16 第十一轮末：按用户要求「优先搜索平台」整体删除，
     /// 固定默认网易云，页面内切换照旧）
-    @Published var platform: WellSearchPlatform = .netease
-    @Published var type: WellSearchType = .all
+    @Published var platform: WellSearchPlatform = .netease {
+        didSet {
+            // ★ 2026-10-17 用户：切换平台立即刷新结果（此前要重新提交搜索才生效）
+            if platform != oldValue, !currentKeyword.isEmpty {
+                Task { await load(keyword: currentKeyword) }
+            }
+        }
+    }
+    @Published var type: WellSearchType = .all {
+        didSet {
+            if type != oldValue, !currentKeyword.isEmpty {
+                Task { await load(keyword: currentKeyword) }
+            }
+        }
+    }
     @Published var result = WellSearchResult()
     @Published var isLoading = false
     /// 单曲 Tab 是否还有更多页（2026-10-15：QQ 搜索单曲单页上限 30，用户要求能下拉加载）

@@ -273,7 +273,8 @@ struct AppleMusicPlayerView: View {
         .sheet(isPresented: $showComments) {
             Group {
                 if let t = track {
-                    CommentsView(track: t)
+                    // ★ 2026-10-17：换成新评论详情页（推荐/最热/最新 + 楼中楼）
+                    WellCommentsSheet(item: t)
                 }
             }
             .modifier(PlayerSheetDetents())
