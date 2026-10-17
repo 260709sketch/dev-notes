@@ -379,10 +379,9 @@ struct WellArtistHomeView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(backdropIsDark ? Color.white.opacity(0.7) : .secondary)
                 Spacer(minLength: 8)
-                if nowPlaying.isCurrent(displayedHotSongs.first ?? MusicItem(
-                        source: .netease, platformId: nil, title: "", artist: nil,
-                        album: nil, duration: 0, albumCoverURL: nil, neteaseId: nil,
-                        qqSongMid: nil), at: 0) {
+                // ★ 正在播放的是本列表第 0 首时，标题旁显示音条
+                if let first = displayedHotSongs.first,
+                   nowPlaying.isCurrent(first, at: 0) {
                     NowPlayingIndicator()
                 }
                 Text(hotSongsDurationText)
