@@ -405,15 +405,19 @@ struct WellArtistHomeView: View {
             }
         default:
             if !id.isEmpty {
-                if let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
-                   !list.isEmpty {
-                    return (list, nil)
+                // ★ 2026-10-17：一次拿「头像 + 热门歌曲」（weapi v1/artist 的 artist 对象），
+                //   歌曲空时自动走 artist/songs(hot) 兜；仍空则 1.2s 重试一次。
+                var profile = try? await NeteaseMusicAPI.shared.artistProfile(id: id)
+                if profile?.hotSongs.isEmpty ?? true {
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    profile = try? await NeteaseMusicAPI.shared.artistProfile(id: id)
                 }
-                // ★ 2026-10-17 间歇性 0 首：风控瞬时失败，1.2s 后重试一次
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                if let list = try? await NeteaseMusicAPI.shared.artistTopSongs(id: id),
-                   !list.isEmpty {
-                    return (list, nil)
+                if let profile, !profile.hotSongs.isEmpty {
+                    return (profile.hotSongs, profile.avatarURL)
+                }
+                // 歌曲仍空但拿到了头像 → 头像照用，歌曲交给外层搜索兜底
+                if let profile, let avatar = profile.avatarURL {
+                    return ([], avatar)
                 }
             }
         }

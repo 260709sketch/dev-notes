@@ -402,6 +402,26 @@ final class NeteaseMusicAPI {
     private struct ArtistDetailResponse: Decodable {
         var code: Int?
         var hotSongs: [Song]?
+        /// ★ 2026-10-17：weapi v1/artist 同时回 artist 对象（头像/背景）。
+        ///   此前只取 hotSongs → 歌手页头像只能靠搜索/专辑封面兜，经常没有。
+        var artist: ArtistObject?
+
+        struct ArtistObject: Decodable {
+            var name: String?
+            var picUrl: String?
+            var img1v1Url: String?
+            var cover: String?
+            var avatar: String?
+            var briefDesc: String?
+        }
+    }
+
+    /// 歌手页需要的完整信息（头像 + 热门歌曲）。
+    struct ArtistProfile {
+        var name: String?
+        var avatarURL: String?
+        var briefDesc: String?
+        var hotSongs: [MusicItem]
     }
 
     /// 播放地址响应。
@@ -1178,6 +1198,47 @@ final class NeteaseMusicAPI {
     }
 
     /// 歌手热门歌曲
+    /// ★ 2026-10-17 歌手主页：一次拿「头像 + 热门歌曲」。
+    ///   weapi v1/artist 的 artist 对象里有 picUrl/img1v1Url/cover/avatar 多套字段，
+    ///   逐个兜（老接口只回其中一套）；hotSongs 为空时再走 artist/songs 兜。
+    func artistProfile(id: String) async throws -> ArtistProfile {
+        let resp: ArtistDetailResponse = try await Self.weapiRequest(
+            "api/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
+        var songs = (resp.hotSongs ?? []).compactMap(Self.mapSong)
+        if songs.isEmpty {
+            // 官方增强版的 hot 排序歌曲接口（分页），比 v1/artist 稳
+            songs = (try? await artistSongs(id: id, order: "hot", limit: 50, offset: 0)) ?? []
+        }
+        let artist = resp.artist
+        let avatar = artist?.picUrl ?? artist?.img1v1Url ?? artist?.cover ?? artist?.avatar
+        return ArtistProfile(name: artist?.name,
+                             avatarURL: (avatar?.isEmpty == false) ? avatar : nil,
+                             briefDesc: artist?.briefDesc,
+                             hotSongs: songs)
+    }
+
+    /// 歌手歌曲（order：hot 热门序 / time 时间序）。官方增强版 artist_songs 同款参数。
+    func artistSongs(id: String, order: String = "hot", limit: Int = 50, offset: Int = 0)
+        async throws -> [MusicItem] {
+        let params: [String: Any] = [
+            "id": id,
+            "private_cloud": "true",
+            "work_type": 1,
+            "order": order,
+            "offset": offset,
+            "limit": limit,
+            "csrf_token": "",
+        ]
+        let resp: ArtistSongsResponse = try await Self.weapiRequest(
+            "/api/v1/artist/songs", params: params, type: ArtistSongsResponse.self)
+        return (resp.songs ?? []).compactMap(Self.mapSong)
+    }
+
+    private struct ArtistSongsResponse: Decodable {
+        var code: Int?
+        var songs: [Song]?
+    }
+
     func artistTopSongs(id: String) async throws -> [MusicItem] {
         // ★ 2026-10-17 用户反馈「所有歌手主页歌曲不显示」→ 明文 api/v1/artist/{id}
         //   被风控（与心动模式同款病：明文路径拿不到数据）→ 切 weapi 同路径。
