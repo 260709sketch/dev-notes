@@ -332,7 +332,7 @@ final class PlayerCore: NSObject, ObservableObject {
         fmRefilling = true
         Task { @MainActor [weak self] in
             defer { self?.fmRefilling = false }
-            guard let tracks = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 1),
+            guard let tracks = try? await NeteaseMusicAPI.shared.personalFMTracks(batches: 3),
                   !tracks.isEmpty, let self, self.isFMMode else { return }
             var seen = Set(self.queue.map { $0.keyOf })
             let fresh = tracks.filter { seen.insert($0.keyOf).inserted }

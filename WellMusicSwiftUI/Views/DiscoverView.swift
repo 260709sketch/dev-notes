@@ -363,7 +363,7 @@ struct DiscoverView: View {
         do {
             // ★ 2026-10-16 对齐 Kumone：流式开播（先拉一批），进漫游会话后
             //   播放器会在剩余将尽时自动补货，漫游可无限续。
-            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 1)
+            let tracks = try await NeteaseMusicAPI.shared.personalFMTracks(batches: 3)
             guard !tracks.isEmpty else {
                 ToastCenter.shared.show("私人漫游暂时没有推荐")
                 return
@@ -415,7 +415,7 @@ struct DiscoverView: View {
 
         // ① 种子 + 口味范围 → intelligenceList（服务端推相似串）
         if let seedId {
-            if let songs = try? await NeteaseMusicAPI.shared.intelligenceList(songId: seedId, playlistId: likedId),
+            if let songs = try? await NeteaseMusicAPI.shared.intelligenceChain(songId: seedId, playlistId: likedId),
                !songs.isEmpty {
                 PlayerCore.shared.play(queue: songs, startIndex: 0)
                 ToastCenter.shared.show("已开启心动模式")

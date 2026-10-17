@@ -293,7 +293,7 @@ struct WellMyPlaylistDetailView: View {
 
                 if isPlaying {
                     // ★ 2026-10-16 问题8：换成全局共享的 Apple Music 风格动画音条
-                    NowPlayingIndicator(color: Self.accent)
+                    NowPlayingIndicator(color: Color(red: 0.25, green: 0.52, blue: 0.96))
                 } else {
                     Text(Self.durationText(item.duration))
                         .font(.system(size: 13))

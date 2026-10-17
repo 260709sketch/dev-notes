@@ -1745,19 +1745,43 @@ final class NeteaseMusicAPI {
     /// 参考实现同款接口走 **weapi** `/api/playmode/intelligence/list`
     /// （songId / type=fromPlayOne / playlistId / startMusicId / count / csrf_token），
     /// 已切过来。种子由调用方给（参考实现用**每日推荐第一首**，见 DiscoverView）。
-    func intelligenceList(songId: String, playlistId: String) async throws -> [MusicItem] {
+    func intelligenceList(songId: String, playlistId: String, count: Int = 1) async throws -> [MusicItem] {
         let params: [String: Any] = [
             "songId": songId,
             "type": "fromPlayOne",
             "playlistId": playlistId,
             "startMusicId": songId,
-            "count": 1,
+            "count": count,
             "csrf_token": "",
         ]
         let resp: IntelligenceResponse = try await Self.weapiRequest(
             "/api/playmode/intelligence/list", params: params, type: IntelligenceResponse.self)
         try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "心动模式加载失败")
         return (resp.data ?? []).compactMap { $0.songInfo }.compactMap(Self.mapSong)
+    }
+
+    /// ★ 2026-10-17 用户反馈「心动模式只有五首歌」→ 根因：单次调用只回 1-5 首。
+    ///   官方客户端的玩法是**链式**：拿上一次推荐的最后一首当新种子继续要，
+    ///   累积到目标数量为止（去重、连续两轮无新歌提前收手）。
+    func intelligenceChain(songId: String, playlistId: String, target: Int = 20) async throws -> [MusicItem] {
+        var collected: [MusicItem] = []
+        var seen = Set<String>()
+        var seed = songId
+        var dryRounds = 0
+        for _ in 0..<8 {
+            let batch = try await intelligenceList(songId: seed, playlistId: playlistId, count: 3)
+            let fresh = batch.filter { seen.insert($0.keyOf).inserted }
+            if fresh.isEmpty {
+                dryRounds += 1
+                if dryRounds >= 2 { break }
+            } else {
+                dryRounds = 0
+                collected.append(contentsOf: fresh)
+                seed = fresh.last?.neteaseId ?? seed
+            }
+            if collected.count >= target { break }
+        }
+        return collected
     }
 
     /// 私人 FM 的歌曲结构**两套都可能出现**：老格式（`artists` / `album` /
