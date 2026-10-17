@@ -85,7 +85,8 @@ struct AppleMusicPlayerView: View {
     @AppStorage("wellmusic.appleMusic.backgroundDim") private var bgDim: Double = 0.04
     @AppStorage("wellmusic.appleMusic.amllLyricTopPx") private var amllTopPx: Int = 140
     @AppStorage("wellmusic.appleMusic.amllLyricBottomPx") private var amllBottomPx: Int = 335
-    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = 0
+    // ★ 2026-10-18 用户问题7：左右默认 -5（顶部 140 / 底部 335 已是目标值）
+    @AppStorage("wellmusic.appleMusic.amllLyricHorizontalPx") private var amllHorizPx: Int = -5
     /// ★ 2026-10-16 用户问题11：歌词对齐（0 居中 / 1 左 / 2 右；默认居中）
     @AppStorage("wellmusic.appleMusic.lyricAlignment") private var lyricAlignment: Int = 0
     /// 歌名 / 歌手信息字号（需求 12；0 表示未设置，用默认值）

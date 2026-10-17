@@ -15,6 +15,8 @@ final class NowPlayingTracker: ObservableObject {
 
     /// 当前播放曲目的 `keyOf`（含平台 + id + 歌手，天然满足「同歌同平台」比对）
     @Published private(set) var playingKey: String?
+    /// 当前曲目在队列里的下标（配合 keyOf 双条件比对，避免同名/重复曲目误判）
+    @Published private(set) var playingIndex: Int?
     @Published private(set) var isPlaying: Bool = false
 
     private var cancellables: Set<AnyCancellable> = []
@@ -26,6 +28,8 @@ final class NowPlayingTracker: ObservableObject {
                 core.queue.indices.contains(index) ? core.queue[index].keyOf : nil
             }
             if playingKey != key { playingKey = key }
+            let idx = core.currentIndex
+            if playingIndex != idx { playingIndex = idx }
             if isPlaying != core.isPlaying { isPlaying = core.isPlaying }
         }
         core.$currentIndex.sink { _ in refresh() }.store(in: &cancellables)
@@ -40,6 +44,12 @@ final class NowPlayingTracker: ObservableObject {
     /// 该行是否是「当前曲目」（含暂停态 —— 标题着色用）。
     func isCurrent(_ item: MusicItem) -> Bool {
         playingKey == item.keyOf
+    }
+
+    /// ★ 2026-10-18 用户问题11：**同键 + 同下标**双条件 —— 列表里有重复曲目时，
+    ///   只有用户真正点的那一行会高亮（此前只看 keyOf，重复行会一起变蓝/出标识）。
+    func isCurrent(_ item: MusicItem, at index: Int) -> Bool {
+        playingKey == item.keyOf && playingIndex == index
     }
 }
 

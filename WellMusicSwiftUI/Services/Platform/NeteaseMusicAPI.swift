@@ -1319,6 +1319,24 @@ final class NeteaseMusicAPI {
         var more: Bool?
         return try await artistSongs(id: id, order: order, limit: limit, offset: offset, moreOut: &more)
     }
+    /// 歌手简介（weapi `/api/v1/artist/desc`，RN 版 wellmusic 同款）
+    func artistDesc(id: String) async throws -> String {
+        struct Resp: Decodable {
+            var code: Int?
+            var briefDesc: String?
+            var introduction: [Intro]?
+            struct Intro: Decodable { var ti: String?; var txt: String? }
+        }
+        let resp: Resp = try await Self.weapiRequest(
+            "/api/v1/artist/desc",
+            params: ["id": id, "csrf_token": ""],
+            type: Resp.self)
+        try Self.ensureOK(resp.code, serverMessage: nil, fallback: "歌手简介加载失败")
+        if let brief = resp.briefDesc, !brief.isEmpty { return brief }
+        return (resp.introduction ?? [])
+            .compactMap { $0.txt }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     private struct ArtistSongsResponse: Decodable {
         var code: Int?
         var songs: [Song]?

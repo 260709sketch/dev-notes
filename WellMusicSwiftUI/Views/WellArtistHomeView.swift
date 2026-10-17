@@ -138,6 +138,14 @@ struct WellArtistHomeView: View {
         }
     }
 
+    /// 热门歌曲总时长（mm:ss）
+    private var hotSongsDurationText: String {
+        let total = displayedHotSongs.reduce(0) { $0 + $1.duration }
+        guard total > 0 else { return "--:--" }
+        let m = Int(total) / 60, sec = Int(total) % 60
+        return String(format: "%d:%02d", m, sec)
+    }
+
     private var studioAlbums: [WellAlbumSummary] { albums.filter { !$0.isEPOrSingle } }
     private var epsAndSingles: [WellAlbumSummary] { albums.filter(\.isEPOrSingle) }
 
@@ -184,46 +192,31 @@ struct WellArtistHomeView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // ★ 2026-10-18 用户问题5：分享在左、三个点在右，颜色统一蓝；
+            //   三个点菜单去掉「收藏歌手」（页面已有收藏钮）。
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { shareArtistPage() } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.blue)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button {
-                        shareArtistPage()
-                    } label: { Label("分享歌手页", systemImage: "square.and.arrow.up") }
-                    if platform == .netease {
-                        Button {
-                            let target = !isFollowed
-                            isFollowed = target
-                            Task {
-                                guard !resolvedArtistId.isEmpty else { return }
-                                try? await NeteaseMusicAPI.shared.setArtistSubscribed(
-                                    id: resolvedArtistId, subscribed: target)
-                                ToastCenter.shared.show(target ? "已收藏歌手" : "已取消收藏歌手")
-                            }
-                        } label: {
-                            Label(isFollowed ? "取消收藏歌手" : "收藏歌手",
-                                  systemImage: isFollowed ? "heart.fill" : "heart")
-                        }
+                    Button { shareArtistPage() } label: {
+                        Label("分享歌手页", systemImage: "square.and.arrow.up")
                     }
-                    Button {
-                        serifTitle.toggle()
-                    } label: {
+                    Button { serifTitle.toggle() } label: {
                         Label(serifTitle ? "歌手名改用系统字体" : "歌手名改用衬线字体",
                               systemImage: "textformat")
                     }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(heroGlyphColor)
+                        .foregroundStyle(Color.blue)
                         .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { shareArtistPage() } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(heroGlyphColor)
-                        .frame(width: 40, height: 40)
                         .contentShape(Rectangle())
                 }
             }
@@ -281,7 +274,11 @@ struct WellArtistHomeView: View {
                        height: UIScreen.main.bounds.width * 0.56)
                 .clipShape(Circle())
                 .background(Color.secondary.opacity(0.12), in: Circle())
-                .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+                .drawingGroup()          // ★ 问题1：静态化，减少滚动时重合成
+                .overlay {                // ★ 用描边替代投影（shadow 每帧重算，卡顿元凶之一）
+                    Circle().stroke((backdropIsDark ? Color.white : Color.black).opacity(0.10),
+                                    lineWidth: 1)
+                }
                 .padding(.top, 10)
 
             Text((resolvedName.isEmpty ? artistName : resolvedName).uppercased())
@@ -315,7 +312,8 @@ struct WellArtistHomeView: View {
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(.black)
                         .frame(width: 72, height: 72)
-                        .background(heroAccent, in: Circle())
+                        .background(backdropIsDark ? Color.white : Color.black.opacity(0.85),
+                                    in: Circle())
                         .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
                 }
                 .buttonStyle(.plain)
@@ -371,15 +369,37 @@ struct WellArtistHomeView: View {
 
     private var hotSongsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
+            // ★ 2026-10-18 用户问题2/3/8：标题右侧改「总时长 + 正在播放指示器」，
+            //   去掉三点；整行可长按弹出菜单（播放全部/加入队列）。
+            HStack(spacing: 8) {
                 Text("热门歌曲")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(tintIsDark ? .white : Color.black.opacity(0.9))
+                    .foregroundStyle(backdropIsDark ? .white : Color.black.opacity(0.9))
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(backdropIsDark ? Color.white.opacity(0.7) : .secondary)
+                Spacer(minLength: 8)
+                if nowPlaying.isCurrent(displayedHotSongs.first ?? MusicItem(
+                        source: .netease, platformId: nil, title: "", artist: nil,
+                        album: nil, duration: 0, albumCoverURL: nil, neteaseId: nil,
+                        qqSongMid: nil), at: 0) {
+                    NowPlayingIndicator()
+                }
+                Text(hotSongsDurationText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(backdropIsDark ? Color.white.opacity(0.65)
+                                                    : Color.black.opacity(0.45))
             }
             .padding(.horizontal, 16)
+            .contextMenu {
+                Button {
+                    guard !displayedHotSongs.isEmpty else { return }
+                    PlayerCore.shared.play(queue: displayedHotSongs, startIndex: 0)
+                } label: { Label("播放全部", systemImage: "play.fill") }
+                Button {
+                    PlayerCore.shared.addToQueue(displayedHotSongs)
+                } label: { Label("加入当前队列", systemImage: "text.badge.plus") }
+            }
 
             if hotSongs.isEmpty {
                 Text("暂无歌曲")
@@ -397,7 +417,8 @@ struct WellArtistHomeView: View {
                         Button {
                             PlayerCore.shared.play(queue: displayedHotSongs, startIndex: index)
                         } label: {
-                            hotSongRow(index: index, item: item)
+                            hotSongRow(index: index, item: item,
+                                       isCurrent: nowPlaying.isCurrent(item, at: index))
                                 .padding(.vertical, 6)
                                 .padding(.horizontal, 16)
                                 .contentShape(Rectangle())
@@ -411,7 +432,7 @@ struct WellArtistHomeView: View {
 
     /// 热门歌曲行：`[封面40] 歌名 / 歌手名 …菜单`
     /// （歌曲行不显示 VIP 标识 —— 2026-10-14 用户要求；序号已按用户要求去除）
-    private func hotSongRow(index: Int, item: MusicItem) -> some View {
+    private func hotSongRow(index: Int, item: MusicItem, isCurrent: Bool) -> some View {
         HStack(spacing: 12) {
             WellRemoteImage(url: item.albumCoverURL, displaySize: 120)
                 .frame(width: 48, height: 48)
@@ -422,7 +443,8 @@ struct WellArtistHomeView: View {
                     .font(.system(size: 14, weight: .medium))
                     // ★ 2026-10-18 用户：深色模式文字不再变蓝 —— 颜色跟随底色，
                     //   "正在播放"由左侧音条动画（NowPlayingIndicator）区分。
-                    .foregroundStyle(backdropIsDark ? Color.white : Color.black.opacity(0.9))
+                    .foregroundStyle(isCurrent ? heroAccent
+                                            : (backdropIsDark ? Color.white : Color.black.opacity(0.9)))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
@@ -438,7 +460,7 @@ struct WellArtistHomeView: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             // ★ 2026-10-16 问题8：当前播放行显示音条动画
-            if nowPlaying.isCurrent(item) {
+            if isCurrent {
                 NowPlayingIndicator()
             } else {
                 Spacer(minLength: 0)
@@ -501,8 +523,8 @@ struct WellArtistHomeView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         if let date = latest.publishDateText {
                             Text(date)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.blue)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(backdropIsDark ? .white : .black)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }
@@ -541,7 +563,7 @@ struct WellArtistHomeView: View {
         if !similarArtists.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("相似歌手")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(backdropIsDark ? .white : Color.black.opacity(0.9))
                     .padding(.horizontal, 16)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -721,6 +743,11 @@ struct WellArtistHomeView: View {
         albums = albumsResult.albums
         // ★ 2026-10-17 歌手页重构：简介 / 收藏态 / 相似歌手
         if let brief = songsResult.brief, !brief.isEmpty { briefDesc = brief }
+        // ★ 2026-10-18 用户问题6：简介为空时补拉网易云歌手简介接口
+        if briefDesc.isEmpty, platform == .netease, !realId.isEmpty {
+            if let desc = try? await NeteaseMusicAPI.shared.artistDesc(id: realId),
+               !desc.isEmpty { briefDesc = desc }
+        }
         if let followed = songsResult.followed { isFollowed = followed }
         resolvedArtistId = realId
         if platform == .netease, !realId.isEmpty {
@@ -876,113 +903,222 @@ struct WellArtistHomeView: View {
 ///
 /// 容量：整体受「设置 → 存储 → 缓存上限」约束（`CacheBudget` 按最旧优先淘汰）。
 
-actor WellArtistHomeCache {
-    static let shared = WellArtistHomeCache()
-
-    /// 缓存多久算「旧」（超过则在出缓存的同时后台重拉；现在是每次进入都会后台重拉，
-    /// 这个值只用于存储页展示与「多久没被访问就淘汰」的判断）。
-    static let staleAfter: TimeInterval = 6 * 60 * 60
-
-    struct Snapshot: Codable {
-        var artistId: String
-        var artistMid: String?
-        var name: String
-        var avatar: String?
-        var songs: [MusicItem]
-        var albums: [WellAlbumSummary]
-        var albumCount: Int?
-        /// 写入时间（存储页展示「缓存于 …」用）
-        var savedAt: Date = Date()
-    }
-
-    /// 内存层（同一会话内秒开，不用每次读盘）。
-    private var memory: [String: Snapshot] = [:]
-    private let maxMemoryEntries = 60
-
-    private nonisolated(unsafe) let directory: URL
-
-    private init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        directory = caches.appendingPathComponent("artist-home", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    // MARK: 读写
-
-    /// 取缓存（内存 → 磁盘）。读盘时顺手刷新文件时间，作为 LRU 的「最近使用」标记。
-    func get(_ key: String) -> Snapshot? {
-        if let hit = memory[key] { return hit }
-        let url = fileURL(for: key)
-        guard let data = try? Data(contentsOf: url),
-              let snapshot = try? Self.decoder.decode(Snapshot.self, from: data) else { return nil }
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
-        memory[key] = snapshot
-        trimMemory()
-        return snapshot
-    }
-
-    /// 写缓存（内存 + 磁盘）。
-    func set(_ key: String, _ snapshot: Snapshot) {
-        memory[key] = snapshot
-        trimMemory()
-        guard let data = try? Self.encoder.encode(snapshot) else { return }
-        try? data.write(to: fileURL(for: key), options: .atomic)
-        Task { @MainActor in CacheBudget.enforceIfNeeded() }
-    }
-
-    /// 清空歌手主页缓存（存储页用）。
-    func clear() {
-        memory.removeAll()
-        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        for file in files { try? FileManager.default.removeItem(at: file) }
-    }
-
-    // MARK: 存储占用（存储页 / 总预算用）
-
-    nonisolated func diskEntries() -> [CacheFileEntry] {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
-        return files.compactMap { file in
-            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-            return CacheFileEntry(url: file,
-                                  size: Int64(values.fileSize ?? 0),
-                                  date: values.contentModificationDate ?? .distantPast,
-                                  kind: .artist)
-        }
-    }
-
-    nonisolated func diskUsage() -> Int64 {
-        diskEntries().reduce(Int64(0)) { $0 + $1.size }
-    }
-
-    /// 缓存了多少位歌手（存储页展示用）。
-    nonisolated func cachedCount() -> Int {
-        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.count ?? 0
-    }
-
-    // MARK: 内部
-
-    private func fileURL(for key: String) -> URL {
-        directory.appendingPathComponent(Data(key.utf8).md5Hex() + ".json")
-    }
-
-    private func trimMemory() {
-        guard memory.count > maxMemoryEntries else { return }
-        for key in memory.keys.prefix(memory.count - maxMemoryEntries) {
-            memory.removeValue(forKey: key)
-        }
-    }
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
+actor WellArtistHomeCache {
+
+    static let shared = WellArtistHomeCache()
+
+
+
+    /// 缓存多久算「旧」（超过则在出缓存的同时后台重拉；现在是每次进入都会后台重拉，
+
+    /// 这个值只用于存储页展示与「多久没被访问就淘汰」的判断）。
+
+    static let staleAfter: TimeInterval = 6 * 60 * 60
+
+
+
+    struct Snapshot: Codable {
+
+        var artistId: String
+
+        var artistMid: String?
+
+        var name: String
+
+        var avatar: String?
+
+        var songs: [MusicItem]
+
+        var albums: [WellAlbumSummary]
+
+        var albumCount: Int?
+
+        /// 写入时间（存储页展示「缓存于 …」用）
+
+        var savedAt: Date = Date()
+
+    }
+
+
+
+    /// 内存层（同一会话内秒开，不用每次读盘）。
+
+    private var memory: [String: Snapshot] = [:]
+
+    private let maxMemoryEntries = 60
+
+
+
+    private nonisolated(unsafe) let directory: URL
+
+
+
+    private init() {
+
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+
+        directory = caches.appendingPathComponent("artist-home", isDirectory: true)
+
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    }
+
+
+
+    // MARK: 读写
+
+
+
+    /// 取缓存（内存 → 磁盘）。读盘时顺手刷新文件时间，作为 LRU 的「最近使用」标记。
+
+    func get(_ key: String) -> Snapshot? {
+
+        if let hit = memory[key] { return hit }
+
+        let url = fileURL(for: key)
+
+        guard let data = try? Data(contentsOf: url),
+
+              let snapshot = try? Self.decoder.decode(Snapshot.self, from: data) else { return nil }
+
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+
+        memory[key] = snapshot
+
+        trimMemory()
+
+        return snapshot
+
+    }
+
+
+
+    /// 写缓存（内存 + 磁盘）。
+
+    func set(_ key: String, _ snapshot: Snapshot) {
+
+        memory[key] = snapshot
+
+        trimMemory()
+
+        guard let data = try? Self.encoder.encode(snapshot) else { return }
+
+        try? data.write(to: fileURL(for: key), options: .atomic)
+
+        Task { @MainActor in CacheBudget.enforceIfNeeded() }
+
+    }
+
+
+
+    /// 清空歌手主页缓存（存储页用）。
+
+    func clear() {
+
+        memory.removeAll()
+
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+
+        for file in files { try? FileManager.default.removeItem(at: file) }
+
+    }
+
+
+
+    // MARK: 存储占用（存储页 / 总预算用）
+
+
+
+    nonisolated func diskEntries() -> [CacheFileEntry] {
+
+        guard let files = try? FileManager.default.contentsOfDirectory(
+
+            at: directory,
+
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return [] }
+
+        return files.compactMap { file in
+
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+
+            return CacheFileEntry(url: file,
+
+                                  size: Int64(values.fileSize ?? 0),
+
+                                  date: values.contentModificationDate ?? .distantPast,
+
+                                  kind: .artist)
+
+        }
+
+    }
+
+
+
+    nonisolated func diskUsage() -> Int64 {
+
+        diskEntries().reduce(Int64(0)) { $0 + $1.size }
+
+    }
+
+
+
+    /// 缓存了多少位歌手（存储页展示用）。
+
+    nonisolated func cachedCount() -> Int {
+
+        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?.count ?? 0
+
+    }
+
+
+
+    // MARK: 内部
+
+
+
+    private func fileURL(for key: String) -> URL {
+
+        directory.appendingPathComponent(Data(key.utf8).md5Hex() + ".json")
+
+    }
+
+
+
+    private func trimMemory() {
+
+        guard memory.count > maxMemoryEntries else { return }
+
+        for key in memory.keys.prefix(memory.count - maxMemoryEntries) {
+
+            memory.removeValue(forKey: key)
+
+        }
+
+    }
+
+
+
+    private static let encoder: JSONEncoder = {
+
+        let encoder = JSONEncoder()
+
+        encoder.dateEncodingStrategy = .iso8601
+
+        return encoder
+
+    }()
+
+
+
+    private static let decoder: JSONDecoder = {
+
+        let decoder = JSONDecoder()
+
+        decoder.dateDecodingStrategy = .iso8601
+
+        return decoder
+
+    }()
+
 }
