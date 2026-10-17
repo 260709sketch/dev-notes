@@ -1885,7 +1885,7 @@ final class NeteaseMusicAPI {
             "/api/resource/comments/R_SO_4_\(songId)", params: params, type: CommentNewResponse.self)
         try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "评论加载失败")
         let d = resp.data
-        return (mapComments(d?.comments), d?.totalCount ?? 0, d?.hasMore ?? false)
+        return (Self.mapComments(d?.comments), d?.totalCount ?? 0, d?.hasMore ?? false)
     }
 
     /// 热门评论
@@ -1901,7 +1901,7 @@ final class NeteaseMusicAPI {
         let resp: CommentHotResponse = try await Self.weapiRequest(
             "/api/v1/resource/hotcomments/R_SO_4_\(songId)", params: params, type: CommentHotResponse.self)
         try Self.ensureOK(resp.code, fallback: "热评加载失败")
-        return (mapComments(resp.hotComments), resp.total ?? 0)
+        return (Self.mapComments(resp.hotComments), resp.total ?? 0)
     }
 
     /// 楼中楼（一条评论的回复列表）
@@ -1918,7 +1918,7 @@ final class NeteaseMusicAPI {
             "/api/resource/comment/floor/get", params: params, type: CommentFloorResponse.self)
         try Self.ensureOK(resp.code, serverMessage: resp.message, fallback: "回复加载失败")
         let d = resp.data
-        return (mapComments(d?.comments), d?.totalCount ?? 0)
+        return (Self.mapComments(d?.comments), d?.totalCount ?? 0)
     }
 
     /// 私人 FM 的歌曲结构**两套都可能出现**：老格式（`artists` / `album` /

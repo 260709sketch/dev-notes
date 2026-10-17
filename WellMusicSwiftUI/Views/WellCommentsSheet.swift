@@ -191,7 +191,7 @@ struct WellCommentsSheet: View {
         do {
             let result = try await NeteaseMusicAPI.shared.songComments(
                 songId: songId, sortType: sortType, pageNo: page)
-            let seen = Set(list.map(\.id))
+            var seen = Set(list.map(\.id))
             list.append(contentsOf: result.comments.filter { seen.insert($0.id).inserted })
             total = result.total
             hasMore = result.hasMore

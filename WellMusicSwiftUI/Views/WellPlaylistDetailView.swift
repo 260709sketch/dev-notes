@@ -542,11 +542,11 @@ struct WellPlaylistDetailView: View {
         }
     }
 
-    /// 歌曲行长按菜单（播放 / 收藏 / 查看专辑 / 查看歌手 / 分享）。
-    @ViewBuilder
     /// 评论详情页（2026-10-17）
     @State private var commentsItem: MusicItem?
 
+    /// 歌曲行长按菜单（播放 / 收藏 / 查看专辑 / 查看歌手 / 分享）。
+    @ViewBuilder
     private func songContextMenu(_ item: MusicItem) -> some View {
         Button {
             PlayerCore.shared.play(queue: orderedTracks, startIndex: playbackIndex(for: item))
