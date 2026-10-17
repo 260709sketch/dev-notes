@@ -29,6 +29,13 @@ struct WellCommentsSheet: View {
                     ContentUnavailableCompat(title: "评论加载失败", icon: "text.bubble")
                 } else {
                     List {
+                        Picker("排序", selection: $sortIndex) {
+                            Text("热门评论").tag(0)
+                            Text("最新评论").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+
                         if sortIndex == 0, !hot.isEmpty {
                             Section("热门评论 (\(hot.count))") {
                                 ForEach(hot) { c in commentRow(c) }
@@ -52,15 +59,7 @@ struct WellCommentsSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("完成") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Picker("排序", selection: $sortIndex) {
-                        Text("推荐").tag(0)
-                        Text("最热").tag(1)
-                        Text("最新").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                }
+
             }
         }
         .task(id: sortIndex) { await reload() }
@@ -181,6 +180,48 @@ struct WellCommentsSheet: View {
             }
         } catch {
             failed = true
+        }
+        // ★ 2026-10-17 兜底：weapi 空结果时回退明文 v1（旧评论页同款，必有数据）
+        if list.isEmpty, let sid = songId {
+            let url = "https://music.163.com/api/v1/resource/comments/R_SO_4_\(sid)?limit=30&offset=0"
+            if let data = try? await URLSession.shared.data(from: URL(string: url)!).0,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let hotList = (obj["hotComments"] as? [[String: Any]]) ?? []
+                let newList = (obj["comments"] as? [[String: Any]]) ?? []
+                total = (obj["total"] as? Int) ?? newList.count
+                hasMore = false
+                var mapped: [NeteaseMusicAPI.NeteaseComment] = []
+                for c in newList {
+                    guard let content = c["content"] as? String else { continue }
+                    let u = c["user"] as? [String: Any]
+                    let timeMs = (c["time"] as? Double) ?? 0
+                    mapped.append(NeteaseMusicAPI.NeteaseComment(
+                        id: String((c["commentId"] as? Int64) ?? 0),
+                        nickname: u?["nickname"] as? String ?? "网易云用户",
+                        avatarURL: u?["avatarUrl"] as? String,
+                        content: content,
+                        timeText: "",
+                        likedCount: (c["likedCount"] as? Int) ?? 0,
+                        replyCount: (c["replyCount"] as? Int) ?? 0))
+                }
+                if sortIndex == 0, !hotList.isEmpty {
+                    var hotMapped: [NeteaseMusicAPI.NeteaseComment] = []
+                    for c in hotList {
+                        guard let content = c["content"] as? String else { continue }
+                        let u = c["user"] as? [String: Any]
+                        hotMapped.append(NeteaseMusicAPI.NeteaseComment(
+                            id: String((c["commentId"] as? Int64) ?? 0),
+                            nickname: u?["nickname"] as? String ?? "网易云用户",
+                            avatarURL: u?["avatarUrl"] as? String,
+                            content: content,
+                            timeText: "",
+                            likedCount: (c["likedCount"] as? Int) ?? 0,
+                            replyCount: (c["replyCount"] as? Int) ?? 0))
+                    }
+                    hot = hotMapped
+                }
+                if !mapped.isEmpty { list = mapped }
+            }
         }
     }
 

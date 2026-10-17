@@ -1873,7 +1873,9 @@ final class NeteaseMusicAPI {
     /// 新版评论列表。sortType：99 推荐 / 2 最热 / 3 最新。
     func songComments(songId: String, sortType: Int, pageNo: Int, pageSize: Int = 20)
         async throws -> (comments: [NeteaseComment], total: Int, hasMore: Bool) {
-        let cursor = "\((pageNo - 1) * pageSize)"
+        // ★ 2026-10-17：官方模块里 sortType 99 的 cursor 是**数字**，
+        //   传字符串 "0" 服务端会返回空列表（推荐 tab 空白的根因）。
+        let cursor: Any = (pageNo - 1) * pageSize
         let params: [String: Any] = [
             "threadId": "R_SO_4_\(songId)",
             "pageNo": pageNo,
