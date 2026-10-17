@@ -372,7 +372,7 @@ struct WellArtistHomeView: View {
     private var hotSongsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("歌曲排行")
+                Text("热门歌曲")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(tintIsDark ? .white : Color.black.opacity(0.9))
                 Image(systemName: "chevron.right")
@@ -523,7 +523,8 @@ struct WellArtistHomeView: View {
                         .background(Color.primary.opacity(0.06), in: Circle())
                 }
                 .padding(10)
-                .background(Color(.secondarySystemBackground),
+                // ★ 2026-10-18 用户：与 dock 栏同款**磨砂玻璃**
+                .background(.regularMaterial,
                             in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
