@@ -489,7 +489,8 @@ final class WellLXSourceStore: ObservableObject {
         if !updateUrl.isEmpty {
             Task { @MainActor [weak self] in
                 guard let self,
-                      let fetched = try? await fetchScript(from: updateUrl),
+                      let url = URL(string: updateUrl),
+                      let fetched = try? await fetchScript(from: url),
                       fetched.contains("@name") || fetched.contains("lx_setup")
                           || fetched.contains("globalThis") else { return }
                 if self.pendingUpdateAlert?.updateUrl == updateUrl {
