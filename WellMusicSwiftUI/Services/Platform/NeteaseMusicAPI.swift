@@ -1212,10 +1212,9 @@ final class NeteaseMusicAPI {
     func artistProfile(id: String) async throws -> ArtistProfile {
         let resp: ArtistDetailResponse = try await Self.weapiRequest(
             "api/v1/artist/\(id)", params: ["csrf_token": ""], type: ArtistDetailResponse.self)
-        var songs = (resp.hotSongs ?? []).compactMap(Self.mapSong)
-        if songs.isEmpty {
-            songs = (try? await artistAllSongs(id: id)) ?? []
-        }
+        // ★ 2026-10-17 用户：改为**全量歌曲**（数量与平台一致），hotSongs 兜底
+        var songs = (try? await artistAllSongs(id: id)) ?? []
+        if songs.isEmpty { songs = (resp.hotSongs ?? []).compactMap(Self.mapSong) }
         let artist = resp.artist
         let avatar = artist?.picUrl ?? artist?.img1v1Url ?? artist?.cover ?? artist?.avatar
         let expected = artist?.musicSize ?? artist?.songSize ?? 0
