@@ -146,19 +146,24 @@ struct CommentsView: View {
                                     Divider()
                                         .padding(.leading, 16)
                                 }
+                                // ★ 2026-10-17 用户：下滑到底自动加载下一批
                                 if selectedSegment == 1 && hasMore {
-                                    Button {
-                                        Task { await loadMoreLatest() }
-                                    } label: {
+                                    HStack {
+                                        Spacer()
                                         if loading {
                                             ProgressView()
                                         } else {
                                             Text("加载更多")
-                                                .font(.system(size: 14, weight: .medium))
-                                                .foregroundStyle(.blue)
+                                                .font(.system(size: 13))
+                                                .foregroundStyle(.gray)
                                         }
+                                        Spacer()
                                     }
                                     .padding(.vertical, 16)
+                                    .onAppear {
+                                        guard !loading else { return }
+                                        Task { await loadMoreLatest() }
+                                    }
                                 }
                             }
                         }
@@ -243,10 +248,11 @@ private struct CommentRow: View {
                     Spacer()
                     if comment.likedCount > 0 {
                         // ★ 2026-10-16 用户：赞数后的「赞」字 → 爱心图标
+                        // ★ 2026-10-17 用户：爱心图标放在点赞数后面
                         HStack(spacing: 3) {
+                            Text(likedText)
                             Image(systemName: "heart.fill")
                                 .font(.system(size: 10))
-                            Text(likedText)
                         }
                         .font(.system(size: 12))
                         .foregroundStyle(.gray)

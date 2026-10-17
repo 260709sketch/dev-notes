@@ -191,7 +191,8 @@ struct WellArtistHomeView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
-                Text(item.album ?? "")
+                // ★ 2026-10-17 用户：热门歌曲副标题显示**歌手名**（原为专辑名）
+                Text(item.artist ?? item.album ?? "")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
